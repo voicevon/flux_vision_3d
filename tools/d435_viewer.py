@@ -19,11 +19,22 @@ import yaml
 import numpy as np
 import cv2
 
+# 解决 Windows 控制台中文编码
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 try:
     import pyrealsense2 as rs
     HAVE_REALSENSE = True
 except ImportError:
     HAVE_REALSENSE = False
+
+# 导入芦笋特征分析与最顶层判决核心模块
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
 
 
 class D435Viewer:
@@ -44,6 +55,11 @@ class D435Viewer:
         self.filters_enabled = True
         self.laser_enabled = True
         self.init_filters()
+
+        # 芦笋视觉特征分析器
+        self.detection_enabled = True
+        self.analyzer = AsparagusAnalyzer()
+        self.latest_targets = []
 
         # 鼠标交互状态
         self.hover_x = -1
@@ -221,6 +237,14 @@ class D435Viewer:
         print(f"[INFO] 彩色镜头实际画幅: {self.actual_w}x{self.actual_h}, 内参: fx={self.color_intrinsics.fx:.2f}, "
               f"fy={self.color_intrinsics.fy:.2f}, ppx={self.color_intrinsics.ppx:.2f}, ppy={self.color_intrinsics.ppy:.2f}")
 
+        # 同步更新芦笋几何分析器的内参矩阵
+        self.analyzer.update_intrinsics(
+            fx=self.color_intrinsics.fx,
+            fy=self.color_intrinsics.fy,
+            cx=self.color_intrinsics.ppx,
+            cy=self.color_intrinsics.ppy
+        )
+
     def generate_mock_frame(self, w=1280, h=720):
         """生成带几何圆柱深度的 3 层叠压芦笋场景 (0.40m ~ 0.55m 视野)"""
         color_img = np.full((h, w, 3), (40, 42, 45), dtype=np.uint8)  # 工作台底色
@@ -316,6 +340,8 @@ class D435Viewer:
         print("   - [ [ ] / [ ] ] 键: 微调近端下限 min (+/- 1cm)")
         print("   - [ - ] / [ = ] 键: 微调远端上限 max (+/- 1cm)")
         print("   - [R] 键: 重置色彩区间为 0.40m ~ 0.55m")
+        print("   - [D] 键: 切换芦笋识别与顶层尺寸/坐标解算 (开/关)")
+        print("   - [G] 键: 打印当前最顶层芦笋 SCARA G-code 抓取指令")
         print("   - [S] 键: 抓拍并保存当前对齐帧 (RGB图 + 深度图 + 原始数值)")
         print("   - [F] 键: 切换硬件后处理滤波器 (开/关)")
         print("   - [L] 键: 切换激光散斑发射器 (开/关)")
@@ -366,6 +392,17 @@ class D435Viewer:
                 # 将无效深度 (0mm / 反光黑洞) 涂抹为深黑灰，与真实台面深度鲜明区分
                 depth_colormap[depth_image == 0] = (25, 25, 25)
 
+                # 实时芦笋特征分析与最顶层判决
+                raw_color_for_save = color_image.copy()
+                if self.detection_enabled:
+                    try:
+                        self.latest_targets = self.analyzer.analyze(color_image, depth_image)
+                        display_color_image = self.analyzer.draw_detections(color_image, self.latest_targets)
+                    except Exception:
+                        display_color_image = color_image.copy()
+                else:
+                    display_color_image = color_image.copy()
+
                 # 鼠标点测距与反投影
                 target_pt = self.selected_point if self.selected_point else (self.hover_x, self.hover_y)
                 probe_text = "Probe: N/A"
@@ -382,7 +419,7 @@ class D435Viewer:
                         else:
                             probe_text = f"Pixel:({px},{py}) | Depth: INVALID (0mm / Hole)"
 
-                    cv2.drawMarker(color_image, (px, py), (0, 0, 255), cv2.MARKER_CROSS, 20, 2)
+                    cv2.drawMarker(display_color_image, (px, py), (0, 0, 255), cv2.MARKER_CROSS, 20, 2)
                     cv2.drawMarker(depth_colormap, (px, py), (255, 255, 255), cv2.MARKER_CROSS, 20, 2)
 
                 fps_counter += 1
@@ -391,18 +428,28 @@ class D435Viewer:
                     fps_counter = 0
                     fps_time = time.time()
 
-                color_resized = cv2.resize(color_image, (disp_w, disp_h))
+                color_resized = cv2.resize(display_color_image, (disp_w, disp_h))
                 depth_resized = cv2.resize(depth_colormap, (disp_w, disp_h))
                 combined = np.hstack((color_resized, depth_resized))
 
                 mode_str = "MOCK" if self.mock_mode else "D435"
                 filter_status = "ON" if self.filters_enabled else "OFF"
+                detect_status = f"DETECT:{len(self.latest_targets)}" if self.detection_enabled else "DETECT:OFF"
                 range_str = f"AUTO:{act_min:.2f}~{act_max:.2f}m" if self.auto_range else f"{act_min:.2f}m(Red)~{act_max:.2f}m(Blue)"
 
-                cv2.putText(combined, f"RGB [{mode_str}] | FPS: {current_fps:.1f}", (15, 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
-                cv2.putText(combined, f"Depth [{range_str}] (Filt:{filter_status})", (disp_w + 10, 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
+                # 顶部状态条
+                topmost = next((t for t in self.latest_targets if t.is_topmost), None) if self.detection_enabled else None
+                if topmost:
+                    top_banner = f"[TOPMOST 1] L:{topmost.length_mm}mm D:{topmost.diam_mm}mm | Grip:({topmost.grip_x}, {topmost.grip_y}, {topmost.grip_z})mm R:{topmost.yaw_deg}deg"
+                    cv2.rectangle(combined, (0, 0), (disp_w * 2, 28), (15, 50, 15), -1)
+                    cv2.putText(combined, top_banner, (12, 20),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 120), 2)
+                else:
+                    cv2.putText(combined, f"RGB [{mode_str}] | {detect_status} | FPS: {current_fps:.1f}", (15, 22),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 0), 2)
+
+                cv2.putText(combined, f"Depth [{range_str}] (Filt:{filter_status})", (disp_w + 10, 22),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
 
                 cv2.rectangle(combined, (0, disp_h - 35), (disp_w * 2, disp_h), (25, 25, 25), -1)
                 cv2.putText(combined, probe_text, (15, disp_h - 10),
@@ -414,7 +461,26 @@ class D435Viewer:
                 if key in [ord('q'), 27]:
                     break
                 elif key == ord('s'):
-                    self.save_snapshot(color_image, depth_image, depth_colormap)
+                    self.save_snapshot(raw_color_for_save, depth_image, depth_colormap)
+                elif key == ord('d'):
+                    self.detection_enabled = not self.detection_enabled
+                    print(f"[ACTION] 芦笋特征识别与顶层解算: {'开启' if self.detection_enabled else '关闭'}")
+                elif key == ord('g'):
+                    topmost = next((t for t in self.latest_targets if t.is_topmost), None)
+                    if topmost:
+                        print("\n" + "=" * 65)
+                        print(f"[SCARA G-CODE] 最上层芦笋抓取指令序列 (L={topmost.length_mm}mm, D={topmost.diam_mm}mm, 凸起={topmost.rel_height_mm}mm):")
+                        print(f"G90                     ; 绝对坐标模式")
+                        print(f"G0 Z50.0 F3000          ; 提升末端到安全高度")
+                        print(f"M280 P1 S10             ; 预张开夹板")
+                        print(f"G0 X{topmost.grip_x:.1f} Y{topmost.grip_y:.1f} R{topmost.yaw_deg:.1f} F4000 ; 平移对准并旋转夹爪轴线")
+                        print(f"G1 Z{topmost.grip_z:.1f} F1500          ; 垂直下探至夹持面")
+                        print(f"M280 P1 S90             ; 夹板夹紧物料")
+                        print(f"G4 P200                 ; 稳固延时 200ms")
+                        print(f"G0 Z50.0 F3000          ; 提起最上层芦笋")
+                        print("=" * 65 + "\n")
+                    else:
+                        print("\n[!] 当前未检测到可抓取的最顶层芦笋，无法生成 G-code。")
                 elif key == ord('a'):
                     self.auto_range = not self.auto_range
                     status = "动态自适应 (Auto-Range)" if self.auto_range else f"固定区间 [{self.cmap_min:.2f}m ~ {self.cmap_max:.2f}m]"
