@@ -32,8 +32,14 @@ camera:
       persistence_control: 3         # 8/8 帧有效持久度模式
     threshold:
       enabled: true                  # 距离门限滤波器
-      min_distance: 0.50             # 最小截断深度 (米) - 滤掉过近杂物
-      max_distance: 0.85             # 最大截断深度 (米) - 滤掉传送带/工作台以下背景
+      min_distance: 0.35             # 最小截断深度 (米) - 放行 0.40m 以上的近景目标
+      max_distance: 0.65             # 最大截断深度 (米) - 滤掉 0.55m 工作台底面以下的背景杂散点
+  
+  # 深度可视化色彩映射区间 (米)
+  colormap:
+    min_distance: 0.40               # 最顶层近距对应暖红色 (400mm)
+    max_distance: 0.55               # 底面远距对应深蓝色 (550mm)
+    auto_range: false                # 是否开启按当前视野动态自适应拉伸 (按 'A' 键切换)
 
 vision:
   # 2D 分割与脊线腐蚀参数

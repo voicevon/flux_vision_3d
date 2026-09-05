@@ -19,12 +19,12 @@ def test_mock_generation_and_snapshot():
     assert depth.shape == (720, 1280), f"Depth shape mismatch: {depth.shape}"
     assert depth.dtype == np.uint16, f"Depth dtype mismatch: {depth.dtype}"
     
-    # 验证三层芦笋高度关系 (工作台720mm, 顶层应当 < 685mm)
+    # 验证三层芦笋高度关系 (工作台530mm, 顶层应当 < 445mm)
     min_z = np.min(depth)
     max_z = np.max(depth)
     print(f"[TEST] 深度范围: {min_z}mm ~ {max_z}mm")
-    assert min_z < 685, "最顶层芦笋高度异常"
-    assert max_z >= 715, "工作台底面高度异常"
+    assert min_z < 445, "最顶层芦笋高度异常"
+    assert max_z >= 525, "工作台底面高度异常"
     
     print("[TEST] 模拟帧生成校验通过！")
 

@@ -50,8 +50,12 @@ class D435Viewer:
         self.hover_y = -1
         self.selected_point = None
 
-        # 虚拟/实机内参
         self.color_intrinsics = None
+
+        # 深度色彩映射范围 (米) - 默认 0.40m ~ 0.55m
+        self.cmap_min = 0.40
+        self.cmap_max = 0.55
+        self.auto_range = False
 
     def load_config(self):
         """加载 config.yaml 中的相机与滤波配置"""
@@ -64,7 +68,12 @@ class D435Viewer:
                 "filters": {
                     "spatial": {"enabled": True, "smooth_alpha": 0.5, "smooth_delta": 20, "magnitude": 2, "hole_fill": 1},
                     "temporal": {"enabled": True, "smooth_alpha": 0.4, "smooth_delta": 20, "persistence_control": 3},
-                    "threshold": {"enabled": True, "min_distance": 0.50, "max_distance": 0.85},
+                    "threshold": {"enabled": True, "min_distance": 0.35, "max_distance": 0.65},
+                },
+                "colormap": {
+                    "min_distance": 0.40,
+                    "max_distance": 0.55,
+                    "auto_range": False
                 }
             }
         }
@@ -74,6 +83,11 @@ class D435Viewer:
                 if loaded and "camera" in loaded:
                     default_config["camera"].update(loaded["camera"])
         self.cfg = default_config["camera"]
+        
+        cmap_cfg = self.cfg.get("colormap", {})
+        self.cmap_min = float(cmap_cfg.get("min_distance", 0.40))
+        self.cmap_max = float(cmap_cfg.get("max_distance", 0.55))
+        self.auto_range = bool(cmap_cfg.get("auto_range", False))
 
     def init_filters(self):
         """初始化 SDK 硬件后处理滤波器"""
@@ -98,8 +112,8 @@ class D435Viewer:
         self.threshold_filter = rs.threshold_filter()
         th_cfg = self.cfg.get("filters", {}).get("threshold", {})
         if th_cfg:
-            self.threshold_filter.set_option(rs.option.min_distance, th_cfg.get("min_distance", 0.50))
-            self.threshold_filter.set_option(rs.option.max_distance, th_cfg.get("max_distance", 0.85))
+            self.threshold_filter.set_option(rs.option.min_distance, th_cfg.get("min_distance", 0.35))
+            self.threshold_filter.set_option(rs.option.max_distance, th_cfg.get("max_distance", 0.65))
 
     def apply_filters(self, depth_frame):
         """按链条顺序应用后处理滤波"""
@@ -208,7 +222,7 @@ class D435Viewer:
               f"fy={self.color_intrinsics.fy:.2f}, ppx={self.color_intrinsics.ppx:.2f}, ppy={self.color_intrinsics.ppy:.2f}")
 
     def generate_mock_frame(self, w=1280, h=720):
-        """生成带几何圆柱深度的 3 层叠压芦笋场景"""
+        """生成带几何圆柱深度的 3 层叠压芦笋场景 (0.40m ~ 0.55m 视野)"""
         color_img = np.full((h, w, 3), (40, 42, 45), dtype=np.uint8)  # 工作台底色
         # 网格参考线
         for y in range(0, h, 80):
@@ -216,17 +230,17 @@ class D435Viewer:
         for x in range(0, w, 80):
             cv2.line(color_img, (x, 0), (x, h), (50, 52, 55), 1)
 
-        depth_img = np.full((h, w), 720, dtype=np.uint16)  # 工作台平面 Z=720mm (72cm)
+        depth_img = np.full((h, w), 530, dtype=np.uint16)  # 工作台平面 Z=530mm (0.53m)
 
         # 3根堆叠芦笋规范: (起点, 终点, 半径mm, 颜色, 中心Z_mm, 描述)
         # 顺序：先画底层，再画中层，最后画顶层
         asparagus_list = [
-            # 1. 底层芦笋 (Layer 0, Z_top=704mm, 水平偏下)
-            {"p1": (320, 460), "p2": (960, 420), "r_px": 22, "r_mm": 8.0, "z_center": 712, "name": "Asparagus_Bottom"},
-            # 2. 中层芦笋 (Layer 1, Z_top=688mm, 斜穿底层)
-            {"p1": (420, 240), "p2": (820, 560), "r_px": 24, "r_mm": 9.0, "z_center": 697, "name": "Asparagus_Middle"},
-            # 3. 顶层芦笋 (Layer 2, Z_top=672mm, 压在底层和中层上面, 最靠近相机)
-            {"p1": (500, 540), "p2": (780, 180), "r_px": 26, "r_mm": 10.0, "z_center": 682, "name": "Asparagus_TOPMOST"},
+            # 1. 底层芦笋 (Layer 0, Z_top=495mm, 水平偏下)
+            {"p1": (320, 460), "p2": (960, 420), "r_px": 22, "r_mm": 8.0, "z_center": 503, "name": "Asparagus_Bottom"},
+            # 2. 中层芦笋 (Layer 1, Z_top=465mm, 斜穿底层)
+            {"p1": (420, 240), "p2": (820, 560), "r_px": 24, "r_mm": 9.0, "z_center": 474, "name": "Asparagus_Middle"},
+            # 3. 顶层芦笋 (Layer 2, Z_top=430mm, 压在底层和中层上面, 最靠近相机)
+            {"p1": (500, 540), "p2": (780, 180), "r_px": 26, "r_mm": 10.0, "z_center": 440, "name": "Asparagus_TOPMOST"},
         ]
 
         # 像素坐标网格
@@ -247,15 +261,12 @@ class D435Viewer:
             dist = np.linalg.norm(np.stack([x_coords, y_coords], axis=-1) - closest, axis=-1)
 
             mask = dist <= asp["r_px"]
-            # 圆柱体截面高度衰减
             cylinder_h_ratio = np.sqrt(np.maximum(0, 1.0 - (dist / asp["r_px"]) ** 2))
             asp_z = asp["z_center"] - (cylinder_h_ratio * asp["r_mm"])
 
-            # 仅当高度高于已有物料时覆盖 (Z 越小越靠近相机)
             update_mask = mask & (asp_z < depth_img)
             depth_img[update_mask] = asp_z[update_mask].astype(np.uint16)
 
-            # 绘制绿色纹理
             green_val = np.clip(160 * cylinder_h_ratio + 40, 30, 210).astype(np.uint8)
             color_img[update_mask, 0] = (25 * cylinder_h_ratio[update_mask]).astype(np.uint8)
             color_img[update_mask, 1] = green_val[update_mask]
@@ -297,14 +308,19 @@ class D435Viewer:
         disp_h = 360
         cv2.setMouseCallback(window_name, self.on_mouse, {"display_w": disp_w, "display_h": disp_h, "orig_w": self.actual_w, "orig_h": self.actual_h})
 
-        print("\n" + "=" * 62)
+        print("\n" + "=" * 64)
         print(" RealSense D435 实时深度探针交互说明:")
-        print("   - 鼠标悬停/左键点击: 实时探测对应物料点的 (X, Y, Z) 3D 空间坐标")
+        print("   - 鼠标悬停/左键点击: 实时探测物料点 (X, Y, Z) 3D 空间坐标")
+        print("   - 色彩分布规律: 越在上层(越近) -> 红色/暖色; 越在下层(底台) -> 蓝色/冷色")
+        print("   - [A] 键: 切换【固定范围 0.40~0.55m】与【动态自适应 Auto-Range】")
+        print("   - [ [ ] / [ ] ] 键: 微调近端下限 min (+/- 1cm)")
+        print("   - [ - ] / [ = ] 键: 微调远端上限 max (+/- 1cm)")
+        print("   - [R] 键: 重置色彩区间为 0.40m ~ 0.55m")
         print("   - [S] 键: 抓拍并保存当前对齐帧 (RGB图 + 深度图 + 原始数值)")
         print("   - [F] 键: 切换硬件后处理滤波器 (开/关)")
         print("   - [L] 键: 切换激光散斑发射器 (开/关)")
         print("   - [Q] 或 [ESC]: 退出程序")
-        print("=" * 62 + "\n")
+        print("=" * 64 + "\n")
 
         fps_counter = 0
         fps_time = time.time()
@@ -329,10 +345,26 @@ class D435Viewer:
                     color_image = np.asanyarray(color_frame.get_data())
                     depth_image = np.asanyarray(filtered_depth_frame.get_data())
 
-                # 深度热力图着色 (截断至 0.5m ~ 0.85m 聚焦分拣作业区)
+                # 动态自适应与色彩范围映射
                 depth_meters = depth_image.astype(float) * 0.001
-                depth_clipped = np.clip((depth_meters - 0.50) / (0.85 - 0.50) * 255.0, 0, 255).astype(np.uint8)
-                depth_colormap = cv2.applyColorMap(depth_clipped, cv2.COLORMAP_JET)
+
+                if self.auto_range:
+                    valid_mask = (depth_image > 200) & (depth_image < 1500)
+                    if np.count_nonzero(valid_mask) > 100:
+                        act_min = float(np.percentile(depth_meters[valid_mask], 2))
+                        act_max = float(np.percentile(depth_meters[valid_mask], 98))
+                        act_max = max(act_max, act_min + 0.03)
+                    else:
+                        act_min, act_max = self.cmap_min, self.cmap_max
+                else:
+                    act_min, act_max = self.cmap_min, self.cmap_max
+
+                # 色彩映射：最顶层(近距，如0.40m)对应暖红(255)，底面(远距，如0.55m)对应深蓝(0)
+                norm = np.clip((act_max - depth_meters) / max(0.005, (act_max - act_min)) * 255.0, 0, 255).astype(np.uint8)
+                depth_colormap = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+
+                # 将无效深度 (0mm / 反光黑洞) 涂抹为深黑灰，与真实台面深度鲜明区分
+                depth_colormap[depth_image == 0] = (25, 25, 25)
 
                 # 鼠标点测距与反投影
                 target_pt = self.selected_point if self.selected_point else (self.hover_x, self.hover_y)
@@ -363,13 +395,14 @@ class D435Viewer:
                 depth_resized = cv2.resize(depth_colormap, (disp_w, disp_h))
                 combined = np.hstack((color_resized, depth_resized))
 
-                mode_str = "MOCK SIMULATION" if self.mock_mode else "D435 HARDWARE"
+                mode_str = "MOCK" if self.mock_mode else "D435"
                 filter_status = "ON" if self.filters_enabled else "OFF"
+                range_str = f"AUTO:{act_min:.2f}~{act_max:.2f}m" if self.auto_range else f"{act_min:.2f}m(Red)~{act_max:.2f}m(Blue)"
 
                 cv2.putText(combined, f"RGB [{mode_str}] | FPS: {current_fps:.1f}", (15, 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.60, (0, 255, 0), 2)
-                cv2.putText(combined, f"Depth 0.50m~0.85m (Filter: {filter_status})", (disp_w + 15, 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                cv2.putText(combined, f"Depth [{range_str}] (Filt:{filter_status})", (disp_w + 10, 25),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
 
                 cv2.rectangle(combined, (0, disp_h - 35), (disp_w * 2, disp_h), (25, 25, 25), -1)
                 cv2.putText(combined, probe_text, (15, disp_h - 10),
@@ -382,6 +415,31 @@ class D435Viewer:
                     break
                 elif key == ord('s'):
                     self.save_snapshot(color_image, depth_image, depth_colormap)
+                elif key == ord('a'):
+                    self.auto_range = not self.auto_range
+                    status = "动态自适应 (Auto-Range)" if self.auto_range else f"固定区间 [{self.cmap_min:.2f}m ~ {self.cmap_max:.2f}m]"
+                    print(f"[ACTION] 色彩映射模式切换: {status}")
+                elif key == ord('['):
+                    self.cmap_min = max(0.10, round(self.cmap_min - 0.01, 3))
+                    self.auto_range = False
+                    print(f"[ACTION] 调整近端色阶 min: {self.cmap_min:.2f}m ~ {self.cmap_max:.2f}m")
+                elif key == ord(']'):
+                    self.cmap_min = min(self.cmap_max - 0.02, round(self.cmap_min + 0.01, 3))
+                    self.auto_range = False
+                    print(f"[ACTION] 调整近端色阶 min: {self.cmap_min:.2f}m ~ {self.cmap_max:.2f}m")
+                elif key == ord('-'):
+                    self.cmap_max = max(self.cmap_min + 0.02, round(self.cmap_max - 0.01, 3))
+                    self.auto_range = False
+                    print(f"[ACTION] 调整远端色阶 max: {self.cmap_min:.2f}m ~ {self.cmap_max:.2f}m")
+                elif key == ord('='):
+                    self.cmap_max = min(2.0, round(self.cmap_max + 0.01, 3))
+                    self.auto_range = False
+                    print(f"[ACTION] 调整远端色阶 max: {self.cmap_min:.2f}m ~ {self.cmap_max:.2f}m")
+                elif key == ord('r'):
+                    self.cmap_min = 0.40
+                    self.cmap_max = 0.55
+                    self.auto_range = False
+                    print(f"[ACTION] 色彩区间已重置为默认: 0.40m ~ 0.55m")
                 elif key == ord('f'):
                     self.filters_enabled = not self.filters_enabled
                     print(f"[ACTION] 深度后处理滤波器: {'开启' if self.filters_enabled else '关闭'}")
