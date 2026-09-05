@@ -1,0 +1,71 @@
+# flux_vision_3d 系统运行配置规范
+
+camera:
+  device_serial: ""                  # 为空时自动匹配首个连接的 RealSense 设备
+  color:
+    width: 1280
+    height: 720
+    fps: 30
+  depth:
+    width: 848
+    height: 480
+    fps: 30
+  align_to_color: true               # 是否将深度流逐像素硬件对齐至彩色流
+  visual_preset: 3                   # 3: High Accuracy 高精度模式 (舍弃低置信度噪点)
+  laser_power: 120                   # 红外散斑发射功率 (mW, 默认150, 调降至100-120防湿润反光)
+  
+  # SDK 级硬件后处理滤波链
+  filters:
+    decimation:
+      enabled: false                 # 降采样滤波器 (低算力平台可开启)
+      magnitude: 2
+    spatial:
+      enabled: true                  # 空间保边边缘平滑滤波
+      smooth_alpha: 0.5
+      smooth_delta: 20
+      magnitude: 2
+      hole_fill: 1                   # 边缘孔洞填补等级
+    temporal:
+      enabled: true                  # 时间平滑滤波 (传送带停顿拍照时能有效消除离散噪点)
+      smooth_alpha: 0.4
+      smooth_delta: 20
+      persistence_control: 3         # 8/8 帧有效持久度模式
+    threshold:
+      enabled: true                  # 距离门限滤波器
+      min_distance: 0.50             # 最小截断深度 (米) - 滤掉过近杂物
+      max_distance: 0.85             # 最大截断深度 (米) - 滤掉传送带/工作台以下背景
+
+vision:
+  # 2D 分割与脊线腐蚀参数
+  segmentation_mode: "contour"       # contour (传统自适应轮廓) 或 yolo (YOLOv8-seg)
+  erosion_kernel_size: 7             # 掩膜腐蚀核尺寸 (像素，剥离边缘飞点，获得中轴脊线)
+  erosion_iterations: 1              # 腐蚀迭代次数
+  spine_percentile: 15               # 脊线深度分位数 (取前15%作为芦笋顶面Z_top，抗反光0值)
+  min_asparagus_area: 1200           # 最小连通域像素面积 (过滤碎渣杂物)
+  
+  # 叠压拓扑与判顶参数
+  overlap_iou_threshold: 0.05        # 判定两根芦笋 2D 重叠的最小 IoU 阈值
+  z_overlap_tolerance_mm: 4.0        # 相对深度差判定压叠顺序的置信度门限 (mm)
+
+calibration:
+  # 手眼标定矩阵 (Eye-to-Hand: 相机坐标系 -> SCARA基座坐标系)
+  # 初始单位矩阵，后续由手眼标定工具求解填入
+  t_cam_to_scara:
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+
+robot:
+  port: "COM3"                       # SCARA 控制板串口
+  baudrate: 115200
+  safe_z_mm: 80.0                    # 运动平移安全高度
+  drop_x_mm: 220.0                   # Dealer 落料口 X 坐标
+  drop_y_mm: 0.0                     # Dealer 落料口 Y 坐标
+  drop_z_mm: 50.0                    # Dealer 释放高度
+  feedrate_travel: 4000              # 快速移动速度 (mm/min)
+  feedrate_grip: 1500                # 下探抓取速度 (mm/min)
+
+dealer:
+  ble_name: "FLUX_DEALER"            # Dealer ESP32 蓝牙广播名
+  target_char_uuid: "0000ff01-0000-1000-8000-00805f9b34fb"

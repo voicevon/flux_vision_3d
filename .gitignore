@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 运行时数据与快照
+data/
+*.npy
+*.bag
+
+# IDE 与环境配置
+.vscode/
+.idea/
+*.log
