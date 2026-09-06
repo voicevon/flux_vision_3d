@@ -62,6 +62,8 @@ class D435Viewer:
         self.analyzer = AsparagusAnalyzer()
         if self.t_cam_to_scara is not None:
             self.analyzer.set_hand_eye_matrix(self.t_cam_to_scara)
+        if self.tag_localizer is not None:
+            self.analyzer.set_tag_localizer(self.tag_localizer)
         self.latest_targets = []
 
         # 鼠标交互状态
@@ -109,6 +111,7 @@ class D435Viewer:
             }
         }
         self.t_cam_to_scara = None
+        self.tag_localizer = None
         self.safe_z = 80.0
         self.drop_x = 220.0
         self.drop_y = 0.0
@@ -121,6 +124,15 @@ class D435Viewer:
                         default_config["camera"].update(loaded["camera"])
                     if "calibration" in loaded:
                         self.t_cam_to_scara = loaded["calibration"].get("t_cam_to_scara", None)
+                        # AprilTag 多标靶地图定位
+                        tags_map_path = loaded["calibration"].get("tags_map_path", "")
+                        if tags_map_path and os.path.exists(tags_map_path):
+                            try:
+                                from src.vision.tag_localizer import TagLocalizer
+                                self.tag_localizer = TagLocalizer(tags_map_path=tags_map_path)
+                                print(f"[D435Viewer] AprilTag 地图已加载: {tags_map_path}")
+                            except Exception as e:
+                                print(f"[D435Viewer] AprilTag 定位器加载失败: {e}")
                     if "robot" in loaded:
                         self.safe_z = float(loaded["robot"].get("safe_z_mm", 80.0))
                         self.drop_x = float(loaded["robot"].get("drop_x_mm", 220.0))
@@ -133,6 +145,8 @@ class D435Viewer:
 
         if hasattr(self, 'analyzer') and self.analyzer:
             self.analyzer.set_hand_eye_matrix(self.t_cam_to_scara)
+            if self.tag_localizer is not None:
+                self.analyzer.set_tag_localizer(self.tag_localizer)
 
     def init_filters(self):
         """初始化 RealSense 后处理滤波模块"""
@@ -497,20 +511,31 @@ class D435Viewer:
                 topmost = next((t for t in self.latest_targets if t.is_topmost), None) if self.detection_enabled else None
                 view_name_map = {"split_v": "上下排列", "rgb_only": "单图RGB高清", "split_h": "左右并排", "depth_only": "仅深度图"}
 
+                # 计算标定状态 OSD 标识
+                tag_info = getattr(self.analyzer, 'last_tag_info', {})
+                if tag_info and tag_info.get("static_tags_count", 0) >= 2:
+                    cal_osd_str = f"[TAG] {tag_info['static_tags_count']}静止标靶|重投影{tag_info.get('reprojection_error_px', 0.0):.2f}px"
+                elif self.analyzer and self.analyzer.last_valid_tag_transform is not None:
+                    cal_osd_str = "[TAG-CACHE 历史锁定]"
+                elif getattr(self.analyzer, 'is_hand_eye_calibrated', False):
+                    cal_osd_str = "[HAND-EYE 手工标定]"
+                else:
+                    cal_osd_str = "[未标定防撞]"
+
                 if self.is_paused:
                     # 暂停定格状态：醒目黄色条提醒
                     cv2.rectangle(final_canvas, (0, 0), (canvas_w, 32), (0, 140, 255), -1)
-                    pause_msg = f"[PAUSED / 画面已定格] 按 [Space] 恢复播放 | 检出芦笋: {len(self.latest_targets)} 根 | 视图: {view_name_map.get(self.view_mode)}"
-                    cv2.putText(final_canvas, pause_msg, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+                    pause_msg = f"{cal_osd_str} [PAUSED / 画面已定格] 按 [Space] 恢复播放 | 检出芦笋: {len(self.latest_targets)} 根 | 视图: {view_name_map.get(self.view_mode)}"
+                    cv2.putText(final_canvas, pause_msg, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2)
                 else:
                     if topmost:
-                        top_banner = f"[TOPMOST 顶层] L:{topmost.length_mm:.1f}mm D:{topmost.diam_mm:.1f}mm (+{topmost.rel_height_mm:.1f}mm) | Grip:(X:{topmost.grip_x:.1f}, Y:{topmost.grip_y:.1f}, Z:{topmost.grip_z:.1f}) R:{topmost.yaw_deg:.1f}°"
+                        top_banner = f"{cal_osd_str} [TOPMOST] L:{topmost.length_mm:.1f}mm D:{topmost.diam_mm:.1f}mm (+{topmost.rel_height_mm:.1f}mm) | Grip:(X:{topmost.grip_x:.1f}, Y:{topmost.grip_y:.1f}, Z:{topmost.grip_z:.1f}) R:{topmost.yaw_deg:.1f}°"
                         cv2.rectangle(final_canvas, (0, 0), (canvas_w, 30), (15, 55, 15), -1)
-                        cv2.putText(final_canvas, top_banner, (12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 120), 2)
+                        cv2.putText(final_canvas, top_banner, (12, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 120), 1)
                     else:
-                        live_banner = f"LIVE [{view_name_map.get(self.view_mode)}] | 检出: {len(self.latest_targets)} 根 | FPS: {current_fps:.1f} | 按[Space]可定格画面"
+                        live_banner = f"{cal_osd_str} | LIVE [{view_name_map.get(self.view_mode)}] | 检出: {len(self.latest_targets)} 根 | FPS: {current_fps:.1f} | 按[Space]可定格画面"
                         cv2.rectangle(final_canvas, (0, 0), (canvas_w, 28), (35, 35, 35), -1)
-                        cv2.putText(final_canvas, live_banner, (12, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 0), 1)
+                        cv2.putText(final_canvas, live_banner, (12, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
 
                 # 底部探针信息栏
                 cv2.rectangle(final_canvas, (0, canvas_h - 32), (canvas_w, canvas_h), (20, 20, 20), -1)
@@ -602,7 +627,7 @@ class D435Viewer:
                                         robot_z=round(rel_h, 1),
                                         robot_r=0.0,
                                         is_topmost=True,
-                                        is_calibrated=False
+                                        calibration_source="uncalibrated"
                                     )
                                     print("\n[INFO] 自动检测未锁定顶层，但已根据【鼠标点选示教点】一键生成防撞 G-code:")
                                     print(manual_t.generate_gcode(safe_z=self.safe_z, drop_x=self.drop_x, drop_y=self.drop_y) + "\n")

@@ -104,6 +104,7 @@ def load_system_config():
     """读取 config.yaml 中的标定与机器人参数"""
     cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.yaml"))
     t_cam_to_scara = None
+    tags_map_path = ""
     safe_z = 80.0
     drop_x = 220.0
     drop_y = 0.0
@@ -114,18 +115,19 @@ def load_system_config():
                 if cfg:
                     calib = cfg.get("calibration", {})
                     t_cam_to_scara = calib.get("t_cam_to_scara", None)
+                    tags_map_path = calib.get("tags_map_path", "")
                     r_cfg = cfg.get("robot", {})
                     safe_z = float(r_cfg.get("safe_z_mm", 80.0))
                     drop_x = float(r_cfg.get("drop_x_mm", 220.0))
                     drop_y = float(r_cfg.get("drop_y_mm", 0.0))
         except Exception as e:
             print(f"[WARN] 加载 config.yaml 异常: {e}")
-    return t_cam_to_scara, safe_z, drop_x, drop_y
+    return t_cam_to_scara, tags_map_path, safe_z, drop_x, drop_y
 
 
 def main():
     args = parse_args()
-    t_cam_to_scara, safe_z, drop_x, drop_y = load_system_config()
+    t_cam_to_scara, tags_map_path, safe_z, drop_x, drop_y = load_system_config()
 
     # 1. 获取彩色与深度数据
     if args.image and args.depth:
@@ -140,7 +142,16 @@ def main():
         color_img, depth_img, intrinsics = capture_from_d435()
         analyzer = AsparagusAnalyzer(fx=intrinsics.fx, fy=intrinsics.fy, cx=intrinsics.ppx, cy=intrinsics.ppy)
 
-    # 加载手眼标定矩阵
+    # 加载 AprilTag 多标靶地图定位器 (优先级最高)
+    if tags_map_path and os.path.exists(tags_map_path):
+        try:
+            from src.vision.tag_localizer import TagLocalizer
+            localizer = TagLocalizer(tags_map_path=tags_map_path)
+            analyzer.set_tag_localizer(localizer)
+        except Exception as e:
+            print(f"[WARN] AprilTag 定位器加载失败: {e}")
+
+    # 加载手工标定矩阵 (回退方案)
     if t_cam_to_scara is not None:
         analyzer.set_hand_eye_matrix(np.array(t_cam_to_scara, dtype=float))
 
@@ -183,7 +194,8 @@ def main():
                 "y_mm": topmost.robot_y,
                 "z_mm": topmost.robot_z,
                 "r_deg": topmost.robot_r,
-                "is_calibrated": topmost.is_calibrated
+                "is_calibrated": topmost.calibration_source != "uncalibrated",
+                "calibration_source": topmost.calibration_source
             },
             "pixel_center": [round(topmost.center_px[0], 1), round(topmost.center_px[1], 1)]
         },
@@ -208,7 +220,14 @@ def main():
     print("\n" + "=" * 76)
     print("        Intel RealSense D435 芦笋视觉特征分析与 SCARA 抓取解算报告")
     print("=" * 76)
-    print(f"检测物料总数: {len(targets)} 根 | 手眼标定状态: {'[已标定 Eye-to-Hand]' if analyzer.is_hand_eye_calibrated else '[未标定 - 防撞保护模式]'}")
+    calib_labels = {
+        "tag_online": "[AprilTag 在线定位]",
+        "tag_cached": "[AprilTag 缓存外参]",
+        "hand_eye": "[手工 SVD 标定]",
+        "uncalibrated": "[未标定 - 防撞保护模式]"
+    }
+    calib_status = calib_labels.get(targets[0].calibration_source if targets else "uncalibrated", "[未知]")
+    print(f"检测物料总数: {len(targets)} 根 | 标定状态: {calib_status}")
     print("-" * 76)
     print(f"{'序号':<6}{'状态':<10}{'长度(mm)':<12}{'直径(mm)':<12}{'偏航角R(°)':<12}{'台面凸起':<10}{'SCARA目标(X,Y,Z) mm'}")
     print("-" * 76)

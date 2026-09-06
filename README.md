@@ -38,10 +38,15 @@ graph LR
 | 维度 | 规格 | 工程要点 |
 | :--- | :--- | :--- |
 | **3D 传感器** | Intel RealSense D435 (主动红外双目 RGB-D) | 无 IMU，纯双目结构光 + 彩色图像 |
-| **安装方式** | 黑色传送带正上方，大倾角俯视 $(\pm 30°)$ | 算法自解算倾角，无需人工测量 |
+| **安装方式** | 黑色传送带正上方，大倾角俯视 $(\pm 30°)$ | 算法通过传送带点云平面拟合自解算倾角，无需人工测量 |
 | **工作距离** | $550 \sim 700\text{ mm}$（基准 ~640mm） | 避开 D435 近距盲区 (28cm) |
+| **空间标靶** | AprilTag 16h5 × 20 枚 (ID 0~19, 50mm) | Tag 0 锁定 SCARA 原点，Tag 1~19 贴机架静止刚体阵列 |
+| **坐标标定** | AprilTag 地图在线定位 *(设计目标)* | 当前过渡方案：手工多点触碰 SVD 配准（见下方说明） |
 | **执行机构** | 4 轴 SCARA + 双开闭夹爪 (Marlin G-code) | 串口通信：`G0 X.. Y.. R..` → `G1 Z..` → `M4` |
 | **分拣机构** | 8 级级联步进翻料 (ESP32 BLE) | 蓝牙单播：`Target ID: 1~8` |
+
+> [!IMPORTANT]
+> **坐标标定双轨现状**：当前代码中 `asparagus_analyzer.py` 的世界坐标变换仍使用 `hand_eye_calibration.py`（手工多点触碰 SVD 配准），**尚未集成 `tag_localizer.py` 的 AprilTag 在线定位**。按设计方案，最终目标是用 AprilTag 多标靶地图完全替代手工点触标定——详见 [apriltag_calibration.md](docs/apriltag_calibration.md)。
 
 ---
 

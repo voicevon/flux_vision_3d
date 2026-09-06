@@ -52,7 +52,11 @@ vision:
   min_aspect_ratio: 1.8              # 最小长宽比 (兼顾倾斜投影与局部遮挡)
 
 calibration:
-  # 手眼标定矩阵 (Eye-to-Hand: 相机坐标系 -> SCARA基座坐标系)
+  # AprilTag 多标靶地图定位 (优先级最高，文件不存在时自动跳过)
+  tags_map_path: "config/tags_map.yaml"
+
+  # 手工 SVD 点触标定矩阵 (AprilTag 不可用时的回退方案)
+  # Eye-to-Hand: 相机坐标系 -> SCARA基座坐标系
   # 初始单位矩阵，后续由手眼标定工具求解填入
   t_cam_to_scara:
     - [1.0, 0.0, 0.0, 0.0]

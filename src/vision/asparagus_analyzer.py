@@ -9,9 +9,10 @@
   5. 芦笋物理尺寸解算：物理长度 (Length mm)、截面直径 (Diameter mm)
   6. 掩膜中轴脊线抗噪深度采样 (Z_top, Z_center)
   7. 锁定最上层可抓取目标 (Topmost Pickable Target) 并输出 SCARA 夹爪位姿 (X, Y, Z, R)
+  8. 集成 AprilTag 多标靶在线相机外参定位 (TagLocalizer)，三级标定降级链
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 import cv2
 import numpy as np
@@ -47,7 +48,7 @@ class AsparagusTarget:
     robot_r: float = 0.0                 # SCARA 夹爪末端偏航角 (deg)
     
     is_topmost: bool = False             # 是否被判定为最顶层目标
-    is_calibrated: bool = False          # 是否已应用有效的手眼标定矩阵
+    calibration_source: str = "uncalibrated"  # 标定来源: "tag_online" | "tag_cached" | "hand_eye" | "uncalibrated"
 
     def generate_gcode(self, safe_z: float = 80.0, drop_x: float = 220.0, drop_y: float = 0.0) -> str:
         """
@@ -57,12 +58,18 @@ class AsparagusTarget:
         lines = []
         lines.append(f"; ==============================================================================")
         lines.append(f"; SCARA 抓取指令 (物料 #{self.id} | 长:{self.length_mm}mm 直径:{self.diam_mm}mm 凸起:+{self.rel_height_mm}mm)")
-        if not self.is_calibrated:
-            lines.append(f"; [安全警告] 当前手眼矩阵尚未标定 (Eye-to-Hand UNCALIBRATED)！")
+        if self.calibration_source == "uncalibrated":
+            lines.append(f"; [安全警告] 当前手眼矩阵尚未标定 (UNCALIBRATED)！")
             lines.append(f"; 坐标模式: 传送带物理基准系 (Z 轴采用凸起高度 {self.robot_z:.1f}mm，已拦截相机 500+mm 深度)")
-            lines.append(f"; 实机运行前请先运行 tools/hand_eye_calibration.py 完成物理点触标定！")
+            lines.append(f"; 实机运行前请完成 AprilTag 建图 (tools/tag_map_builder.py) 或手工标定 (tools/hand_eye_calibration.py)！")
+        elif self.calibration_source == "tag_online":
+            lines.append(f"; [状态] AprilTag 在线标靶定位 (实时 PnP 外参) 转换至机械臂基座坐标系")
+        elif self.calibration_source == "tag_cached":
+            lines.append(f"; [状态] AprilTag 历史缓存外参 (标靶暂不可见，沿用上帧锁定值)")
+        elif self.calibration_source == "hand_eye":
+            lines.append(f"; [状态] 手工 SVD 点触标定矩阵 (T_cam_to_scara) 转换至机械臂基座坐标系")
         else:
-            lines.append(f"; [状态] 已通过手眼标定矩阵 (T_cam_to_scara) 转换至机械臂基座坐标系")
+            lines.append(f"; [状态] 标定来源: {self.calibration_source}")
         lines.append(f"; ==============================================================================")
         lines.append(f"G90                     ; 绝对坐标模式")
         lines.append(f"G0 Z{safe_z:.1f} F4000          ; 提升至安全过渡高度 (避免平移推撞物料)")
@@ -98,8 +105,14 @@ class AsparagusAnalyzer:
         self.table_margin_mm = 8.0       # 相对工作台面的凸起门限 (mm, 排除底板杂散反光，放行扁平下压笋)
 
         # 手眼标定矩阵 (Eye-to-Hand: 相机坐标系 -> SCARA 基座坐标系, 4x4 齐次矩阵)
+        # 作为 AprilTag 在线定位不可用时的回退方案
         self.t_cam_to_scara: Optional[np.ndarray] = None
         self.is_hand_eye_calibrated: bool = False
+
+        # AprilTag 在线相机定位器 (优先级最高的标定来源)
+        self.tag_localizer = None  # type: Optional["TagLocalizer"]
+        self.last_valid_tag_transform: Optional[np.ndarray] = None  # 历史锁定外参缓存
+        self.last_tag_info: dict = {}  # 上一帧 AprilTag 定位的诊断信息
 
     def set_hand_eye_matrix(self, t_matrix: Optional[np.ndarray]):
         """
@@ -115,6 +128,41 @@ class AsparagusAnalyzer:
                 return
         self.t_cam_to_scara = None
         self.is_hand_eye_calibrated = False
+
+    def set_tag_localizer(self, localizer):
+        """
+        设置 AprilTag 在线相机定位器实例
+        :param localizer: TagLocalizer 实例 (已加载 tags_map.yaml)
+        """
+        self.tag_localizer = localizer
+
+    def _resolve_calibration(self, color_bgr: np.ndarray) -> Tuple[Optional[np.ndarray], str]:
+        """
+        三级标定降级链：解算当前帧的最优坐标变换矩阵与标定来源
+        优先级：AprilTag 在线定位 > AprilTag 历史缓存 > 手工 SVD 标定 > 未标定防撞
+        :return: (transform_matrix_4x4 或 None, calibration_source 字符串)
+        """
+        # 第一级：AprilTag 在线定位 (每帧实时 PnP 解算)
+        if self.tag_localizer is not None:
+            try:
+                success, t_cam_to_world, info = self.tag_localizer.localize_camera(color_bgr)
+                self.last_tag_info = info
+                if success and t_cam_to_world is not None:
+                    self.last_valid_tag_transform = t_cam_to_world.copy()
+                    return t_cam_to_world, "tag_online"
+            except Exception:
+                pass  # 定位器异常不应中断主流程
+
+            # 第二级：AprilTag 历史缓存外参 (标靶暂时不可见时沿用上帧)
+            if self.last_valid_tag_transform is not None:
+                return self.last_valid_tag_transform, "tag_cached"
+
+        # 第三级：手工 SVD 点触标定矩阵 (config.yaml 中的 t_cam_to_scara)
+        if self.is_hand_eye_calibrated and self.t_cam_to_scara is not None:
+            return self.t_cam_to_scara, "hand_eye"
+
+        # 第四级：完全未标定 — 启用防撞保护模式
+        return None, "uncalibrated"
 
     def update_intrinsics(self, fx: float, fy: float, cx: float, cy: float):
         """动态更新内参"""
@@ -308,12 +356,16 @@ class AsparagusAnalyzer:
     def analyze(self, color_bgr: np.ndarray, depth_mm: np.ndarray) -> List[AsparagusTarget]:
         """
         端到端全流程分析：
+          0. AprilTag 三级标定降级链解算当前帧坐标变换
           1. 拟合工作台平面并计算逐像素相对高度
           2. 黑帽暗缝检测切开并排粘连，分离出独立单根芦笋轮廓
           3. 基于 fitLine 解算各根芦笋轴线角度与长径尺寸
           4. 脊线深度采样与工作台倾斜补偿
           5. 叠压拓扑分析，锁定最顶层可抓取目标 (Topmost Pickable Target)
         """
+        # 步骤 0：三级标定降级链 — 解算当前帧最优坐标变换
+        frame_transform, frame_calib_source = self._resolve_calibration(color_bgr)
+
         plane_coeff = self.fit_table_plane(depth_mm)
         rel_h = self.compute_relative_height(depth_mm, plane_coeff)
         contours = self.segment_and_separate(color_bgr, depth_mm, rel_h)
@@ -417,23 +469,22 @@ class AsparagusAnalyzer:
             rect = cv2.minAreaRect(cnt)
             box_corners = cv2.boxPoints(rect).astype(np.int32)
 
-            # 计算机械臂 SCARA 抓取坐标系参数 (防撞防护与手眼标定矩阵变换)
-            if self.is_hand_eye_calibrated and self.t_cam_to_scara is not None:
+            # 计算机械臂 SCARA 抓取坐标系参数 (三级标定降级链坐标变换)
+            if frame_transform is not None:
                 p_cam_h = np.array([grip_x, grip_y, grip_z, 1.0])
-                p_robot_h = self.t_cam_to_scara @ p_cam_h
+                p_robot_h = frame_transform @ p_cam_h
                 robot_x = float(p_robot_h[0])
                 robot_y = float(p_robot_h[1])
                 robot_z = float(p_robot_h[2])
 
-                # 经过手眼旋转矩阵变换芦笋主轴方向，解算夹爪在 SCARA 水平面的目标旋转角
-                r_mat = self.t_cam_to_scara[:3, :3]
+                # 经过标定旋转矩阵变换芦笋主轴方向，解算夹爪在 SCARA 水平面的目标旋转角
+                r_mat = frame_transform[:3, :3]
                 v_cam = np.array([vx_val, vy_val, 0.0])
                 v_robot = r_mat @ v_cam
                 r_rad = np.arctan2(v_robot[1], v_robot[0])
                 robot_r = float(np.degrees(r_rad))
                 if robot_r > 90.0: robot_r -= 180.0
                 elif robot_r < -90.0: robot_r += 180.0
-                is_target_calibrated = True
             else:
                 # [核心安全防撞机制] 未标定安全模式：
                 # 机械臂 Z 轴绝对禁止直接使用相机镜头深度 (grip_z ~530mm)，否则必撞机毁机！
@@ -442,7 +493,6 @@ class AsparagusAnalyzer:
                 robot_y = float(grip_y)
                 robot_z = float(rel_height_mm)
                 robot_r = float(yaw_deg)
-                is_target_calibrated = False
 
             target = AsparagusTarget(
                 id=target_idx,
@@ -465,7 +515,7 @@ class AsparagusAnalyzer:
                 robot_z=round(robot_z, 1),
                 robot_r=round(robot_r, 1),
                 is_topmost=False,
-                is_calibrated=is_target_calibrated
+                calibration_source=frame_calib_source
             )
             targets.append(target)
             target_idx += 1

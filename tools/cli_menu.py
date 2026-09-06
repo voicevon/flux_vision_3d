@@ -248,16 +248,15 @@ def run_test_real():
 
 
 def run_test_all():
-    print(f"\n{C_CYAN}[测试]{C_RESET} 正在依次运行全部自动化测试套件...")
-    print(f"\n--- [1/2] 运行 test_mock_pipeline.py ---")
-    ret1 = subprocess.run([sys.executable, "tests/test_mock_pipeline.py"])
-    print(f"\n--- [2/2] 运行 test_real_snapshot.py ---")
-    ret2 = subprocess.run([sys.executable, "tests/test_real_snapshot.py"])
+    print(f"\n{C_CYAN}[测试]{C_RESET} 正在运行全部单元测试与集成测试套件...")
+    ret = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"])
+    print(f"\n--- 真实快照回归测试 (20组快照) ---")
+    ret_snap = subprocess.run([sys.executable, "tests/test_real_snapshot.py"])
     print(f"\n{C_BOLD}==============================================================================={C_RESET}")
-    if ret1.returncode == 0 and ret2.returncode == 0:
-        print(f"{C_GREEN}[ALL PASSED] 所有测试均成功通过！{C_RESET}")
+    if ret.returncode == 0 and ret_snap.returncode == 0:
+        print(f"{C_GREEN}[ALL PASSED] 所有测试与回归套件均成功通过！{C_RESET}")
     else:
-        print(f"{C_RED}[WARNING] 部分测试未通过或跳过，请检查上述日志。{C_RESET}")
+        print(f"{C_RED}[WARNING] 部分测试未通过，请检查上述日志。{C_RESET}")
     print(f"{C_BOLD}==============================================================================={C_RESET}")
     pause_prompt()
 
@@ -279,6 +278,7 @@ def run_env_diagnostics():
         ("NumPy", "numpy", "__version__"),
         ("PyYAML", "yaml", "__version__"),
         ("SciPy", "scipy", "__version__"),
+        ("pupil-apriltags", "pupil_apriltags", "__version__"),
         ("RealSense SDK", "pyrealsense2", "__version__"),
         ("PySerial (串口)", "serial", "__version__"),
         ("Bleak (BLE蓝牙)", "bleak", "__version__"),
@@ -292,6 +292,22 @@ def run_env_diagnostics():
             print(f" [OK] {name:<16} : {ver}")
         except ImportError:
             print(f" {C_YELLOW}[未安装]{C_RESET} {name:<12} : 缺失 (可使用选项 8 安装)")
+
+    # 检查 AprilTag 空间地图
+    tags_map_file = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
+    print("-" * 60)
+    print("标靶与标定文件状态:")
+    if os.path.exists(tags_map_file):
+        try:
+            import yaml
+            with open(tags_map_file, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f) or {}
+            tags = data.get("tags", {})
+            print(f" [OK] AprilTag 地图     : {tags_map_file} (包含 {len(tags)} 个标靶)")
+        except Exception as e:
+            print(f" {C_YELLOW}[异常]{C_RESET} AprilTag 地图     : 读取失败 ({e})")
+    else:
+        print(f" {C_GRAY}[未生成]{C_RESET} AprilTag 地图   : {tags_map_file} (未生成，回退到手工标定)")
 
     print("-" * 60)
     pause_prompt()

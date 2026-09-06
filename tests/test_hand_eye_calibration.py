@@ -77,7 +77,7 @@ class TestHandEyeCalibrationAndSafety(unittest.TestCase):
             robot_z=rel_height,       # 未标定时强制采用相对台面凸起
             robot_r=15.0,
             is_topmost=True,
-            is_calibrated=False       # 明确未标定
+            calibration_source="uncalibrated"
         )
 
         gcode = target.generate_gcode(safe_z=80.0, drop_x=220.0, drop_y=0.0)
@@ -118,11 +118,10 @@ class TestHandEyeCalibrationAndSafety(unittest.TestCase):
         self.assertGreater(len(targets), 0)
         top = targets[0]
 
-        self.assertTrue(top.is_calibrated)
-        # 验证经过矩阵转换后，robot_z 应该由 640 - 580 = 60mm 附近
+        self.assertEqual(top.calibration_source, "hand_eye")
         self.assertAlmostEqual(top.robot_z, 640.0 - top.grip_z, delta=5.0)
         gcode = top.generate_gcode()
-        self.assertIn("已通过手眼标定矩阵", gcode)
+        self.assertIn("手工 SVD 点触标定矩阵", gcode)
 
 
 if __name__ == "__main__":
