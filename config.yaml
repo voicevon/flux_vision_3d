@@ -32,26 +32,24 @@ camera:
       persistence_control: 3         # 8/8 帧有效持久度模式
     threshold:
       enabled: true                  # 距离门限滤波器
-      min_distance: 0.35             # 最小截断深度 (米) - 放行 0.40m 以上的近景目标
-      max_distance: 0.65             # 最大截断深度 (米) - 滤掉 0.55m 工作台底面以下的背景杂散点
+      min_distance: 0.40             # 最小截断深度 (米) - 放行 0.40m 以上的近景目标
+      max_distance: 0.70             # 最大截断深度 (米) - 滤除 0.65m 工作台底面以下的杂散背景
   
   # 深度可视化色彩映射区间 (米)
   colormap:
-    min_distance: 0.40               # 最顶层近距对应暖红色 (400mm)
-    max_distance: 0.55               # 底面远距对应深蓝色 (550mm)
+    min_distance: 0.48               # 最顶层近距对应暖红色 (~520mm)
+    max_distance: 0.66               # 工作台底面远距对应深蓝色 (~640-650mm)
     auto_range: false                # 是否开启按当前视野动态自适应拉伸 (按 'A' 键切换)
 
 vision:
-  # 2D 分割与脊线腐蚀参数
-  segmentation_mode: "contour"       # contour (传统自适应轮廓) 或 yolo (YOLOv8-seg)
-  erosion_kernel_size: 7             # 掩膜腐蚀核尺寸 (像素，剥离边缘飞点，获得中轴脊线)
-  erosion_iterations: 1              # 腐蚀迭代次数
-  spine_percentile: 15               # 脊线深度分位数 (取前15%作为芦笋顶面Z_top，抗反光0值)
-  min_asparagus_area: 1200           # 最小连通域像素面积 (过滤碎渣杂物)
-  
-  # 叠压拓扑与判顶参数
-  overlap_iou_threshold: 0.05        # 判定两根芦笋 2D 重叠的最小 IoU 阈值
-  z_overlap_tolerance_mm: 4.0        # 相对深度差判定压叠顺序的置信度门限 (mm)
+  # 2D/3D 分层分离与形态学参数
+  table_margin_mm: 8.0               # 相对工作台面的最小凸起高度门限 (mm, 排除底板，放行扁平下压笋)
+  min_asparagus_area: 600            # 最小连通域像素面积 (过滤碎渣杂物)
+  min_length_mm: 60.0                # 最小物理长度 (mm, 涵盖短切与端头)
+  max_length_mm: 550.0               # 最大物理长度 (mm, 充分容纳 400~500mm 特长芦笋)
+  min_diam_mm: 5.0                   # 最小物理直径 (mm, 涵盖笋尖)
+  max_diam_mm: 65.0                  # 最大物理直径 (mm, 涵盖大直径特级笋及并排局部接触)
+  min_aspect_ratio: 1.8              # 最小长宽比 (兼顾倾斜投影与局部遮挡)
 
 calibration:
   # 手眼标定矩阵 (Eye-to-Hand: 相机坐标系 -> SCARA基座坐标系)

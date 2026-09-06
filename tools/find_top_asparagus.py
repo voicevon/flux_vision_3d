@@ -98,26 +98,34 @@ def capture_from_d435():
         pipeline.stop()
 
 
-def generate_scara_gcode(target: AsparagusTarget, safe_z: float = 50.0) -> str:
-    """生成 SCARA 机械臂直接执行的 G-code 抓取序列"""
-    gcode = []
-    gcode.append(f"; === SCARA 机械臂抓取最上层芦笋指令 ===")
-    gcode.append(f"; 目标物料: 长度={target.length_mm}mm, 直径={target.diam_mm}mm, 相对台面高={target.rel_height_mm}mm")
-    gcode.append(f"; 相机系夹持中心: X={target.grip_x}mm, Y={target.grip_y}mm, Z={target.grip_z}mm, 偏航角={target.yaw_deg}度")
-    gcode.append(f"G90                     ; 绝对坐标模式")
-    gcode.append(f"G0 Z{safe_z:.1f} F3000          ; 提升末端执行器至安全离地高度")
-    gcode.append(f"M280 P1 S10             ; 预先张开气动/伺服平行夹板")
-    gcode.append(f"; 注意: 实际执行时需将 (grip_x, grip_y) 经手眼矩阵变换至机器人基座 (X_base, Y_base)")
-    gcode.append(f"G0 X{target.grip_x:.1f} Y{target.grip_y:.1f} R{target.yaw_deg:.1f} F4000 ; 平移对准目标上方，同时旋转夹爪对齐芦笋轴线")
-    gcode.append(f"G1 Z{target.grip_z:.1f} F1500          ; 垂直下探至目标物料夹持高度")
-    gcode.append(f"M280 P1 S90             ; 闭合夹板夹紧芦笋")
-    gcode.append(f"G4 P200                 ; 驻留延时 200ms 确保夹持稳固")
-    gcode.append(f"G0 Z{safe_z:.1f} F3000          ; 垂直平稳提起最上层芦笋")
-    return "\n".join(gcode)
+import yaml
+
+def load_system_config():
+    """读取 config.yaml 中的标定与机器人参数"""
+    cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.yaml"))
+    t_cam_to_scara = None
+    safe_z = 80.0
+    drop_x = 220.0
+    drop_y = 0.0
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f)
+                if cfg:
+                    calib = cfg.get("calibration", {})
+                    t_cam_to_scara = calib.get("t_cam_to_scara", None)
+                    r_cfg = cfg.get("robot", {})
+                    safe_z = float(r_cfg.get("safe_z_mm", 80.0))
+                    drop_x = float(r_cfg.get("drop_x_mm", 220.0))
+                    drop_y = float(r_cfg.get("drop_y_mm", 0.0))
+        except Exception as e:
+            print(f"[WARN] 加载 config.yaml 异常: {e}")
+    return t_cam_to_scara, safe_z, drop_x, drop_y
 
 
 def main():
     args = parse_args()
+    t_cam_to_scara, safe_z, drop_x, drop_y = load_system_config()
 
     # 1. 获取彩色与深度数据
     if args.image and args.depth:
@@ -131,6 +139,10 @@ def main():
         print("[INFO] 正在从 Intel RealSense D435 捕获当前对齐数据帧...")
         color_img, depth_img, intrinsics = capture_from_d435()
         analyzer = AsparagusAnalyzer(fx=intrinsics.fx, fy=intrinsics.fy, cx=intrinsics.ppx, cy=intrinsics.ppy)
+
+    # 加载手眼标定矩阵
+    if t_cam_to_scara is not None:
+        analyzer.set_hand_eye_matrix(np.array(t_cam_to_scara, dtype=float))
 
     # 2. 执行芦笋特征分析与最顶层判决
     targets = analyzer.analyze(color_img, depth_img)
@@ -166,6 +178,13 @@ def main():
                 "y_mm": topmost.grip_y,
                 "z_mm": topmost.grip_z
             },
+            "robot_grasp_pose": {
+                "x_mm": topmost.robot_x,
+                "y_mm": topmost.robot_y,
+                "z_mm": topmost.robot_z,
+                "r_deg": topmost.robot_r,
+                "is_calibrated": topmost.is_calibrated
+            },
             "pixel_center": [round(topmost.center_px[0], 1), round(topmost.center_px[1], 1)]
         },
         "all_targets": [
@@ -176,6 +195,7 @@ def main():
                 "diameter_mm": t.diam_mm,
                 "yaw_deg": t.yaw_deg,
                 "grasp_point_camera": {"x_mm": t.grip_x, "y_mm": t.grip_y, "z_mm": t.grip_z},
+                "robot_grasp_pose": {"x_mm": t.robot_x, "y_mm": t.robot_y, "z_mm": t.robot_z, "r_deg": t.robot_r},
                 "relative_height_mm": t.rel_height_mm
             } for t in targets
         ]
@@ -185,29 +205,30 @@ def main():
         print(json.dumps(result_dict, indent=2))
         return
 
-    print("\n" + "=" * 70)
-    print("      Intel RealSense D435 芦笋视觉特征分析与最顶层判决报告")
-    print("=" * 70)
-    print(f"检测物料总数: {len(targets)} 根")
-    print("-" * 70)
-    print(f"{'序号':<6}{'状态':<10}{'长度(mm)':<12}{'直径(mm)':<12}{'偏航角R(°)':<12}{'台面凸起(mm)':<14}{'抓取位姿(X, Y, Z) mm'}")
-    print("-" * 70)
+    print("\n" + "=" * 76)
+    print("        Intel RealSense D435 芦笋视觉特征分析与 SCARA 抓取解算报告")
+    print("=" * 76)
+    print(f"检测物料总数: {len(targets)} 根 | 手眼标定状态: {'[已标定 Eye-to-Hand]' if analyzer.is_hand_eye_calibrated else '[未标定 - 防撞保护模式]'}")
+    print("-" * 76)
+    print(f"{'序号':<6}{'状态':<10}{'长度(mm)':<12}{'直径(mm)':<12}{'偏航角R(°)':<12}{'台面凸起':<10}{'SCARA目标(X,Y,Z) mm'}")
+    print("-" * 76)
     for t in targets:
         status = "[TOP 最顶层]" if t.is_topmost else f"第{t.id}层(下压)"
-        grip_str = f"({t.grip_x}, {t.grip_y}, {t.grip_z})"
-        print(f"#{t.id:<5}{status:<10}{t.length_mm:<12}{t.diam_mm:<12}{t.yaw_deg:<12}{t.rel_height_mm:<14}{grip_str}")
-    print("=" * 70)
+        scara_str = f"({t.robot_x}, {t.robot_y}, {t.robot_z})"
+        print(f"#{t.id:<5}{status:<10}{t.length_mm:<12}{t.diam_mm:<12}{t.robot_r:<12}+{t.rel_height_mm:<9}{scara_str}")
+    print("=" * 76)
 
     print("\n>>> 最上层可抓取芦笋 (Topmost Pickable Target) 核心参数:")
     print(f"  * 物理长度 (Length):     {topmost.length_mm} mm")
     print(f"  * 物理直径 (Diameter):   {topmost.diam_mm} mm")
-    print(f"  * 夹持旋转角 (Yaw / R):  {topmost.yaw_deg} deg (夹板旋转角度)")
-    print(f"  * 夹爪目标坐标 (Camera): X={topmost.grip_x} mm, Y={topmost.grip_y} mm, Z={topmost.grip_z} mm")
+    print(f"  * 夹持旋转角 (Yaw / R):  {topmost.robot_r} deg (夹爪末端旋转角度)")
+    print(f"  * 相机坐标测量 (Camera): X={topmost.grip_x} mm, Y={topmost.grip_y} mm, Z={topmost.grip_z} mm")
+    print(f"  * 机械臂抓取目标 (SCARA): X={topmost.robot_x} mm, Y={topmost.robot_y} mm, Z={topmost.robot_z} mm")
     print(f"  * 相对工作台凸起净高:    +{topmost.rel_height_mm} mm")
 
-    print("\n>>> 生成的 SCARA 抓取执行指令 (G-code):")
-    print(generate_scara_gcode(topmost))
-    print("=" * 70)
+    print("\n>>> 生成的 SCARA 防撞抓取执行指令 (G-code):")
+    print(topmost.generate_gcode(safe_z=safe_z, drop_x=drop_x, drop_y=drop_y))
+    print("=" * 76)
 
     if args.save_vis:
         print(f"[OK] 视觉检测标注图已保存至: {args.save_vis}\n")
