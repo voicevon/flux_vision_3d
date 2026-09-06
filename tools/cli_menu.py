@@ -90,6 +90,8 @@ def print_banner(status):
     print(f"   {C_GREEN}[4]{C_RESET} 解算最顶层芦笋抓取位姿 (离线快照)      (自动读取最新本地快照)")
     print(f"   {C_GREEN}[5]{C_RESET} 快速生成一帧模拟快照至 snapshots       (方便无相机时进行算法验证)")
     print(f"   {C_GREEN}[H]{C_RESET} 运行 SCARA 手眼标定向导               (Eye-to-Hand 物理接触配准/求解矩阵)")
+    print(f"   {C_GREEN}[T]{C_RESET} 生成 AprilTag 16h5 标靶高清图与排版   (生成 ID 0~19 标靶，含 Tag 0 原点对齐刻度)")
+    print(f"   {C_GREEN}[M]{C_RESET} 构建 AprilTag 多标靶 3D 空间立体地图   (读取多视角图片运行 BA 全局平差建图)")
     print("")
     print(f"{C_BOLD} [ 自动化测试 (Tests) ]{C_RESET}")
     print(f"   {C_GREEN}[6]{C_RESET} 运行仿真管线测试                       (tests/test_mock_pipeline.py)")
@@ -221,6 +223,18 @@ def run_hand_eye_calibration():
     pause_prompt()
 
 
+def run_generate_tags():
+    print(f"\n{C_CYAN}[标靶]{C_RESET} 正在生成 AprilTag 16h5 高清标靶与排版图...")
+    subprocess.run([sys.executable, "tools/generate_apriltags.py"])
+    pause_prompt()
+
+
+def run_build_tag_map():
+    print(f"\n{C_CYAN}[建图]{C_RESET} 正在启动多标靶空间立体地图建图工具 (tag_map_builder.py)...")
+    subprocess.run([sys.executable, "tools/tag_map_builder.py"])
+    pause_prompt()
+
+
 def run_test_mock():
     print(f"\n{C_CYAN}[测试]{C_RESET} 正在执行仿真管线测试 (test_mock_pipeline.py)...")
     subprocess.run([sys.executable, "tests/test_mock_pipeline.py"])
@@ -314,6 +328,10 @@ def main():
             run_gen_mock_snapshot()
         elif choice.upper() == "H":
             run_hand_eye_calibration()
+        elif choice.upper() == "T":
+            run_generate_tags()
+        elif choice.upper() == "M":
+            run_build_tag_map()
         elif choice == "6":
             run_test_mock()
         elif choice == "7":
