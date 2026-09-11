@@ -3,9 +3,14 @@
 camera:
   device_serial: ""                  # 为空时自动匹配首个连接的 RealSense 设备
   color:
-    width: 1280
-    height: 720
-    fps: 30
+    width: 1920
+    height: 1080
+    fps: 8
+    # 物理 RealSense D435 出厂高精度标定内参 (1080P 模式)
+    fx: 1363.68
+    fy: 1361.19
+    cx: 971.19
+    cy: 566.26
   depth:
     width: 848
     height: 480
@@ -52,8 +57,21 @@ vision:
   min_aspect_ratio: 1.8              # 最小长宽比 (兼顾倾斜投影与局部遮挡)
 
 calibration:
+  # 现场物理布置的已知标靶 ID 白名单 (当前共布置 18~29 号共 12 枚物理标靶)
+  # 严格锁定白名单，彻底杜绝复杂机械/背景反光导致的伪造标靶虚警
+  valid_tag_ids: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+
   # AprilTag 多标靶地图定位 (优先级最高，文件不存在时自动跳过)
   tags_map_path: "config/tags_map.yaml"
+
+  # AprilTag 图像反差与环境光自适应配置 (可由采图向导动态微调并保存)
+  tag_detection:
+    contrast_boost: 1.6              # 对比度增强增益 (1.0 为原生, 1.5~2.5 强力拉开低反差)
+    enable_auto_stretch: true        # 动态全动态范围直方图拉伸 (彻底克服发灰/背光)
+    clahe_clip_limit: 4.0            # 局部对比度自适应均衡化强度 (默认 4.0)
+    min_otsu_std_dev: 1.5            # 最小反差标准差门限 (从 5.0 放宽至 1.5，允许微弱灰暗标靶)
+    adaptive_thresh_constant: 3.0    # 自适应二值化常数偏移 (减小偏移提升弱光黑块识别)
+    min_perimeter_rate: 0.006        # 最小标靶周长占比 (覆盖远距微小标靶)
 
   # 手工 SVD 点触标定矩阵 (AprilTag 不可用时的回退方案)
   # Eye-to-Hand: 相机坐标系 -> SCARA基座坐标系
