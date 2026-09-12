@@ -34,10 +34,7 @@ sys.path.insert(0, PROJECT_ROOT)
 try:
     from tools.calibration.tag_map_builder import TagMapBuilder
 except ImportError:
-    try:
-        from tools.tag_map_builder import TagMapBuilder
-    except ImportError:
-        TagMapBuilder = None
+    TagMapBuilder = None
 
 
 class TagManifestReviewer:

@@ -61,7 +61,7 @@ class AsparagusTarget:
         if self.calibration_source == "uncalibrated":
             lines.append(f"; [安全警告] 当前手眼矩阵尚未标定 (UNCALIBRATED)！")
             lines.append(f"; 坐标模式: 传送带物理基准系 (Z 轴采用凸起高度 {self.robot_z:.1f}mm，已拦截相机 500+mm 深度)")
-            lines.append(f"; 实机运行前请完成 AprilTag 建图 (tools/tag_map_builder.py) 或手工标定 (tools/hand_eye_calibration.py)！")
+            lines.append(f"; 实机运行前请完成 AprilTag 建图 (tools/calibration/tag_map_builder.py) 或手工标定 (tools/calibration/hand_eye_calibration.py)！")
         elif self.calibration_source == "tag_online":
             lines.append(f"; [状态] AprilTag 在线标靶定位 (实时 PnP 外参) 转换至机械臂基座坐标系")
         elif self.calibration_source == "tag_cached":

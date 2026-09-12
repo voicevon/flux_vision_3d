@@ -1513,10 +1513,7 @@ def interactive_workflow(args, builder: TagMapBuilder, image_paths: List[str], b
 
         if choice == '1':
             try:
-                try:
-                    from tools.calibration.tag_manifest_reviewer import TagManifestReviewer
-                except ImportError:
-                    from tools.tag_manifest_reviewer import TagManifestReviewer
+                from tools.calibration.tag_manifest_reviewer import TagManifestReviewer
                 print("\n[启动] 正在启动 AprilTag 观测样本交互审核画板...")
                 reviewer = TagManifestReviewer(manifest_path=manifest_path, builder=builder)
                 reviewer.run()

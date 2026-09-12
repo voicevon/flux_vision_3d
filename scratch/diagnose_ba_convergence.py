@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-from tools.tag_map_builder import TagMapBuilder
+from tools.calibration.tag_map_builder import TagMapBuilder
 
 builder = TagMapBuilder()
 f_dets, v_frames, _ = builder.load_observations_manifest("data/tag_calibration_images/tag_observations.yaml")
