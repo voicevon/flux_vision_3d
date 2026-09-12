@@ -26,6 +26,7 @@ AprilTag 标定精度与 3D 坐标系在线 AR 综合验证系统 (Integrated AR
      - 快捷键：[Tab/M] 乒乓切换模式、[Space] 重新采样锁定/抓拍、[W] 切换采样批次(30F/60F)、[T/B] 盲测切换、[A/D] 仿真翻页。
 """
 
+
 import os
 import sys
 import time
@@ -56,6 +57,11 @@ except ImportError:
     resolve_camera_intrinsics = None
 
 try:
+    from src.utils.window_helper import force_window_focus
+except ImportError:
+    force_window_focus = None
+
+try:
     import pyrealsense2 as rs
     HAVE_REALSENSE = True
 except ImportError:
@@ -63,9 +69,10 @@ except ImportError:
 
 
 class TagCalibrationVerifier:
-    def __init__(self, map_path: str = DEFAULT_MAP_PATH, mock_mode: bool = False):
+    def __init__(self, map_path: str = DEFAULT_MAP_PATH, mock_mode: bool = False, report_path: str = None):
         self.map_path = map_path
         self.mock_mode = mock_mode
+        self.report_path = report_path
         self.tags_map = None
         self.marker_size_mm = 50.0
 
@@ -139,6 +146,15 @@ class TagCalibrationVerifier:
         self.status_toast = ""
         self.status_toast_time = 0.0
 
+        # 7. 一键 BA 全局平差优化与 HUD 诊断终端状态 (方案 B 可折叠终端浮层)
+        self.show_hud_terminal = False
+        self.hud_terminal_lines = []
+        self.hud_scroll_offset = 0
+        self.is_ba_running = False
+        self.ba_result_queue = None
+        self.ba_thread = None
+        self.load_latest_diagnostic_report()
+
         # 硬件相机管道
         self.pipeline = None
         if not self.mock_mode and HAVE_REALSENSE:
@@ -186,6 +202,175 @@ class TagCalibrationVerifier:
             print(f"[OK] 成功加载标靶空间地图: {self.map_path} (共包含 {tag_count} 个已知标靶)")
         except Exception as e:
             print(f"[ERROR] 读取标靶地图失败: {e}")
+
+    def hot_reload_map(self) -> bool:
+        """内存即刻热重载最新生成的标靶空间立体地图"""
+        try:
+            self._load_tags_map()
+            if self.tags_map and "tags" in self.tags_map:
+                self.mapped_tag_ids = sorted([int(tid) for tid in self.tags_map["tags"].keys()])
+                # 若此前处于静态锁定状态，清空锁定位姿以使用全新地图重新定姿
+                self.locked_pose = None
+                print(f"[HOT-RELOAD] 标靶空间地图已成功热重载！包含 {len(self.mapped_tag_ids)} 个标靶: {self.mapped_tag_ids}")
+                return True
+        except Exception as e:
+            print(f"[ERROR] 热重载标靶地图失败: {e}")
+        return False
+
+    @property
+    def hud_visible(self) -> bool:
+        return self.show_hud_terminal
+
+    @hud_visible.setter
+    def hud_visible(self, val: bool):
+        self.show_hud_terminal = val
+
+    @property
+    def diagnostic_lines(self) -> list:
+        return self.hud_terminal_lines
+
+    def load_latest_diagnostic_report(self):
+        """加载最新的 BA 全局平差诊断报告 Markdown 文本"""
+        diag_path = self.report_path if self.report_path else os.path.join(VERIFICATION_DIR, "ba_precision_diagnostic_report.md")
+        lines = []
+        if os.path.exists(diag_path):
+            try:
+                with open(diag_path, "r", encoding="utf-8") as f:
+                    raw_lines = f.readlines()
+                for line in raw_lines:
+                    cleaned = line.rstrip("\r\n")
+                    if cleaned.strip() != "":
+                        lines.append(cleaned)
+                self.hud_terminal_lines = lines
+                self.hud_scroll_offset = 0
+            except Exception as e:
+                self.hud_terminal_lines = [f"[WARN] 读取诊断报告异常: {e}"]
+        else:
+            self.hud_terminal_lines = [
+                "# AprilTag 全局 BA 平差精度诊断终端",
+                "--------------------------------------------------",
+                "尚未执行过 BA 全局平差求解，无历史报告。",
+                "提示: 请直接点击底部 [⚡ 求解BA (B)] 按钮一键启动求解！"
+            ]
+
+    def toggle_hud_terminal(self):
+        """展开或折叠 HUD 诊断报告终端浮层"""
+        self.show_hud_terminal = not self.show_hud_terminal
+        if self.show_hud_terminal:
+            self.load_latest_diagnostic_report()
+            self.set_toast("已展开 HUD 诊断报告终端 (按 H 折叠)")
+        else:
+            self.set_toast("已折叠 HUD 终端")
+
+    def start_async_bundle_adjustment(self):
+        """启动后台线程异步求解全局 BA 平差优化，前台画面保持极速流畅"""
+        if self.is_ba_running:
+            self.set_toast("⚡ BA 全局平差优化正在进行中，请稍候...")
+            return
+
+        import threading
+        self.is_ba_running = True
+        self.ba_result_queue = None
+        self.set_toast("⚡ 正在执行 BA 平差优化计算 (请稍候)...")
+        print("\n" + "=" * 70)
+        print("  [*] [ASYNC-BA] 收到平差求解指令，正在启动后台优化线程...")
+        print("=" * 70)
+
+        def _worker():
+            try:
+                from tools.calibration.tag_map_builder import TagMapBuilder
+                builder = TagMapBuilder(marker_size_mm=self.marker_size_mm)
+                manifest_file = os.path.join(CALIB_IMAGES_DIR, "tag_observations.yaml")
+                if not os.path.exists(manifest_file):
+                    self.ba_result_queue = (False, f"未找到观测清单: {manifest_file}")
+                    return
+
+                # 执行两阶段建图与 BA 平差求解 (原点锚定 Tag 0，X 轴基准 Tag 18)
+                tags_map = builder.build_map_from_manifest(
+                    manifest_path=manifest_file,
+                    origin_tag_id=0,
+                    x_align_tag_id=18
+                )
+                builder.save_map(tags_map, self.map_path)
+                rmse = float(tags_map.get("metrics", {}).get("reprojection_rmse_px", 0.0))
+                self.ba_result_queue = (True, f"BA 平差优化完成! RMSE: {rmse:.3f}px | 地图已热加载")
+            except Exception as e:
+                self.ba_result_queue = (False, f"BA 求解失败: {e}")
+            finally:
+                self.is_ba_running = False
+
+        self.ba_thread = threading.Thread(target=_worker, daemon=True)
+        self.ba_thread.start()
+
+    def render_hud_terminal(self, disp_frame: np.ndarray):
+        """在画面右侧渲染科技感黑晶磨砂 HUD 诊断文本终端浮层"""
+        if not self.show_hud_terminal:
+            return disp_frame
+
+        h_img, w_img = disp_frame.shape[:2]
+        term_w = min(620, w_img - 80)
+        term_h = h_img - 110
+        tx1 = w_img - term_w - 18
+        ty1 = 48
+        tx2 = w_img - 18
+        ty2 = ty1 + term_h
+
+        # 1. 磨砂暗黑半透明底板
+        overlay = disp_frame.copy()
+        cv2.rectangle(overlay, (tx1, ty1), (tx2, ty2), (12, 14, 20), -1)
+        cv2.addWeighted(overlay, 0.90, disp_frame, 0.10, 0, disp_frame)
+        cv2.rectangle(disp_frame, (tx1, ty1), (tx2, ty2), (0, 190, 230), 1)
+
+        # 2. 顶部标题栏 (深青蓝背景，高 34px)
+        title_h = 34
+        cv2.rectangle(disp_frame, (tx1, ty1), (tx2, ty1 + title_h), (25, 45, 75), -1)
+        cv2.line(disp_frame, (tx1, ty1 + title_h), (tx2, ty1 + title_h), (0, 200, 240), 1)
+        cv2.putText(disp_frame, "【📋 BA 全局平差精度诊断与空间位姿终端】", 
+                    (tx1 + 12, ty1 + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # 标题栏右上角关闭按钮 [X]
+        close_btn_w = 64
+        cx1, cy1 = tx2 - close_btn_w - 6, ty1 + 4
+        cx2, cy2 = tx2 - 6, ty1 + title_h - 4
+        cv2.rectangle(disp_frame, (cx1, cy1), (cx2, cy2), (60, 40, 130), -1)
+        cv2.rectangle(disp_frame, (cx1, cy1), (cx2, cy2), (100, 80, 230), 1)
+        cv2.putText(disp_frame, "关闭(H)", (cx1 + 8, cy1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+        self.gui_buttons.append(("TOGGLE_HUD", (cx1, cy1, cx2, cy2), "TOGGLE_HUD"))
+
+        # 3. 终端正文区域渲染
+        content_y1 = ty1 + title_h + 10
+        content_y2 = ty2 - 28
+        visible_lines_count = max(1, (content_y2 - content_y1) // 22)
+
+        total_lines = len(self.hud_terminal_lines)
+        max_scroll = max(0, total_lines - visible_lines_count)
+        self.hud_scroll_offset = max(0, min(max_scroll, self.hud_scroll_offset))
+
+        curr_y = content_y1 + 16
+        for l_idx in range(self.hud_scroll_offset, min(total_lines, self.hud_scroll_offset + visible_lines_count)):
+            line_str = self.hud_terminal_lines[l_idx]
+            # 颜色语法高亮匹配
+            if "PASS" in line_str or "√" in line_str or "极佳" in line_str or "SUCCESS" in line_str:
+                line_col = (80, 240, 120)
+            elif "FAIL" in line_str or "×" in line_str or "告警" in line_str or "ERROR" in line_str:
+                line_col = (80, 80, 255)
+            elif "Tag #" in line_str or "===" in line_str or "【" in line_str or "###" in line_str:
+                line_col = (0, 215, 255)
+            elif "RMSE" in line_str or "尺度" in line_str:
+                line_col = (255, 200, 50)
+            else:
+                line_col = (215, 215, 215)
+
+            disp_line = line_str[:65]
+            cv2.putText(disp_frame, disp_line, (tx1 + 14, curr_y), cv2.FONT_HERSHEY_SIMPLEX, 0.40, line_col, 1, cv2.LINE_AA)
+            curr_y += 22
+
+        # 4. 底部滚动翻页提示条 (高 26px)
+        cv2.rectangle(disp_frame, (tx1, ty2 - 26), (tx2, ty2), (20, 20, 25), -1)
+        cv2.line(disp_frame, (tx1, ty2 - 26), (tx2, ty2 - 26), (50, 50, 60), 1)
+        scroll_tip = f"行 {self.hud_scroll_offset + 1}~{min(total_lines, self.hud_scroll_offset + visible_lines_count)}/{total_lines} | [U 向上滚动 | J 向下滚动 | H 折叠/展开]"
+        cv2.putText(disp_frame, scroll_tip, (tx1 + 12, ty2 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160, 160, 160), 1, cv2.LINE_AA)
+        return disp_frame
 
     def _init_realsense(self):
         try:
@@ -601,7 +786,11 @@ class TagCalibrationVerifier:
             # 1. 检查是否点击了 GUI 按钮 (顶栏 Tag 列表 / 底部工具栏)
             for btn_id, (bx1, by1, bx2, by2), label in self.gui_buttons:
                 if bx1 <= x <= bx2 and by1 <= y <= by2:
-                    if btn_id == "TOGGLE_MODE":
+                    if btn_id == "RUN_BA":
+                        self.start_async_bundle_adjustment()
+                    elif btn_id == "TOGGLE_HUD":
+                        self.toggle_hud_terminal()
+                    elif btn_id == "TOGGLE_MODE":
                         self.toggle_mode()
                     elif btn_id == "CYCLE_BATCH":
                         self.cycle_batch_target()
@@ -609,6 +798,8 @@ class TagCalibrationVerifier:
                         self.start_batch_collection()
                     elif btn_id == "EXPORT":
                         self.export_report()
+                    elif btn_id == "OPEN_REVIEWER":
+                        self.open_reviewer()
                     elif btn_id == "CLEAR_BLIND":
                         self.blind_target_tag_id = None
                         self.set_toast("已清除盲测，恢复全量解算 (ALL)")
@@ -638,6 +829,38 @@ class TagCalibrationVerifier:
                         self.set_toast(f"已选定 Tag #{tid} 为盲测验证目标 (PnP中已主动屏蔽)")
                     return
 
+    def open_reviewer(self):
+        """唤起人工审核画板 (Reviewer)，支持带入当前盲测 Tag 靶向直达，关闭后自动触发 BA 求解与热重载"""
+        from tools.calibration.tag_manifest_reviewer import TagManifestReviewer
+        manifest_file = os.path.join(CALIB_IMAGES_DIR, "tag_observations.yaml")
+        if not os.path.exists(manifest_file):
+            self.set_toast(f"未找到观测清单: {manifest_file}")
+            return
+
+        focus_tid = self.blind_target_tag_id
+        tid_str = f"Tag #{focus_tid}" if focus_tid is not None else "全量"
+        self.set_toast(f"正在唤起审核画板 (定向排查: {tid_str})...")
+        print(f"\n[*] [HANDSHAKE] 正在呼出人工审核画板 (focus_tag_id={focus_tid})...")
+
+        try:
+            reviewer = TagManifestReviewer(manifest_path=manifest_file, focus_tag_id=focus_tid)
+            reviewer.run()
+
+            # 画板退出后，重新强夺验证器窗口焦点
+            window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
+            if force_window_focus:
+                force_window_focus(window_name)
+
+            # 检查画板是否请求了自动重新平差验证
+            if reviewer.trigger_verify_and_ba or reviewer.has_unsaved_changes:
+                self.set_toast("已载入画板最新修改，正在自动启动 BA 全局平差优化...")
+                self.start_async_bundle_adjustment()
+            else:
+                self.set_toast("已从审核画板返回验证器")
+        except Exception as e:
+            self.set_toast(f"呼出审核画板失败: {e}")
+            print(f"[ERROR] 唤起审核画板异常: {e}")
+
     def run(self):
         window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -654,12 +877,17 @@ class TagCalibrationVerifier:
         print("   - 【乒乓开关】[Tab/M] 在【⚡ 实时动态 (LIVE)】与【🎯 静态滤波锁定 (STATIC LOCKED)】之间一键切换；")
         print("   - 【基准凝固】在静态模式下采足 30/60 帧后一次性去噪并绝对锁死位姿，抖动严格 0.00mm；")
         print("   - 【留一盲测】在顶栏直接点击 Tag 编号，由其余标靶反推 3D 棱柱并评估残差；")
-        print("   - 【棱柱升级】截面 30mm x 30mm、高 80mm，立体稳重清晰。")
+        print("   - 【一键平差】在 Verify 中直接按 [B] 键即可异步执行全局 BA 优化，地图自动热重载；")
+        print("   - 【HUD 终端】按 [H] 键随时展开/折叠黑晶高科技诊断报告控制台，U/J 滚动翻页。")
         print(" [快捷键指南]   :")
+        print("   - [O]             : 【🎨 呼出人工审核画板，带入当前盲测 Tag 定向排查】；")
+        print("   - [B]             : 【⚡ 一键异步求解 BA 全局平差并热更新地图】；")
+        print("   - [H]             : 【📋 展开/折叠 HUD 诊断报告控制台终端】；")
+        print("   - [U] / [J]       : HUD 终端向上 / 向下滚动翻页浏览；")
         print("   - [Tab] / [M]     : 乒乓切换模式 (⚡ 实时动态 ⇋ 🎯 静态锁定)；")
         print("   - [Space] (空格键) : 静态模式下【重新采样并锁定位姿】；实时模式下抓拍单帧；")
         print("   - [W]             : 切换采样批次深度 (30F / 60F)；")
-        print("   - [T] / [B]       : 顺序轮换留一盲测目标 (None -> 18 -> 19 -> 20...)；")
+        print("   - [T]             : 顺序轮换留一盲测目标 (None -> 18 -> 19 -> 20...)；")
         print("   - [C]             : 清除盲测目标，恢复全量融合解算；")
         print("   - [A] / [D]       : 仿真回放模式下，前后翻页浏览真实采图；")
         print("   - [Q] / [ESC]     : 安全退出验证。")
@@ -915,47 +1143,103 @@ class TagCalibrationVerifier:
                 cv2.rectangle(disp_frame, (0, by1), (w_img, h_img), (20, 20, 20), -1)
                 cv2.line(disp_frame, (0, by1), (w_img, by1), (65, 65, 65), 1)
 
-                bx = 12
-                # 按钮 1：【核心乒乓开关按钮】
-                if self.live_mode:
-                    mode_btn_w = 260
-                    cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + mode_btn_w, h_img - 6), (160, 110, 20), -1)
-                    cv2.putText(disp_frame, "模式: [⚡ 实时动态 (LIVE) | 锁定]", (bx + 12, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
-                else:
-                    mode_btn_w = 260
-                    cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + mode_btn_w, h_img - 6), (30, 140, 220), -1)
-                    cv2.putText(disp_frame, "模式: [实时 | 🎯 静态锁定 (LOCKED)]", (bx + 12, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
-                self.gui_buttons.append(("TOGGLE_MODE", (bx, by1 + 6, bx + mode_btn_w, h_img - 6), "TOGGLE_MODE"))
-                bx += mode_btn_w + 10
+                # 异步 BA 求解完成通知检查与内存地图热重载
+                if self.ba_result_queue is not None:
+                    succ, msg = self.ba_result_queue
+                    self.ba_result_queue = None
+                    self.set_toast(msg)
+                    if succ:
+                        self.hot_reload_map()
+                        self.load_latest_diagnostic_report()
+                        self.show_hud_terminal = True
 
-                # 按钮 2：采样批次大小切换
-                batch_btn_w = 145
+                # 若正在异步求解 BA，显示居中科技感卡片
+                if self.is_ba_running:
+                    p_w, p_h = 520, 80
+                    px1, py1 = (w_img - p_w) // 2, (h_img - p_h) // 2
+                    overlay_ba = disp_frame.copy()
+                    cv2.rectangle(overlay_ba, (px1, py1), (px1 + p_w, py1 + p_h), (25, 20, 15), -1)
+                    cv2.addWeighted(overlay_ba, 0.88, disp_frame, 0.12, 0, disp_frame)
+                    cv2.rectangle(disp_frame, (px1, py1), (px1 + p_w, py1 + p_h), (0, 215, 255), 2)
+                    cv2.putText(disp_frame, "⚡ 正在执行 BA 全局平差优化计算...", (px1 + 25, py1 + 32),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 1, cv2.LINE_AA)
+                    cv2.putText(disp_frame, "两阶段稳健优化中，前台画面保持实时响应，请稍候...", (px1 + 25, py1 + 58),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 220, 255), 1, cv2.LINE_AA)
+
+                bx = 12
+                # 按钮 1：【⚡ 一键重新求解 BA 平差】
+                ba_btn_w = 135
+                if self.is_ba_running:
+                    ba_bg = (0, 140, 240)
+                    ba_txt = "⚡ 求解中..."
+                else:
+                    ba_bg = (40, 80, 145)
+                    ba_txt = "⚡ 求解BA (B)"
+                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + ba_btn_w, h_img - 6), ba_bg, -1)
+                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + ba_btn_w, h_img - 6), (0, 215, 255), 1)
+                cv2.putText(disp_frame, ba_txt, (bx + 12, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+                self.gui_buttons.append(("RUN_BA", (bx, by1 + 6, bx + ba_btn_w, h_img - 6), "RUN_BA"))
+                bx += ba_btn_w + 8
+
+                # 按钮 2：【📋 诊断报告控制台终端 (方案 B)】
+                hud_btn_w = 140
+                hud_bg = (135, 80, 20) if self.show_hud_terminal else (50, 50, 60)
+                hud_border = (255, 180, 50) if self.show_hud_terminal else (80, 80, 90)
+                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + hud_btn_w, h_img - 6), hud_bg, -1)
+                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + hud_btn_w, h_img - 6), hud_border, 1)
+                hud_btn_txt = "📋 折叠终端 (H)" if self.show_hud_terminal else "📋 诊断终端 (H)"
+                cv2.putText(disp_frame, hud_btn_txt, (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+                self.gui_buttons.append(("TOGGLE_HUD", (bx, by1 + 6, bx + hud_btn_w, h_img - 6), "TOGGLE_HUD"))
+                bx += hud_btn_w + 8
+
+                # 按钮 3：【核心乒乓开关按钮】
+                if self.live_mode:
+                    mode_btn_w = 200
+                    cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + mode_btn_w, h_img - 6), (160, 110, 20), -1)
+                    cv2.putText(disp_frame, "模式: [⚡ 实时动态 | 锁定]", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+                else:
+                    mode_btn_w = 200
+                    cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + mode_btn_w, h_img - 6), (30, 140, 220), -1)
+                    cv2.putText(disp_frame, "模式: [实时 | 🎯 静态锁定]", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+                self.gui_buttons.append(("TOGGLE_MODE", (bx, by1 + 6, bx + mode_btn_w, h_img - 6), "TOGGLE_MODE"))
+                bx += mode_btn_w + 8
+
+                # 按钮 4：采样批次大小切换
+                batch_btn_w = 120
                 b_bg = (60, 60, 60) if self.live_mode else (80, 80, 30)
                 cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + batch_btn_w, h_img - 6), b_bg, -1)
-                cv2.putText(disp_frame, f"批次: {self.batch_target_frames} 帧 (W)", (bx + 12, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (230, 230, 230), 1, cv2.LINE_AA)
+                cv2.putText(disp_frame, f"批次: {self.batch_target_frames}F (W)", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (230, 230, 230), 1, cv2.LINE_AA)
                 self.gui_buttons.append(("CYCLE_BATCH", (bx, by1 + 6, bx + batch_btn_w, h_img - 6), "CYCLE_BATCH"))
-                bx += batch_btn_w + 10
+                bx += batch_btn_w + 8
 
-                # 按钮 3：重新采样并锁定位姿
-                sample_btn_w = 230
+                # 按钮 5：重新采样并锁定位姿
+                sample_btn_w = 190
                 s_bg = (40, 90, 160) if not self.is_collecting_batch else (0, 180, 255)
                 cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + sample_btn_w, h_img - 6), s_bg, -1)
-                sample_text = f"🎯 采样中 ({self.collected_batch_frames}/{self.batch_target_frames})" if self.is_collecting_batch else "🎯 采样并锁定位姿 (Space)"
-                cv2.putText(disp_frame, sample_text, (bx + 12, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+                sample_text = f"🎯 采样中 ({self.collected_batch_frames}/{self.batch_target_frames})" if self.is_collecting_batch else "🎯 采样并锁定 (Space)"
+                cv2.putText(disp_frame, sample_text, (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
                 self.gui_buttons.append(("RESAMPLE_LOCK", (bx, by1 + 6, bx + sample_btn_w, h_img - 6), "RESAMPLE_LOCK"))
-                bx += sample_btn_w + 10
+                bx += sample_btn_w + 8
 
-                # 按钮 4：导出质检单
-                exp_btn_w = 120
+                # 按钮 6：导出质检单
+                exp_btn_w = 100
                 cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + exp_btn_w, h_img - 6), (55, 55, 55), -1)
-                cv2.putText(disp_frame, "💾 导出报告", (bx + 12, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (230, 230, 230), 1, cv2.LINE_AA)
+                cv2.putText(disp_frame, "💾 导出报告", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (230, 230, 230), 1, cv2.LINE_AA)
                 self.gui_buttons.append(("EXPORT", (bx, by1 + 6, bx + exp_btn_w, h_img - 6), "EXPORT"))
-                bx += exp_btn_w + 10
+                bx += exp_btn_w + 8
 
-                # 按钮 5：退出
-                exit_btn_w = 85
+                # 按钮 7：呼出人工审核画板 (主从握手通道)
+                rev_btn_w = 145
+                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + rev_btn_w, h_img - 6), (65, 30, 85), -1)
+                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + rev_btn_w, h_img - 6), (220, 90, 255), 1)
+                cv2.putText(disp_frame, "🎨 审核画板 (O)", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+                self.gui_buttons.append(("OPEN_REVIEWER", (bx, by1 + 6, bx + rev_btn_w, h_img - 6), "OPEN_REVIEWER"))
+                bx += rev_btn_w + 8
+
+                # 按钮 8：退出
+                exit_btn_w = 80
                 cv2.rectangle(disp_frame, (w_img - exit_btn_w - 12, by1 + 6), (w_img - 12, h_img - 6), (45, 45, 120), -1)
-                cv2.putText(disp_frame, "🚪 退出", (w_img - exit_btn_w + 6, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(disp_frame, "🚪 退出", (w_img - exit_btn_w + 6, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
                 self.gui_buttons.append(("EXIT", (w_img - exit_btn_w - 12, by1 + 6, w_img - 12, h_img - 6), "EXIT"))
 
                 # 3. 左下角仪表盘 (HUD)
@@ -1019,17 +1303,30 @@ class TagCalibrationVerifier:
                     cv2.rectangle(disp_frame, (toast_x - 14, h_img - 95), (toast_x + tw + 14, h_img - 58), (140, 0, 120), -1)
                     cv2.putText(disp_frame, self.status_toast, (toast_x, h_img - 71), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
 
+                # 6. 渲染可折叠 HUD 诊断文本终端浮层 (方案 B)
+                self.render_hud_terminal(disp_frame)
+
                 cv2.imshow(window_name, disp_frame)
+                if frame_idx <= 3 and force_window_focus:
+                    force_window_focus(window_name)
+
                 key = cv2.waitKey(20) & 0xFF
 
                 if key in (ord('q'), ord('Q'), 27):
                     break
+                elif key in (ord('b'), ord('B')):     # B 键 -> 一键异步求解 BA 全局平差并热重载
+                    self.start_async_bundle_adjustment()
+                elif key in (ord('h'), ord('H')):     # H 键 -> 展开/折叠 HUD 诊断报告终端
+                    self.toggle_hud_terminal()
+                elif key in (ord('u'), ord('U')):     # U 键 -> HUD 终端向上翻滚
+                    self.hud_scroll_offset = max(0, self.hud_scroll_offset - 6)
+                elif key in (ord('j'), ord('J')):     # J 键 -> HUD 终端向下翻滚
+                    self.hud_scroll_offset += 6
                 elif key in (9, ord('m'), ord('M')):  # Tab 键 (ASCII 9) 或 M 键 -> 乒乓切换
                     self.toggle_mode()
                 elif key in (ord('w'), ord('W')):    # W 键 -> 切换批次深度
                     self.cycle_batch_target()
-                elif key in (ord('t'), ord('T'), ord('b'), ord('B')):
-                    # T 或 B 键循环切换盲测目标
+                elif key in (ord('t'), ord('T')):    # T 键 -> 循环切换留一盲测目标
                     if self.mapped_tag_ids:
                         if self.blind_target_tag_id is None:
                             self.blind_target_tag_id = self.mapped_tag_ids[0]
@@ -1048,6 +1345,9 @@ class TagCalibrationVerifier:
                 elif key in (ord('c'), ord('C')):
                     self.blind_target_tag_id = None
                     self.set_toast("已清除盲测，恢复全量解算 (ALL)")
+
+                elif key in (ord('o'), ord('O')):     # O 键 -> 呼出人工审核画板并定向排查当前盲测 Tag
+                    self.open_reviewer()
 
                 elif key in (ord('a'), ord('A'), 81):  # A 键或左方向键
                     if self.mock_mode and self.mock_image_files:

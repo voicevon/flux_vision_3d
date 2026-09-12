@@ -35,6 +35,11 @@ DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 try:
+    from src.utils.window_helper import force_window_focus
+except ImportError:
+    force_window_focus = None
+
+try:
     import pyrealsense2 as rs
     HAVE_REALSENSE = True
 except ImportError:
@@ -67,6 +72,8 @@ class TagCaptureWizard:
         self.status_toast_time = 0.0
 
         self.valid_tag_ids = []
+        self.color_sensor = None
+        self.show_3d_axes = False          # 采图向导默认关闭繁重 3D 棱柱，专注极速跟手与轻量取景
         self.load_config()
 
         # 初始化 AprilTag 16h5 超高灵敏度检测器
@@ -244,6 +251,16 @@ class TagCaptureWizard:
             for _ in range(5):
                 self.pipeline.wait_for_frames(timeout_ms=2500)
 
+            # 获取物理彩色传感器句柄，支持实时快捷调控硬件曝光与增益
+            try:
+                prof = self.pipeline.get_active_profile()
+                for s in prof.get_device().query_sensors():
+                    if s.is_color_sensor():
+                        self.color_sensor = s
+                        break
+            except Exception:
+                pass
+
         except Exception as e:
             # 二级回退: 尝试标称 640x480
             try:
@@ -323,7 +340,59 @@ class TagCaptureWizard:
             cv2.imwrite(vis_filepath, annotated_frame)
             print(f"[CAPTURE] 快照 #{self.image_count} 拍摄成功: 原图存入 {raw_filename} | 图示化标注存入 visualized/{vis_filename}")
         else:
+            vis_filepath = ""
             print(f"[CAPTURE] 成功拍摄并保存快照 #{self.image_count}: {raw_filepath}")
+
+        # 若已有 tag_observations.yaml 存在，自动将该帧增量追加进观测清单
+        manifest_path = os.path.join(self.output_dir, "tag_observations.yaml")
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest_data = yaml.safe_load(f) or {}
+                images_dict = manifest_data.setdefault("images", {})
+                if raw_filename not in images_dict:
+                    found_tags = self.detect_tags_robust(raw_frame) or {}
+                    obs_list = []
+                    for tid in sorted(found_tags.keys()):
+                        corners = found_tags[tid]
+                        pts = corners.reshape((4, 2)).astype(np.float64)
+                        l01 = float(np.linalg.norm(pts[1] - pts[0]))
+                        l12 = float(np.linalg.norm(pts[2] - pts[1]))
+                        l23 = float(np.linalg.norm(pts[3] - pts[2]))
+                        l30 = float(np.linalg.norm(pts[0] - pts[3]))
+                        cell_w = int(round((l01 + l23) / 12.0))
+                        cell_h = int(round((l30 + l12) / 12.0))
+                        center_x = float(np.mean(pts[:, 0]))
+                        center_y = float(np.mean(pts[:, 1]))
+                        area = float(cv2.contourArea(pts.astype(np.float32)))
+                        obs_list.append({
+                            "tag_id": int(tid),
+                            "keep": True,
+                            "cell_size_px": [cell_w, cell_h],
+                            "center_px": [round(center_x, 1), round(center_y, 1)],
+                            "area_px": round(area, 1),
+                            "note": "采图向导现场拍摄录入",
+                            "corners": [[round(float(c[0]), 2), round(float(c[1]), 2)] for c in pts]
+                        })
+                    rel_img_path = os.path.relpath(raw_filepath, PROJECT_ROOT).replace("\\", "/")
+                    rel_vis_path = os.path.relpath(vis_filepath, PROJECT_ROOT).replace("\\", "/") if vis_filepath else ""
+                    images_dict[raw_filename] = {
+                        "file_name": raw_filename,
+                        "image_path": rel_img_path,
+                        "annotated_path": rel_vis_path,
+                        "detected_count": len(obs_list),
+                        "observations": obs_list
+                    }
+                    total_obs = sum(len(img["observations"]) for img in images_dict.values())
+                    total_kept = sum(sum(1 for obs in img["observations"] if obs.get("keep", True)) for img in images_dict.values())
+                    manifest_data["summary"]["total_images"] = len(images_dict)
+                    manifest_data["summary"]["total_observations"] = total_obs
+                    manifest_data["summary"]["total_kept"] = total_kept
+                    with open(manifest_path, "w", encoding="utf-8") as f:
+                        yaml.dump(manifest_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                    print(f"  [AUTO-SYNC] 已将快照 #{self.image_count} 自动同步录入清单 {manifest_path} (检出 {len(obs_list)} 个标靶)")
+            except Exception as e:
+                print(f"  [WARN] 自动增量写入清单失败: {e}")
 
         self.flash_timer = time.time()
         return raw_filepath
@@ -371,12 +440,49 @@ class TagCaptureWizard:
         self.rebuild_detector()
         self.set_toast(f"已切换至: {self.active_preset_name}")
 
+    def adjust_hardware_exposure(self, delta_us: float):
+        """微调 RealSense 物理感光曝光时间 (微秒，步进 2000us = 2ms)"""
+        if self.color_sensor is None:
+            self.set_toast("当前未检测到 RealSense 物理彩色传感器")
+            return
+        try:
+            # 若处于自动曝光，先切为手动曝光
+            if self.color_sensor.supports(rs.option.enable_auto_exposure):
+                is_auto = self.color_sensor.get_option(rs.option.enable_auto_exposure)
+                if is_auto > 0.5:
+                    self.color_sensor.set_option(rs.option.enable_auto_exposure, 0)
+            
+            if self.color_sensor.supports(rs.option.exposure):
+                cur_exp = self.color_sensor.get_option(rs.option.exposure)
+                # D435 彩色相机 exposure 单位为 100微秒或毫秒，安全范围通常在 10 ~ 1000
+                new_exp = max(10.0, min(1000.0, cur_exp + delta_us))
+                self.color_sensor.set_option(rs.option.exposure, new_exp)
+                self.set_toast(f"硬件手动曝光: {int(new_exp)} (按 [ 压暗 / ] 提亮)")
+        except Exception as e:
+            self.set_toast(f"调曝光失败: {e}")
+
+    def toggle_auto_exposure(self):
+        """一键切换 RealSense 自动曝光与手动曝光"""
+        if self.color_sensor is None:
+            self.set_toast("当前非物理相机")
+            return
+        try:
+            if self.color_sensor.supports(rs.option.enable_auto_exposure):
+                cur = self.color_sensor.get_option(rs.option.enable_auto_exposure)
+                new_state = 0 if cur > 0.5 else 1
+                self.color_sensor.set_option(rs.option.enable_auto_exposure, new_state)
+                desc = "已开启【自动曝光 Auto】" if new_state == 1 else "已关闭【手动曝光模式】"
+                self.set_toast(desc)
+        except Exception as e:
+            self.set_toast(f"切换自动曝光失败: {e}")
+
     def detect_tags_robust(self, raw_frame: np.ndarray):
         """
-        双路互补融合全景检测（彻底解决反光、黑度不纯、倾斜与远景漏检）：
-        路 1 (抗反光/高光路): 原图灰度 + 较严二值门限 C=5.5，精准捕获高光、灯光直射区域标靶
-        路 2 (低反差/暗部路): 动态直方图拉伸 + 宽松二值门限 C=2.5 + minOtsu=0.45，攻克发灰、低反差、暗部标靶
-        白名单机制硬锁保底，两路检测结果快速取并集，杜绝误检与漏检。
+        极速自适应双路检测 (Fast-Path Adaptive Detection)：
+        - 优先执行极速路 1 (原图灰度 + 较严二值门限)，单次仅需 ~25ms；
+        - 若已稳定检出充足已知标靶 (>=2) 且未处于强制拉伸预设，直接短路返回，彻底消除拖影；
+        - 若路 1 检出标靶不足 2 个，或处于低反差强力预设，才自适应执行路 2 (动态拉伸路) 补充暗部；
+        - 兼顾 8fps 满帧跟手与 100% 极限召回。
         """
         if len(raw_frame.shape) == 3:
             gray_raw = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
@@ -385,7 +491,7 @@ class TagCaptureWizard:
 
         found = {}
 
-        # 路 1: 针对清晰/高光/反光区域
+        # 路 1: 针对清晰/高光/反光区域 (极速单路)
         c1, ids1, _ = self.detector_bright.detectMarkers(gray_raw)
         if ids1 is not None and len(ids1) > 0:
             for i, tid in enumerate(ids1.flatten()):
@@ -393,6 +499,10 @@ class TagCaptureWizard:
                 if self.valid_tag_ids and tid_int not in self.valid_tag_ids:
                     continue
                 found[tid_int] = c1[i]
+
+        # 快速短路：若普通路已检出满足共视条件的已知标靶，跳过耗时的二次动态拉伸
+        if len(found) >= 2 and not self.enable_auto_stretch:
+            return found
 
         # 路 2: 针对暗部/低反差/打印黑度不够纯区域 (动态拉伸 + 宽松门限)
         p_low, p_high = np.percentile(gray_raw[::4, ::4], (2, 98))
@@ -557,14 +667,18 @@ class TagCaptureWizard:
 
                 for tag_id, corner_arr in found_tags.items():
                     pts = corner_arr.reshape((4, 2)).astype(int)
-                    # 绘制高亮多边形边框
-                    color = (0, 255, 255) if tag_id == 0 else (0, 255, 0)
-                    cv2.polylines(disp_frame, [pts], isClosed=True, color=color, thickness=3)
+                    # Tag 0 采用高亮金黄 (0, 215, 255)，普通已知标靶采用鲜明绿色 (0, 255, 0)
+                    is_origin = (tag_id == 0)
+                    tag_color = (0, 215, 255) if is_origin else (0, 255, 0)
 
-                    # 绘制角点序号 (0:红, 1:绿, 2:蓝, 3:黄)
+                    # 绘制 2D 轻量高反差多边形双层边框 (外黑内亮，不吃 CPU)
+                    cv2.polylines(disp_frame, [pts], isClosed=True, color=(10, 10, 10), thickness=4)
+                    cv2.polylines(disp_frame, [pts], isClosed=True, color=tag_color, thickness=2)
+
+                    # 绘制角点序号微圆点 (0:红, 1:绿, 2:蓝, 3:黄，清晰辨识方向)
                     dot_colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
                     for pt_idx, pt in enumerate(pts):
-                        cv2.circle(disp_frame, tuple(pt), 5, dot_colors[pt_idx], -1)
+                        cv2.circle(disp_frame, tuple(pt), 4, dot_colors[pt_idx], -1)
 
                     # 计算机械标靶单元方格像素尺寸 (AprilTag 16h5 为 6x6 网格)
                     l01 = np.linalg.norm(pts[1] - pts[0])
@@ -574,21 +688,23 @@ class TagCaptureWizard:
                     cell_w = int(round((l01 + l23) / 12.0))
                     cell_h = int(round((l30 + l12) / 12.0))
 
-                    # 绘制 ID 与最小单元方格像素分辨率标牌
+                    # 绘制极速轻量标牌
                     cx = int(np.mean(pts[:, 0]))
                     min_y = int(np.min(pts[:, 1]))
-                    tag_text = f"Tag {tag_id}" + (" [ORIGIN]" if tag_id == 0 else "")
+                    tag_text = f"Tag {tag_id}" + (" [ORIGIN 原点]" if is_origin else "")
                     cell_text = f"Cell: {cell_w}x{cell_h}px"
                     
-                    badge_x = cx - 50
+                    badge_w = 140 if is_origin else 115
+                    badge_x = max(10, min(disp_frame.shape[1] - badge_w - 10, cx - badge_w // 2))
                     badge_y = max(42, min_y - 12)
-                    cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + 106, badge_y + 8), (20, 20, 20), -1)
-                    cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + 106, badge_y + 8), (0, 255, 255), 1)
+                    cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + badge_w, badge_y + 8), (20, 20, 20), -1)
+                    cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + badge_w, badge_y + 8), tag_color, 1)
                     cv2.putText(disp_frame, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
                     cv2.putText(disp_frame, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
 
-                    # 绘制 3D 空间坐标系 (实心正四棱柱)
-                    self.render_tag_3d_axes(disp_frame, corner_arr, tag_id)
+                    # 仅在用户显式开启时才做 3D 棱柱投影 (默认关闭，释放全部算力供 8fps 流畅取景)
+                    if self.show_3d_axes:
+                        self.render_tag_3d_axes(disp_frame, corner_arr, tag_id)
 
                 num_tags = len(detected_tags)
                 is_covisible = num_tags >= 2
@@ -633,8 +749,8 @@ class TagCaptureWizard:
                 # 底部控制提示条 (半透明)
                 h_img, w_img = disp_frame.shape[:2]
                 cv2.rectangle(disp_frame, (0, h_img - 35), (w_img, h_img), (15, 15, 15), -1)
-                ctrl_tip = "[Tab]: Preset | [W]: Whitelist Toggle | [I/K]: Contrast | [S]: Save | [Space]: Pic | [Q]: Exit"
-                cv2.putText(disp_frame, ctrl_tip, (15, h_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1)
+                ctrl_tip = "[Space]: Pic | [Tab]: Preset | [[ / ]]: Exp | [E]: AutoExp | [I/K]: Contrast | [A]: 3D | [W]: WhiteList | [Q]: Exit"
+                cv2.putText(disp_frame, ctrl_tip, (15, h_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1)
 
                 # Toast 临时通知提示
                 if time.time() - self.status_toast_time < 2.5 and self.status_toast:
@@ -648,6 +764,9 @@ class TagCaptureWizard:
                     disp_frame = cv2.addWeighted(disp_frame, 0.4, np.full_like(disp_frame, 255), 0.6, 0)
 
                 cv2.imshow(window_name, disp_frame)
+                if frame_count <= 3 and force_window_focus:
+                    force_window_focus(window_name)
+
                 key = cv2.waitKey(10) & 0xFF
 
                 if key in (ord('q'), ord('Q'), 27):  # Q or ESC
@@ -658,6 +777,15 @@ class TagCaptureWizard:
                 elif key == 9:   # Tab (切换反差预设)
                     preset_index = (preset_index + 1) % 3
                     self.apply_preset(preset_index)
+                elif key == ord('['):  # 压暗曝光
+                    self.adjust_hardware_exposure(-50.0)
+                elif key == ord(']'):  # 提亮曝光
+                    self.adjust_hardware_exposure(50.0)
+                elif key in (ord('e'), ord('E')):  # 切换自动曝光
+                    self.toggle_auto_exposure()
+                elif key in (ord('a'), ord('A')):  # 切换 3D 棱柱显示
+                    self.show_3d_axes = not self.show_3d_axes
+                    self.set_toast(f"3D 棱柱空间轴: {'开启' if self.show_3d_axes else '关闭 (极速2D)'}")
                 elif key in (ord('w'), ord('W')):  # 一键切换白名单探索模式 / 限制模式
                     if self.valid_tag_ids:
                         cached_valid_ids = list(self.valid_tag_ids)

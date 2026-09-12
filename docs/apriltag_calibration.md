@@ -33,7 +33,7 @@
 | API | `cv2.aruco.DICT_APRILTAG_16h5` (OpenCV 4.x+ 内置) |
 | ID 范围 | ID 0 ~ ID 29（共 30 个） |
 | 推荐尺寸 | $50.0\text{mm} \times 50.0\text{mm}$ (白边外框 60mm) |
-| 角点精度 | 亚像素梯度精修 (`cv2.cornerSubPix`)，重复性 0.03~0.08 像素 |
+| 角点精度 | 正统轮廓边界亚像素直线拟合解析求交 (`CORNER_REFINE_CONTOUR`)，亚像素稳定性 0.01~0.03 像素 |
 
 ### 2.2 双角色体系
 
@@ -96,29 +96,31 @@ $$\mathbf{P}_i^{metric} = \text{Scale} \times \mathbf{P}_i^{nominal}, \quad s_{r
 
 ---
 
-## 4. 离线建图与在线定位全景流程
+## 4. 离线超精建图与在线定位全景流程
+
+本方案严格遵循**“前台快采、后台精解、人工把关、实时闭环”**的五步黄金工序体系：
 
 ```mermaid
 graph TD
-    subgraph 离线极限平差建图
-        A["安装标靶<br>Tag 0: SCARA 原点<br>Tag 1~29: 静止机架"] --> B["采图向导拍摄 10~20 张<br>(tools/calibration/tag_capture_wizard.py)"]
-        B --> C["亚像素梯度精修 + 物理噪点拦截<br>(剔除远景微小噪点与极端深度)"]
-        C --> D["审核画板人工质检<br>(tools/calibration/tag_manifest_reviewer.py)"]
-        D --> E["共视连通图拓扑守门员检查<br>(防止孤岛割裂矩阵奇异)"]
-        E --> F["多标靶超定 PnP 初值估计<br>(消除俯仰二义性)"]
-        F --> G["两阶段鲁棒 BA 求解<br>(Cauchy粗平差 → MAD清洗 → 1e-9 微容差精平差)"]
-        G --> H["基线比例尺度缩放 + Tag 0 原点锁定"]
-        H --> I["输出 tags_map.yaml 与 Quiver 矢量图"]
+    subgraph 离线超精建图五步流水线
+        A["工序 1: 安装标靶<br>Tag 0: SCARA 原点<br>Tag 1~29: 静止机架"] --> B["工序 2: 采图向导拍摄 10~20 张<br>(tag_capture_wizard.py)<br>1080P @ 8fps 极速取景连拍"]
+        B --> C["工序 3: 离线质量诊断与超精重提取<br>(tag_super_extractor.py)<br>彻底解除时间枷锁: 16级致密网格 + 双尺度CLAHE<br>微小靶超分放大 + 正统轮廓拟合解析求交 (CONTOUR)"]
+        C --> D["工序 4: 审核画板人工把关与减法筛选<br>(tag_manifest_reviewer.py)<br>整帧一键剔除 + 盲测靶向聚焦 + 鼠标右键上下文快捷菜单"]
+        D --> E["工序 5A: 两阶段鲁棒 BA 全局平差优化<br>(Cauchy 粗平差 → MAD 清洗 → 1e-9 微容差深平差)"]
+        E --> F["基线尺度锁定 + Tag 0 原点对齐"]
+        F --> G["输出 tags_map.yaml 与 Quiver 矢量图"]
     end
 
-    subgraph 现场 AR 在线验证
-        I --> J["在线 AR 验证系统<br>(tools/calibration/tag_calibration_verifier.py)"]
-        J --> K["⚡ 实时动态 ⇋ 🎯 静态时域滤波锁定 (30F/60F)"]
-        J --> L["留一盲测: 顶栏点选 Tag<br>由其余标靶反推 3D 棱柱并评估残差"]
+    subgraph 在线综合验证与闭环握手
+        G --> H["工序 5B: 标定验证与 AR 综合工作台<br>(tag_calibration_verifier.py)"]
+        H --> I["⚡ 实时动态 ⇋ 🎯 静态时域滤波锁定 (30F/60F)"]
+        H --> J["留一盲测反推评估残差 (px/mm)"]
+        H -- "按 [O] 键 (带入当前盲测 Tag 靶向聚焦)" --> D
+        D -- "右键菜单 / 按 [V] 键 (自动保存并触发平差热重载)" --> E
     end
 
     subgraph 生产运行时自定位
-        I --> M["AsparagusAnalyzer 核心感知引擎"]
+        G --> M["AsparagusAnalyzer 核心感知引擎"]
         M --> N{"视野内可见已知 Tag 数"}
         N -- "≥ 2" --> O["实时 PnP 解算 T_cam_to_world (tag_online)"]
         N -- "< 2" --> P["沿用上一帧锁定有效位姿 (tag_cached)"]
@@ -146,6 +148,36 @@ graph TD
 1. **阶段一（Cauchy 粗平差）**：采用 Cauchy 鲁棒损失函数降低离群点对整体几何结构的拉偏；
 2. **MAD 统计清洗**：基于中位数绝对偏差（MAD）动态计算重投影残差门限，清洗大残差观测；
 3. **阶段二（微容差精平差）**：设置 `ftol=1e-9`, `gtol=1e-9` 进行极致深层收敛，实测真实照片 RMSE 压降至 4.14px。
+
+### 5.5 角点几何保真度与 CONTOUR 轮廓拟合攻坚
+在 AprilTag 提取中，角点亚像素精度直接决定了单目 PnP 与全局 BA 的几何硬度。过去系统曾误用通用图像处理的 `cv2.cornerSubPix`，引发了严重的几何畸变（如 Tag 22 对角线拉伸变形、Tag 25 菱形失真）：
+- **病因物理机理**：`cornerSubPix` 基于局部灰度梯度点乘为 0 的正交准则（$\sum (\nabla I)(\nabla I)^T \Delta p = 0$）。该模型假设角点周围具有中心对称的梯度分布（如棋盘格黑白鞍点）。然而 AprilTag 标靶的外四个顶点属于典型的 **90° L 型单向阶跃边缘**。当采用 $11\times 11$（窗口尺寸 23px）的大窗口时，窗口内大量像素落在单一的主边缘上，导致方程法矩阵（Hessian）严重病态甚至奇异。角点坐标被强单向梯度向外严重“吸附”滑移达 8~10 个像素，未收敛点滞留于粗糙整数，形成严重的对角线拉扯与局部塌陷；
+- **算法彻底根治**：废除大窗口梯度流精修，全面采用 AprilTag 行业正统的 **`CORNER_REFINE_CONTOUR`（轮廓边界亚像素直线拟合与正交解析求交点法）**：
+  1. 对二值化或自适应阈值提取出的闭合标靶四边形，分别抽取 4 条独立边缘上的亚像素轮廓点集；
+  2. 对每条边界点集分别进行加权最小二乘直线拟合（Line Fitting: $\rho = x \cos \theta + y \sin \theta$）；
+  3. 通过相邻两条拟合直线的解析方程联立求解交点坐标：
+     $$\begin{cases} L_1: A_1 x + B_1 y + C_1 = 0 \\ L_2: A_2 x + B_2 y + C_2 = 0 \end{cases} \implies \mathbf{p}_{corner} = \left( \frac{B_1 C_2 - B_2 C_1}{A_1 B_2 - A_2 B_1}, \, \frac{A_2 C_1 - A_1 C_2}{A_1 B_2 - A_2 B_1} \right)$$
+- **实测成果**：Tag 22 四边长比例从严重畸变恢复至 **0.943**（边长 `106.1, 107.2, 107.8, 101.7`），对角线拉长彻底消除；Tag 25 四边长比例达 **0.946**，四个角点全部恢复平滑连续的高精亚像素坐标。
+
+### 5.6 交互审核画板上下文快捷菜单与靶向聚焦
+人工审核把关是保障全局建图 100% 纯净的“减法工程”。在 `tag_manifest_reviewer.py` 中引入了现代工业 GUI 的人机交互体系：
+- **右键上下文菜单 (Context Menu)**：
+  - 鼠标右键单击任意标靶，就地弹出半透明磨砂科技感菜单（半透明深色底板 + 科技青边框）；
+  - **[🚫 剔除该标靶 / ✅ 恢复该标靶]**：根据当前状态自适应变色（红/绿），一键切换有效/无效状态，毫秒级更新连通图拓扑与统计；
+  - **[🎯 靶向排查 Tag #X]**：自动过滤仅显示命中该 Tag 的图像帧子集，开启定向排查翻页（如 `1/4 -> 2/4`）；
+  - **[🔄 局部重新计算/精修角点 (Refine)]**：外扩 35px 局部 ROI 区域，结合原生图与局部 CLAHE 增强图，调用 `CORNER_REFINE_CONTOUR` 针对单个标靶重新拟合解算角点；
+  - **[⚡ 保存并立即求解 BA 平差与验证]**：一键将当前标注清单写盘并退出画板，验证器前台自动触发全局 BA 求解并热重载；
+  - **防溢出对齐机制**：智能检测屏幕边缘，右侧或底部空间不足时自动向左/向上翻折，确保菜单项 100% 完整可视。
+- **整帧临时剔除/恢复 (X 键)**：
+  - 针对严重手抖、虚焦或遮挡严重的废片，支持按 `X` 键整帧停用，建图平差直接干净旁路，随时按 `X` 一键恢复。
+
+### 5.7 主从两端无缝握手与全链路闭环
+在 `tag_calibration_verifier.py`（主台）与 `tag_manifest_reviewer.py`（从台）之间建立了低摩擦双向握手：
+- **Windows 跨进程焦点强夺穿透**：
+  - 结合 OpenCV TOPMOST 脉冲与 Win32 `user32.AttachThreadInput` 强行将焦点穿透切换至新启动的画板或返回的验证器视窗，解决从终端 CLI 启动 GUI 时由于 Windows 焦点防窃机制导致的快捷键无响应痛点；
+- **靶向聚焦与原地热重载**：
+  - 验证器选定某标靶盲测时，按 `[O]` 呼出审核画板，自动传递该标靶 ID，画板直达对应出现帧；
+  - 画板完成修改后保存退出，验证器自动唤醒并在后台触发 Bundle Adjustment 求解与 `tags_map.yaml` 原地热重载，实现“验证发现残差异常 → 直达画板精修/剔除 → 保存即平差重载”的无缝闭环。
 
 ---
 
@@ -183,13 +215,13 @@ tags:
 
 | 工具名称 | 物理路径 | 定位与核心功能 |
 | :--- | :--- | :--- |
-| **标靶图纸生成** | `tools/calibration/generate_apriltags.py` | 生成 0~29 号 16h5 高清标靶与 1:1 A4 排版可打印 PDF |
-| **交互采图向导** | `tools/calibration/tag_capture_wizard.py` | 实时视频流 + 双路互补检测 + 空格一键连拍多视角相片 |
-| **采图清单画板** | `tools/calibration/tag_manifest_reviewer.py` | 轻量级原生 GUI 画板，鼠标点击切换标记保留/剔除，实时连通性红绿灯 |
-| **空间建图平差** | `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD清洗、生成 Quiver 图与体检报告 |
-| **在线 AR 验证** | `tools/calibration/tag_calibration_verifier.py` | 实时/30帧时域去噪锁定、留一盲测立体棱柱评估、空间坐标系投射 |
-| **病因深度诊断** | `tools/calibration/diagnose_tag_frame.py` | 标靶漏检/大残差病因切片分析（反差/尺寸/边缘梯度/倾角） |
-| **接触标定向导** | `tools/calibration/hand_eye_calibration.py` | SCARA 经典接触式点对物理标定向导 (备用通道) |
+| **标靶图纸生成** | `tools/calibration/generate_apriltags.py` | 工序 1：生成 0~29 号 16h5 高清标靶与 1:1 A4 排版可打印 PDF |
+| **交互采图向导** | `tools/calibration/tag_capture_wizard.py` | 工序 2：实时视频流 + 双路互补极速检测 + 空格连拍 1080P @ 8fps 原始照片 |
+| **超精重提取引擎** | `tools/calibration/tag_super_extractor.py` | **工序 3（离线超精重提取引擎）**：离线重算，16级致密自适应阈值网格 + 双尺度CLAHE增强 + 2x超分放大 + 正统轮廓拟合解析求交 (CONTOUR)，无损继承历史清洗标注，输出高质量观测清单 |
+| **采图清单画板** | `tools/calibration/tag_manifest_reviewer.py` | **工序 4（交互审核画板）**：原生 GUI 审核画板，鼠标右键上下文菜单（红绿自适应剔除/恢复、局部Refine重算、靶向聚焦）、整帧临时旁路、一键保存并自动触发平差热重载 |
+| **空间建图平差** | `tools/calibration/tag_map_builder.py` | **工序 5A（空间建图平差）**：极限精度 BA 求解器、两阶段平差、MAD清洗、生成 Quiver 矢量图与诊断报告 |
+| **在线 AR 验证** | `tools/calibration/tag_calibration_verifier.py` | **工序 5B（现场 AR 验证与综合工作台）**：实时/30帧时域滤波锁定、留一盲测立体棱柱评估、按 [O] 带入靶向直达画板、原地一键 BA 求解与黑晶 HUD 报告终端 |
+| **接触标定向导** | `tools/calibration/hand_eye_calibration.py` | 备用通道：SCARA 经典接触式点对物理标定向导 (极端无标靶场景) |
 | **在线定位器** | `src/vision/tag_localizer.py` | 运行时每帧毫秒级检测已知标靶，输出相机外参 $T_{cam\_to\_world}$ |
 
 ---

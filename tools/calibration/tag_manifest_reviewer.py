@@ -36,15 +36,22 @@ try:
 except ImportError:
     TagMapBuilder = None
 
+try:
+    from src.utils.window_helper import force_window_focus
+except ImportError:
+    force_window_focus = None
+
 
 class TagManifestReviewer:
     def __init__(self, 
                  manifest_path: str = "data/tag_calibration_images/tag_observations.yaml",
-                 builder: Optional[Any] = None):
+                 builder: Optional[Any] = None,
+                 focus_tag_id: Optional[int] = None):
         """
         初始化交互式审核画板
         :param manifest_path: tag_observations.yaml 文件路径
         :param builder: TagMapBuilder 实例（用于连通性校验与 3D 渲染）
+        :param focus_tag_id: 指定靶向排查的标靶 ID (如盲测出现较大误差的 Tag 编号)
         """
         self.manifest_path = manifest_path
         if not os.path.exists(self.manifest_path):
@@ -57,20 +64,48 @@ class TagManifestReviewer:
         with open(self.manifest_path, "r", encoding="utf-8") as f:
             self.raw_manifest = yaml.safe_load(f) or {}
 
+        # 核心防呆自愈：启动时自动扫描磁盘图片目录，增量发掘并录入新采图 (如 view_0016~view_0022)
+        self.sync_with_disk(auto_save=True)
+
         # 组织有序的图像列表
         self.image_keys = sorted(list(self.raw_manifest.get("images", {}).keys()))
         if not self.image_keys:
             raise ValueError("观测清单中未包含任何图像观测数据！")
 
+        # 靶向排查与多帧定向跳跃状态
+        self.focus_tag_id = int(focus_tag_id) if focus_tag_id is not None else None
+        self.target_hit_frames = []
+        self.focus_mode = False
+        self.focus_idx = 0
+        self.trigger_verify_and_ba = False
+
+        if self.focus_tag_id is not None:
+            for k in self.image_keys:
+                img_data = self.raw_manifest.get("images", {}).get(k, {})
+                for obs in img_data.get("observations", []):
+                    if int(obs.get("tag_id", -1)) == self.focus_tag_id:
+                        self.target_hit_frames.append(k)
+                        break
+            if self.target_hit_frames:
+                self.focus_mode = True
+                self.focus_idx = 0
+
         # 备份初始状态以供单帧复位 (R 键)
         self.initial_states = {}
+        # 初始化整帧使能状态 (支持整张图片一键临时剔除/恢复)
+        self.frame_enabled_map = {}
         for k in self.image_keys:
+            self.frame_enabled_map[k] = self.raw_manifest["images"][k].get("enabled", True)
             self.initial_states[k] = [
                 copy.deepcopy(obs.get("keep", True)) 
                 for obs in self.raw_manifest["images"][k].get("observations", [])
             ]
 
-        self.current_idx = 0
+        if self.focus_mode and self.target_hit_frames:
+            self.current_idx = self.image_keys.index(self.target_hit_frames[0])
+        else:
+            self.current_idx = 0
+
         self.has_unsaved_changes = False
         self.display_img = None
         self.last_covis_report = {"is_valid": True, "message": "", "all_tags": []}
@@ -79,12 +114,169 @@ class TagManifestReviewer:
         self.gui_action_buttons = []
         self.mouse_hover_pos = (-1, -1)
 
+        # 右键上下文悬浮菜单 (Context Menu)
+        self.context_menu = {
+            "visible": False,
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "tag_id": None,
+            "obs_idx": -1,
+            "items": [],  # [(action_id, label, (x1, y1, x2, y2), color)]
+            "bounds": (0, 0, 0, 0)
+        }
+
         # Toast 通知
         self.toast_msg = ""
         self.toast_time = 0.0
 
         # 首次计算拓扑健康度
         self.update_topology()
+
+    @property
+    def current_image_key(self) -> str:
+        """获取当前正在浏览的图像名"""
+        if self.focus_mode and self.target_hit_frames:
+            return self.target_hit_frames[self.focus_idx]
+        return self.image_keys[self.current_idx]
+
+    def prev_frame(self):
+        """翻至上一张 (支持聚焦子集与全量模式)"""
+        if self.focus_mode and self.target_hit_frames:
+            if self.focus_idx > 0:
+                self.focus_idx -= 1
+                self.current_idx = self.image_keys.index(self.target_hit_frames[self.focus_idx])
+                self.render_current_frame()
+            else:
+                self.set_toast(f"已是 Tag #{self.focus_tag_id} 命中帧的首张")
+        else:
+            if self.current_idx > 0:
+                self.current_idx -= 1
+                self.render_current_frame()
+            else:
+                self.set_toast("已经是第一张图片")
+
+    def next_frame(self):
+        """翻至下一张 (支持聚焦子集与全量模式)"""
+        if self.focus_mode and self.target_hit_frames:
+            if self.focus_idx < len(self.target_hit_frames) - 1:
+                self.focus_idx += 1
+                self.current_idx = self.image_keys.index(self.target_hit_frames[self.focus_idx])
+                self.render_current_frame()
+            else:
+                self.set_toast(f"已是 Tag #{self.focus_tag_id} 命中帧的末张")
+        else:
+            if self.current_idx < len(self.image_keys) - 1:
+                self.current_idx += 1
+                self.render_current_frame()
+            else:
+                self.set_toast("已经是最后一张图片")
+
+    def toggle_focus_mode(self):
+        """在【靶向聚焦命中帧】与【全量浏览模式】之间无缝切换"""
+        if not self.target_hit_frames:
+            self.set_toast(f"当前无针对 Tag #{self.focus_tag_id} 的命中帧")
+            return
+        self.focus_mode = not self.focus_mode
+        if self.focus_mode:
+            curr_k = self.image_keys[self.current_idx]
+            if curr_k in self.target_hit_frames:
+                self.focus_idx = self.target_hit_frames.index(curr_k)
+            else:
+                self.focus_idx = 0
+                self.current_idx = self.image_keys.index(self.target_hit_frames[0])
+            self.set_toast(f"已进入【靶向排查模式: Tag #{self.focus_tag_id}】({len(self.target_hit_frames)} 帧)")
+        else:
+            self.set_toast(f"已切换为【全量浏览模式】(共 {len(self.image_keys)} 帧)")
+        self.render_current_frame()
+
+    def save_and_verify(self):
+        """保存修改并触发 Verifier 自动 BA 平差与在线验证"""
+        self.save_changes()
+        self.trigger_verify_and_ba = True
+        self.is_running = False
+        print(f"[HANDSHAKE] 审核画板已保存修改，即将激活验证器并自动触发 BA 求解...")
+
+    def sync_with_disk(self, auto_save: bool = True) -> int:
+        """
+        自动检查磁盘上的图片文件集合并与清单进行增量同步：
+        1. 扫描所在目录下的所有原始图片（如 view_*.png，排除 visualized/ 标注图）；
+        2. 若发现新照片未在清单中登记，自动运行双路检测提取标靶观测并生成标注图；
+        3. 若清单中包含已在磁盘上删除的文件，自动予以清理；
+        4. 严格保留现有已审核图片中用户的人工标记 (keep/note)，绝不抹除工作成果；
+        5. 同步更新清单 summary 并写回 yaml 文件。
+        :return: 新增的图片数量
+        """
+        import glob
+        manifest_dir = os.path.dirname(os.path.abspath(self.manifest_path))
+        vis_dir = os.path.join(manifest_dir, "visualized")
+        os.makedirs(vis_dir, exist_ok=True)
+
+        disk_files = sorted(glob.glob(os.path.join(manifest_dir, "view_*.png")))
+        if not disk_files:
+            disk_files = sorted([
+                p for p in glob.glob(os.path.join(manifest_dir, "*.png"))
+                if not p.endswith("_annotated.png") and not p.endswith("_quiver.png")
+            ])
+
+        images_dict = self.raw_manifest.setdefault("images", {})
+        existing_keys = set(images_dict.keys())
+        disk_map = {os.path.basename(p): p for p in disk_files}
+
+        added_images = []
+        for base_name, full_path in disk_map.items():
+            if base_name not in existing_keys:
+                added_images.append((base_name, full_path))
+
+        if added_images:
+            print(f"[AUTO-SYNC] 检测到磁盘新增 {len(added_images)} 张采图，正在自动执行增量识别与录入...")
+            for base_name, full_path in added_images:
+                raw_img = cv2.imread(full_path)
+                if raw_img is None:
+                    continue
+                detected = self.builder.detect_tags(raw_img)
+                obs_list = []
+                for tid in sorted(detected.keys()):
+                    corners = detected[tid]
+                    metrics = self.builder.compute_tag_metrics(corners)
+                    obs_entry = {
+                        "tag_id": int(tid),
+                        "keep": True,
+                        "cell_size_px": metrics["cell_size_px"],
+                        "center_px": metrics["center_px"],
+                        "area_px": metrics["area_px"],
+                        "note": "采图新增自动同步检出",
+                        "corners": [[round(float(c[0]), 2), round(float(c[1]), 2)] for c in corners.reshape(4, 2)]
+                    }
+                    obs_list.append(obs_entry)
+
+                # 生成图示化标注
+                annotated_name = os.path.splitext(base_name)[0] + "_annotated.png"
+                annotated_path = os.path.join(vis_dir, annotated_name)
+                ann_img = self.builder.render_annotated_frame(raw_img, detected)
+                cv2.imwrite(annotated_path, ann_img)
+
+                rel_img_path = os.path.relpath(full_path, PROJECT_ROOT).replace("\\", "/")
+                rel_ann_path = os.path.relpath(annotated_path, PROJECT_ROOT).replace("\\", "/")
+
+                images_dict[base_name] = {
+                    "file_name": base_name,
+                    "image_path": rel_img_path,
+                    "annotated_path": rel_ann_path,
+                    "detected_count": len(obs_list),
+                    "observations": obs_list
+                }
+                has_t0 = 0 in detected
+                print(f"  + [{base_name}] 检出 {len(obs_list)} 个标靶 (Tag 0: {'√ 已捕获' if has_t0 else '未出现'})")
+
+        if added_images:
+            self.image_keys = sorted(list(images_dict.keys()))
+            if auto_save:
+                self.save_changes()
+                print(f"[AUTO-SYNC] 清单与磁盘已同步：当前共计 {len(self.image_keys)} 张图像，已保存至 {self.manifest_path}")
+
+        return len(added_images)
 
     def set_toast(self, msg: str):
         self.toast_msg = msg
@@ -94,6 +286,9 @@ class TagManifestReviewer:
         """实时重算当前全部保留观测下的共视连通性状态"""
         frame_detections = []
         for k in self.image_keys:
+            # 若整帧被临时剔除，则直接旁路，不参与共视连通性图构建
+            if not self.frame_enabled_map.get(k, True):
+                continue
             tags_in_frame = {}
             for obs in self.raw_manifest["images"][k].get("observations", []):
                 if obs.get("keep", True):
@@ -104,6 +299,25 @@ class TagManifestReviewer:
                 frame_detections.append(tags_in_frame)
 
         self.last_covis_report = self.builder.validate_covisibility(frame_detections)
+
+    def toggle_current_frame_enabled(self):
+        """一键临时剔除或启用当前整张图片（整帧旁路/使能切换）"""
+        curr_key = self.image_keys[self.current_idx]
+        current_state = self.frame_enabled_map.get(curr_key, True)
+        new_state = not current_state
+        self.frame_enabled_map[curr_key] = new_state
+        self.raw_manifest["images"][curr_key]["enabled"] = new_state
+        self.has_unsaved_changes = True
+
+        self.update_topology()
+        self.render_current_frame()
+
+        if not new_state:
+            msg = f"已临时剔除本帧全部标靶 (按 X 恢复)"
+        else:
+            msg = f"已恢复本帧所有有效标靶"
+        self.set_toast(msg)
+        print(f"[TOGGLE FRAME] [{curr_key}] {'[已临时剔除]' if not new_state else '[已恢复启用]'}")
 
     def rescan_current_frame(self):
         """重新使用最新双路检测器与白名单扫描识别当前图像，增量补充新 Tag"""
@@ -164,6 +378,9 @@ class TagManifestReviewer:
 
     def rescan_all_frames(self):
         """全量重新扫描数据集中所有图像并更新清单"""
+        # 1. 先同步磁盘新采图
+        self.sync_with_disk(auto_save=False)
+
         total_found = 0
         total_new = 0
 
@@ -212,28 +429,232 @@ class TagManifestReviewer:
         self.set_toast(f"全量重扫完成: 累计检出 {total_found} 次观测 (+新增 {total_new} 项)")
         print(f"[RESCAN ALL] 全量重扫完成: 累计 {total_found} 次观测，新增 {total_new} 项标靶！")
 
+    def refine_single_tag(self, obs_idx: int):
+        """对当前帧中的指定标靶进行局部 ROI 重新高精提取与角点重算"""
+        curr_key = self.current_image_key
+        img_info = self.raw_manifest["images"][curr_key]
+        observations = img_info.get("observations", [])
+        if obs_idx < 0 or obs_idx >= len(observations):
+            return
+
+        target_obs = observations[obs_idx]
+        tid = int(target_obs["tag_id"])
+        raw_path = img_info.get("image_path", "")
+        if not os.path.exists(raw_path):
+            raw_path = os.path.join(PROJECT_ROOT, raw_path)
+        img = cv2.imread(raw_path)
+        if img is None:
+            self.set_toast(f"无法读取原图: {raw_path}")
+            return
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape[:2]
+        old_c = np.array(target_obs["corners"], dtype=np.float32)
+
+        # 构造局部 ROI (外扩 35px)
+        x_min = max(0, int(np.min(old_c[:, 0])) - 35)
+        y_min = max(0, int(np.min(old_c[:, 1])) - 35)
+        x_max = min(w, int(np.max(old_c[:, 0])) + 35)
+        y_max = min(h, int(np.max(old_c[:, 1])) + 35)
+        roi = gray[y_min:y_max, x_min:x_max]
+
+        # 采用正统轮廓边界直线拟合求交点 (CORNER_REFINE_CONTOUR)，杜绝边缘滑移
+        params = cv2.aruco.DetectorParameters()
+        params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_CONTOUR
+        params.adaptiveThreshWinSizeMin = 3
+        params.adaptiveThreshWinSizeMax = 33
+        params.adaptiveThreshWinSizeStep = 2
+        params.minMarkerPerimeterRate = 0.01
+        det = cv2.aruco.ArucoDetector(self.builder.dictionary, params)
+
+        new_corners = None
+        # 1. 原生灰度 ROI
+        c_list, ids, _ = det.detectMarkers(roi)
+        if ids is not None and tid in ids.flatten():
+            i = list(ids.flatten()).index(tid)
+            new_corners = c_list[i].reshape(4, 2) + np.array([x_min, y_min])
+        else:
+            # 2. CLAHE 增强 ROI
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            roi_clahe = clahe.apply(roi)
+            c_list, ids, _ = det.detectMarkers(roi_clahe)
+            if ids is not None and tid in ids.flatten():
+                i = list(ids.flatten()).index(tid)
+                new_corners = c_list[i].reshape(4, 2) + np.array([x_min, y_min])
+
+        if new_corners is not None:
+            c_list_fmt = [[round(float(pt[0]), 2), round(float(pt[1]), 2)] for pt in new_corners]
+            target_obs["corners"] = c_list_fmt
+            metrics = self.builder.compute_tag_metrics(new_corners)
+            target_obs["cell_size_px"] = metrics["cell_size_px"]
+            target_obs["center_px"] = metrics["center_px"]
+            target_obs["area_px"] = metrics["area_px"]
+            target_obs["note"] = "右键重新计算刷新"
+            self.has_unsaved_changes = True
+            self.set_toast(f"Tag #{tid} 局部高精重算完成！已更新角点坐标")
+            print(f"[RE-EXTRACT] [{curr_key}] Tag #{tid} 角点已重新提取并刷新")
+        else:
+            self.set_toast(f"Tag #{tid} 局部重算未检出，保持现有角点")
+
+        self.update_topology()
+        self.render_current_frame()
+
+    def open_context_menu(self, x: int, y: int, tid: int, obs_idx: int):
+        """在 (x, y) 坐标处弹出 Tag #tid 的右键快捷菜单"""
+        curr_key = self.current_image_key
+        observations = self.raw_manifest["images"][curr_key].get("observations", [])
+        if obs_idx < 0 or obs_idx >= len(observations):
+            return
+
+        obs = observations[obs_idx]
+        is_kept = obs.get("keep", True)
+
+        menu_items_def = [
+            ("TOGGLE_KEEP", "🚫 剔除该标靶 (设为无效)" if is_kept else "✅ 恢复该标靶 (设为有效)", (0, 80, 255) if is_kept else (0, 220, 100)),
+            ("FOCUS_TAG", f"🎯 靶向排查 Tag #{tid} (跳跃浏览命中帧)", (255, 120, 240)),
+            ("REFINE_TAG", f"🔄 局部重新计算/精修角点 (Refine)", (0, 230, 255)),
+            ("SAVE_AND_BA", "⚡ 保存并立即求解 BA 平差与验证", (50, 200, 255)),
+            ("CLOSE", "❌ 取消 / 关闭菜单", (180, 180, 180))
+        ]
+
+        item_h = 36
+        menu_w = 340
+        header_h = 34
+        menu_h = header_h + len(menu_items_def) * item_h + 8
+
+        menu_x = max(10, min(x, 1920 - menu_w - 15))
+        menu_y = max(60, min(y, 1080 - menu_h - 60))
+
+        items_layout = []
+        cur_y = menu_y + header_h + 4
+        for act_id, label, col in menu_items_def:
+            item_rect = (menu_x + 6, cur_y, menu_x + menu_w - 6, cur_y + item_h - 2)
+            items_layout.append((act_id, label, item_rect, col))
+            cur_y += item_h
+
+        self.context_menu = {
+            "visible": True,
+            "x": menu_x,
+            "y": menu_y,
+            "w": menu_w,
+            "h": menu_h,
+            "tag_id": tid,
+            "obs_idx": obs_idx,
+            "items": items_layout,
+            "bounds": (menu_x, menu_y, menu_x + menu_w, menu_y + menu_h)
+        }
+        self.render_current_frame()
+
     def on_mouse_event(self, event, x, y, flags, param):
-        """鼠标交互处理：点击按钮区或点击标靶多边形"""
+        """鼠标交互处理：支持左键点击按钮/标靶，右键弹出菜单并执行"""
         self.mouse_hover_pos = (x, y)
 
+        # 1. 右键按下：检查命中标靶并弹出上下文菜单
+        if event == cv2.EVENT_RBUTTONDOWN:
+            curr_key = self.current_image_key
+            observations = self.raw_manifest["images"][curr_key].get("observations", [])
+            hit_idx = -1
+            for idx in reversed(range(len(observations))):
+                obs = observations[idx]
+                corners = np.array(obs["corners"], dtype=np.float32)
+                dist = cv2.pointPolygonTest(corners, (float(x), float(y)), False)
+                if dist >= 0:
+                    hit_idx = idx
+                    break
+
+            if hit_idx != -1:
+                target_obs = observations[hit_idx]
+                tid = int(target_obs["tag_id"])
+                self.open_context_menu(x, y, tid, hit_idx)
+            else:
+                if self.context_menu.get("visible", False):
+                    self.context_menu["visible"] = False
+                    self.render_current_frame()
+            return
+
+        # 2. 鼠标移动：如果菜单开着，刷新悬停高亮效果
+        if event == cv2.EVENT_MOUSEMOVE:
+            if self.context_menu.get("visible", False):
+                self.render_current_frame()
+            return
+
+        # 3. 左键按下
         if event == cv2.EVENT_LBUTTONDOWN:
-            # 1. 优先检查是否点击了底部的 GUI 按钮
+            # 若当前右键菜单处于展开状态，优先响应菜单项点击
+            if self.context_menu.get("visible", False):
+                clicked_action = None
+                for act_id, label, (ix1, iy1, ix2, iy2), col in self.context_menu["items"]:
+                    if ix1 <= x <= ix2 and iy1 <= y <= iy2:
+                        clicked_action = act_id
+                        break
+
+                target_tid = self.context_menu["tag_id"]
+                target_obs_idx = self.context_menu["obs_idx"]
+                self.context_menu["visible"] = False
+
+                if clicked_action == "TOGGLE_KEEP":
+                    curr_key = self.current_image_key
+                    observations = self.raw_manifest["images"][curr_key].get("observations", [])
+                    if 0 <= target_obs_idx < len(observations):
+                        obs = observations[target_obs_idx]
+                        obs["keep"] = not obs.get("keep", True)
+                        self.has_unsaved_changes = True
+                        status_str = "【保留】" if obs["keep"] else "【剔除】"
+                        print(f"[MENU] [{curr_key}] Tag #{target_tid} 切换为: {status_str}")
+                        self.set_toast(f"Tag #{target_tid} -> {status_str}")
+                        self.update_topology()
+                        self.render_current_frame()
+                    return
+                elif clicked_action == "FOCUS_TAG":
+                    self.focus_tag_id = target_tid
+                    self.target_hit_frames = []
+                    for k in self.image_keys:
+                        img_data = self.raw_manifest.get("images", {}).get(k, {})
+                        for obs in img_data.get("observations", []):
+                            if int(obs.get("tag_id", -1)) == self.focus_tag_id:
+                                self.target_hit_frames.append(k)
+                                break
+                    self.focus_mode = True
+                    curr_k = self.image_keys[self.current_idx]
+                    if curr_k in self.target_hit_frames:
+                        self.focus_idx = self.target_hit_frames.index(curr_k)
+                    else:
+                        self.focus_idx = 0
+                        self.current_idx = self.image_keys.index(self.target_hit_frames[0])
+                    self.set_toast(f"已锁定【靶向排查: Tag #{target_tid}】({len(self.target_hit_frames)} 帧)")
+                    self.render_current_frame()
+                    return
+                elif clicked_action == "REFINE_TAG":
+                    self.refine_single_tag(target_obs_idx)
+                    return
+                elif clicked_action == "SAVE_AND_BA":
+                    self.save_and_verify()
+                    return
+                elif clicked_action == "CLOSE":
+                    self.render_current_frame()
+                    return
+                else:
+                    # 点击在菜单外部，直接关闭菜单
+                    self.render_current_frame()
+                    return
+
+            # A. 检查是否点击了底部的 GUI 按钮
             for btn_id, (bx1, by1, bx2, by2), label, is_enabled in self.gui_action_buttons:
                 if bx1 <= x <= bx2 and by1 <= y <= by2 and is_enabled:
                     if btn_id == "PREV":
-                        if self.current_idx > 0:
-                            self.current_idx -= 1
-                            self.render_current_frame()
+                        self.prev_frame()
                     elif btn_id == "NEXT":
-                        if self.current_idx < len(self.image_keys) - 1:
-                            self.current_idx += 1
-                            self.render_current_frame()
+                        self.next_frame()
+                    elif btn_id == "TOGGLE_FRAME":
+                        self.toggle_current_frame_enabled()
+                    elif btn_id == "TOGGLE_FOCUS":
+                        self.toggle_focus_mode()
                     elif btn_id == "RESCAN_CURR":
                         self.rescan_current_frame()
                     elif btn_id == "RESCAN_ALL":
                         self.rescan_all_frames()
                     elif btn_id == "RESET":
-                        curr_key = self.image_keys[self.current_idx]
+                        curr_key = self.current_image_key
                         if curr_key in self.initial_states:
                             init_keeps = self.initial_states[curr_key]
                             observations = self.raw_manifest["images"][curr_key].get("observations", [])
@@ -248,14 +669,16 @@ class TagManifestReviewer:
                         self.save_changes()
                         self.render_current_frame()
                         self.set_toast("清单已即时保存 (tag_observations.yaml)")
+                    elif btn_id == "SAVE_AND_VERIFY":
+                        self.save_and_verify()
                     elif btn_id == "EXIT":
                         if self.has_unsaved_changes:
                             self.save_changes()
                         self.is_running = False
                     return
 
-            # 2. 检查是否点击了画面中的标靶多边形内部
-            curr_key = self.image_keys[self.current_idx]
+            # B. 检查是否左键直接点击了画面中的标靶多边形内部
+            curr_key = self.current_image_key
             observations = self.raw_manifest["images"][curr_key].get("observations", [])
             
             hit_idx = -1
@@ -276,7 +699,7 @@ class TagManifestReviewer:
 
                 status_str = "【保留】" if new_keep else "【剔除】"
                 print(f"[CLICK] [{curr_key}] Tag #{target_obs['tag_id']} 状态切换为: {status_str}")
-                self.set_toast(f"Tag #{target_obs['tag_id']} -> {status_str}")
+                self.set_toast(f"Tag #{target_obs['tag_id']} -> {status_str} (右键可弹功能菜单)")
 
                 # 毫秒级重算拓扑
                 self.update_topology()
@@ -288,7 +711,7 @@ class TagManifestReviewer:
 
     def render_current_frame(self):
         """绘制当前帧画面，融合标靶双态、顶部状态栏与底部 GUI 按钮栏"""
-        curr_key = self.image_keys[self.current_idx]
+        curr_key = self.current_image_key
         img_info = self.raw_manifest["images"][curr_key]
         raw_path = img_info.get("image_path", "")
 
@@ -318,21 +741,28 @@ class TagManifestReviewer:
             badge_y = max(70, min_y - 14)
 
             cell_size = obs.get("cell_size_px", [0, 0])
+            is_focus_target = (self.focus_tag_id is not None and tid == self.focus_tag_id)
 
             if keep:
                 num_kept += 1
-                # 绿色边框
-                cv2.polylines(disp, [pts_int], True, (0, 255, 0), 2, cv2.LINE_AA)
+                # 绿色边框 (排查目标为高亮品红)
+                border_color = (255, 50, 230) if is_focus_target else (0, 255, 0)
+                border_thick = 4 if is_focus_target else 2
+                cv2.polylines(disp, [pts_int], True, border_color, border_thick, cv2.LINE_AA)
                 # 4 顶点彩色圆点
                 for pt_idx, pt in enumerate(pts_int):
                     cv2.circle(disp, tuple(pt), 5, dot_colors[pt_idx], -1)
 
-                # 绿色标牌
+                # 标牌文字
                 tag_text = f"Tag {tid}" + (" [ORIGIN]" if tid == 0 else "")
+                if is_focus_target:
+                    tag_text += " [🎯 排查目标]"
                 cell_text = f"Cell: {cell_size[0]}x{cell_size[1]}px"
-                cv2.rectangle(disp, (badge_x - 6, badge_y - 30), (badge_x + 116, badge_y + 8), (20, 20, 20), -1)
-                cv2.rectangle(disp, (badge_x - 6, badge_y - 30), (badge_x + 116, badge_y + 8), (0, 255, 255), 1)
-                cv2.putText(disp, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
+                b_w = 145 if is_focus_target else 116
+                b_border = (255, 80, 240) if is_focus_target else (0, 255, 255)
+                cv2.rectangle(disp, (badge_x - 6, badge_y - 30), (badge_x + b_w, badge_y + 8), (20, 20, 20), -1)
+                cv2.rectangle(disp, (badge_x - 6, badge_y - 30), (badge_x + b_w, badge_y + 8), b_border, 1)
+                cv2.putText(disp, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
                 cv2.putText(disp, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 230, 255), 1, cv2.LINE_AA)
 
                 # 3D 正四棱柱 Z 轴 (实心方柱体)
@@ -357,18 +787,40 @@ class TagManifestReviewer:
 
                 # 红色醒目标牌
                 tag_text = f"Tag {tid} [EXCLUDED]"
-                cv2.rectangle(disp, (badge_x - 6, badge_y - 25), (badge_x + 140, badge_y + 5), (15, 15, 15), -1)
-                cv2.rectangle(disp, (badge_x - 6, badge_y - 25), (badge_x + 140, badge_y + 5), (0, 0, 255), 2)
-                cv2.putText(disp, tag_text, (badge_x, badge_y - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 80, 255), 2, cv2.LINE_AA)
+                if is_focus_target:
+                    tag_text += " [🎯 排查目标]"
+                b_w = 160 if is_focus_target else 140
+                cv2.rectangle(disp, (badge_x - 6, badge_y - 25), (badge_x + b_w, badge_y + 5), (15, 15, 15), -1)
+                cv2.rectangle(disp, (badge_x - 6, badge_y - 25), (badge_x + b_w, badge_y + 5), (0, 0, 255), 2)
+                cv2.putText(disp, tag_text, (badge_x, badge_y - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 80, 255), 2, cv2.LINE_AA)
 
-        # 2. 顶部半透明状态栏 (高 58px)
+        is_frame_enabled = self.frame_enabled_map.get(curr_key, True)
+
+        # 若整帧被临时剔除，叠加暗色蒙版并在右上角打上醒目大标牌
+        if not is_frame_enabled:
+            dark_overlay = disp.copy()
+            cv2.rectangle(dark_overlay, (0, 0), (w, h), (15, 15, 15), -1)
+            cv2.addWeighted(dark_overlay, 0.45, disp, 0.55, 0, disp)
+
+            badge_text = "FRAME EXCLUDED / 本帧已临时剔除 (按 X 键恢复启用)"
+            (bw_t, bh_t), _ = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.62, 2)
+            bx_r = w - bw_t - 25
+            by_r = 72
+            cv2.rectangle(disp, (bx_r - 12, by_r - 6), (bx_r + bw_t + 12, by_r + bh_t + 10), (0, 0, 160), -1)
+            cv2.rectangle(disp, (bx_r - 12, by_r - 6), (bx_r + bw_t + 12, by_r + bh_t + 10), (0, 120, 255), 2)
+            cv2.putText(disp, badge_text, (bx_r, by_r + bh_t + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 2, cv2.LINE_AA)
+
+        # 2. 绘制顶部信息条 (深色磨砂半透明背景，高 58px)
         bar_overlay = disp.copy()
-        cv2.rectangle(bar_overlay, (0, 0), (w, 58), (15, 15, 15), -1)
+        cv2.rectangle(bar_overlay, (0, 0), (w, 58), (12, 12, 12), -1)
         cv2.addWeighted(bar_overlay, 0.85, disp, 0.15, 0, disp)
         cv2.line(disp, (0, 58), (w, 58), (70, 70, 70), 1)
 
         save_indicator = " [*有未保存修改*]" if self.has_unsaved_changes else ""
-        left_info = f"[{self.current_idx + 1}/{len(self.image_keys)}] {curr_key} | 观测:{len(observations)} (保留:{num_kept}, 剔除:{num_excl}){save_indicator}"
+        if self.focus_mode and self.target_hit_frames:
+            left_info = f"[🎯 排查 {self.focus_idx + 1}/{len(self.target_hit_frames)}] {curr_key} | Tag #{self.focus_tag_id} (全量第 {self.current_idx + 1}/{len(self.image_keys)} 帧){save_indicator}"
+        else:
+            left_info = f"[{self.current_idx + 1}/{len(self.image_keys)}] {curr_key} | 观测:{len(observations)} (保留:{num_kept}, 剔除:{num_excl}){save_indicator}"
         cv2.putText(disp, left_info, (15, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2, cv2.LINE_AA)
 
         # 拓扑连通性安全指示灯
@@ -383,8 +835,13 @@ class TagManifestReviewer:
         cv2.putText(disp, topo_str, (w - 680, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.56, topo_color, 2, cv2.LINE_AA)
 
         # 顶栏第二行：简易提示
-        tips_text = "操作说明: 直接鼠标左键单击画面中标靶切换【保留/剔除】; 底部提供了完整的图形操作按钮"
-        cv2.putText(disp, tips_text, (15, 47), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
+        if self.focus_mode and self.target_hit_frames:
+            tips_text = f"【🎯 靶向排查: Tag #{self.focus_tag_id}】命中 {len(self.target_hit_frames)} 帧 | A/D 定向跳跃 | 右键标靶弹功能菜单 | [Tab] 切换全量 | [V] 保存验证"
+            tips_color = (255, 120, 240)
+        else:
+            tips_text = "操作说明: 左键切换剔除/保留; 右键单击标靶弹出功能菜单(重算/排查/BA); [X] 剔除整帧; [Tab] 切换聚焦; [V] 保存验证"
+            tips_color = (0, 220, 255)
+        cv2.putText(disp, tips_text, (15, 47), cv2.FONT_HERSHEY_SIMPLEX, 0.45, tips_color, 1, cv2.LINE_AA)
 
         # 3. 底部全新 GUI 操作按钮栏 (高 50px)
         tb_h = 52
@@ -394,16 +851,39 @@ class TagManifestReviewer:
         cv2.addWeighted(tb_overlay, 0.88, disp, 0.12, 0, disp)
         cv2.line(disp, (0, tb_y1), (w, tb_y1), (80, 80, 80), 1)
 
-        # 规划 7 个工业级 GUI 操作按钮
+        # 规划 GUI 操作按钮
+        if is_frame_enabled:
+            toggle_label = "[🚫 剔除本帧 (X)]"
+            toggle_bg = (60, 20, 20)
+            toggle_border = (220, 60, 60)
+        else:
+            toggle_label = "[✅ 启用本帧 (X)]"
+            toggle_bg = (20, 80, 30)
+            toggle_border = (50, 220, 90)
+
+        can_prev = self.focus_idx > 0 if (self.focus_mode and self.target_hit_frames) else self.current_idx > 0
+        max_idx = len(self.target_hit_frames) if (self.focus_mode and self.target_hit_frames) else len(self.image_keys)
+        cur_idx = self.focus_idx if (self.focus_mode and self.target_hit_frames) else self.current_idx
+        can_next = cur_idx < max_idx - 1
+
         btn_defs = [
-            ("PREV", "[< 上一张 (A)]", 130, self.current_idx > 0, (60, 60, 60), (0, 180, 220)),
-            ("NEXT", "[下一张 (D) >]", 130, self.current_idx < len(self.image_keys) - 1, (60, 60, 60), (0, 180, 220)),
-            ("RESCAN_CURR", "[重新识别本图]", 145, True, (40, 80, 140), (80, 160, 255)),
-            ("RESCAN_ALL", "[全量重扫全部]", 145, True, (30, 90, 100), (60, 200, 220)),
-            ("RESET", "[复位当前帧 (R)]", 145, True, (80, 60, 40), (220, 160, 60)),
-            ("SAVE", "[即时保存清单 (S)]", 160, True, (0, 100, 40), (0, 230, 100)),
-            ("EXIT", "[保存并退出 (Q)]", 145, True, (100, 30, 30), (240, 80, 80)),
+            ("PREV", "[< 上一张 (A)]", 120, can_prev, (60, 60, 60), (0, 180, 220)),
+            ("NEXT", "[下一张 (D) >]", 120, can_next, (60, 60, 60), (0, 180, 220)),
+            ("TOGGLE_FRAME", toggle_label, 135, True, toggle_bg, toggle_border),
         ]
+
+        if self.focus_tag_id is not None:
+            f_lbl = "[🌐 浏览全量 (Tab)]" if self.focus_mode else "[🎯 聚焦排查 (Tab)]"
+            f_bg = (60, 20, 70) if self.focus_mode else (45, 45, 55)
+            f_border = (240, 80, 220) if self.focus_mode else (120, 120, 140)
+            btn_defs.append(("TOGGLE_FOCUS", f_lbl, 145, True, f_bg, f_border))
+
+        btn_defs.extend([
+            ("RESET", "[复位本帧 (R)]", 120, True, (80, 60, 40), (220, 160, 60)),
+            ("SAVE", "[保存清单 (S)]", 125, True, (0, 100, 40), (0, 230, 100)),
+            ("SAVE_AND_VERIFY", "[⚡ 保存并验证 (V)]", 155, True, (0, 110, 140), (0, 240, 255)),
+            ("EXIT", "[退出 (Q)]", 100, True, (100, 30, 30), (240, 80, 80)),
+        ])
 
         self.gui_action_buttons.clear()
         bx = 15
@@ -453,22 +933,76 @@ class TagManifestReviewer:
             cv2.rectangle(disp, (toast_x - 16, toast_y - 28), (toast_x + tw + 16, toast_y + 10), (0, 230, 255), 2)
             cv2.putText(disp, self.toast_msg, (toast_x, toast_y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2, cv2.LINE_AA)
 
+        # 5. 渲染右键上下文悬浮菜单 (若已激活)
+        self.render_context_menu(disp)
+
         self.display_img = disp
         cv2.imshow(self.window_name, self.display_img)
+
+    def render_context_menu(self, disp: np.ndarray):
+        """在画面上叠加渲染右键上下文菜单"""
+        if not self.context_menu.get("visible", False):
+            return
+
+        mx, my, mw, mh = self.context_menu["x"], self.context_menu["y"], self.context_menu["w"], self.context_menu["h"]
+        tid = self.context_menu["tag_id"]
+        mx2, my2 = mx + mw, my + mh
+
+        # 半透明深色磨砂阴影底板
+        overlay = disp.copy()
+        cv2.rectangle(overlay, (mx, my), (mx2, my2), (16, 18, 24), -1)
+        cv2.addWeighted(overlay, 0.94, disp, 0.06, 0, disp)
+
+        # 发光外边框 (深灰色底 + 蓝色科技边框)
+        cv2.rectangle(disp, (mx, my), (mx2, my2), (0, 200, 255), 2)
+
+        # 标题栏 (高 34px)
+        header_h = 34
+        cv2.rectangle(disp, (mx, my), (mx2, my + header_h), (28, 32, 45), -1)
+        cv2.line(disp, (mx, my + header_h), (mx2, my + header_h), (70, 85, 120), 1)
+        header_txt = f"Tag #{tid} 操作快捷菜单"
+        cv2.putText(disp, header_txt, (mx + 14, my + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2, cv2.LINE_AA)
+
+        # 绘制各个选项
+        hx, hy = self.mouse_hover_pos
+        for act_id, label, (ix1, iy1, ix2, iy2), col in self.context_menu["items"]:
+            is_hovered = (ix1 <= hx <= ix2 and iy1 <= hy <= iy2)
+            
+            # 悬停背景条与左侧发光指示条
+            if is_hovered:
+                cv2.rectangle(disp, (ix1, iy1), (ix2, iy2), (42, 48, 65), -1)
+                cv2.rectangle(disp, (ix1, iy1), (ix2, iy2), (0, 220, 255), 1)
+                cv2.rectangle(disp, (ix1, iy1), (ix1 + 5, iy2), (0, 230, 255), -1)
+            else:
+                cv2.rectangle(disp, (ix1, iy1), (ix2, iy2), (22, 25, 35), -1)
+                cv2.rectangle(disp, (ix1, iy1), (ix2, iy2), (40, 45, 60), 1)
+
+            txt_color = (255, 255, 255) if is_hovered else (220, 220, 220)
+            cv2.putText(disp, label, (ix1 + 14, iy1 + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.46, txt_color, 1, cv2.LINE_AA)
 
     def save_changes(self):
         """将内存中的修改写回 tag_observations.yaml"""
         total_obs = 0
         total_kept = 0
         total_excl = 0
+        total_enabled_imgs = 0
         for k in self.image_keys:
+            is_enabled = self.frame_enabled_map.get(k, True)
+            self.raw_manifest["images"][k]["enabled"] = is_enabled
+            if is_enabled:
+                total_enabled_imgs += 1
             for obs in self.raw_manifest["images"][k].get("observations", []):
                 total_obs += 1
-                if obs.get("keep", True):
+                if is_enabled and obs.get("keep", True):
                     total_kept += 1
                 else:
                     total_excl += 1
 
+        if "summary" not in self.raw_manifest or not isinstance(self.raw_manifest["summary"], dict):
+            self.raw_manifest["summary"] = {}
+
+        self.raw_manifest["summary"]["total_images"] = len(self.image_keys)
+        self.raw_manifest["summary"]["total_enabled_images"] = total_enabled_imgs
         self.raw_manifest["summary"]["total_observations"] = total_obs
         self.raw_manifest["summary"]["total_kept"] = total_kept
         self.raw_manifest["summary"]["total_excluded"] = total_excl
@@ -486,7 +1020,7 @@ class TagManifestReviewer:
 
         self.has_unsaved_changes = False
         print(f"[SAVE] 审核修改已成功保存至: {self.manifest_path}")
-        print(f"       累计统计: 保留 {total_kept} 次，已剔除 {total_excl} 次")
+        print(f"       累计统计: 有效帧 {total_enabled_imgs}/{len(self.image_keys)}，保留观测 {total_kept} 次，已剔除 {total_excl} 次")
 
     def run(self):
         """启动 OpenCV 交互事件循环"""
@@ -495,37 +1029,42 @@ class TagManifestReviewer:
         cv2.resizeWindow(self.window_name, 1280, 720)
         cv2.setMouseCallback(self.window_name, self.on_mouse_event)
 
-        print("\n" + "=" * 68)
+        print("\n" + "=" * 70)
         print("   【AprilTag 观测样本全 GUI 交互审核画板已启动】")
         print("   * 鼠标左键：单击标靶翻转剔除/保留；点击底部按钮直接执行操作")
-        print("   * GUI 按钮：[◀ 上一张] [下一张 ▶] [重新识别本图] [全量重扫] [复位] [保存] [退出]")
-        print("   * 快捷键  ：A/D 翻页 | R 复位 | S 保存 | Q/ESC 退出")
-        print("=" * 68 + "\n")
+        print("   * GUI 按钮：[◀ 上一张] [下一张 ▶] [🚫 剔除整帧] [重新识别] [全量重扫] [复位] [保存] [退出]")
+        print("   * 快捷键  ：A/D 翻页 | X 一键剔除/启用整帧 | R 复位 | S 保存 | Q/ESC 退出")
+        print("=" * 70 + "\n")
 
         self.render_current_frame()
+        if force_window_focus:
+            force_window_focus(self.window_name)
 
+        focus_attempts = 0
         while self.is_running:
+            if focus_attempts < 3 and force_window_focus:
+                force_window_focus(self.window_name)
+                focus_attempts += 1
+
             key = cv2.waitKey(25) & 0xFF
             if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
 
             # 翻页: A / 左箭头
             if key in (ord('a'), ord('A'), 81):
-                if self.current_idx > 0:
-                    self.current_idx -= 1
-                    self.render_current_frame()
-                else:
-                    self.set_toast("已经是第一张图片")
-                    self.render_current_frame()
+                self.prev_frame()
 
             # 翻页: D / 右箭头
             elif key in (ord('d'), ord('D'), 83):
-                if self.current_idx < len(self.image_keys) - 1:
-                    self.current_idx += 1
-                    self.render_current_frame()
-                else:
-                    self.set_toast("已经是最后一张图片")
-                    self.render_current_frame()
+                self.next_frame()
+
+            # 模式切换: Tab (切换靶向聚焦与全量浏览)
+            elif key == 9:
+                self.toggle_focus_mode()
+
+            # 一键整帧临时剔除/恢复启用: X
+            elif key in (ord('x'), ord('X')):
+                self.toggle_current_frame_enabled()
 
             # 重新识别当前帧: F / 扫描
             elif key in (ord('f'), ord('F')):
@@ -533,7 +1072,7 @@ class TagManifestReviewer:
 
             # 复位本帧: R
             elif key in (ord('r'), ord('R')):
-                curr_key = self.image_keys[self.current_idx]
+                curr_key = self.current_image_key
                 if curr_key in self.initial_states:
                     init_keeps = self.initial_states[curr_key]
                     observations = self.raw_manifest["images"][curr_key].get("observations", [])
@@ -550,6 +1089,11 @@ class TagManifestReviewer:
                 self.save_changes()
                 self.render_current_frame()
                 self.set_toast("清单已即时保存 (tag_observations.yaml)")
+
+            # 一键保存并验证: V
+            elif key in (ord('v'), ord('V')):
+                self.save_and_verify()
+                break
 
             # 退出: Q / ESC
             elif key in (ord('q'), ord('Q'), 27):

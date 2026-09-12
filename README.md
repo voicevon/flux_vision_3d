@@ -123,14 +123,15 @@ flux_vision_3d/
 │   ├── d435_viewer.py             #    实时相机查看器与深度探针
 │   ├── find_top_asparagus.py      #    单帧抓取解算 (输出 G-code 与 JSON)
 │   │
-│   └── calibration/               # 🎯 标定与平差全套工具链
-│       ├── generate_apriltags.py         # 标靶 0~29 高清矢量图与 A4 排版 PDF
-│       ├── tag_capture_wizard.py         # 交互式多视角采图向导
-│       ├── tag_manifest_reviewer.py      # 采图清单可视化质检画板
-│       ├── tag_map_builder.py            # 离线极限 BA 建图与平差求解器
-│       ├── tag_calibration_verifier.py   # 现场 AR 盲测与时域去噪验证系统
-│       ├── diagnose_tag_frame.py         # 标靶漏检病因切片深度诊断
-│       └── hand_eye_calibration.py       # SCARA 经典接触式物理标定向导
+│   └── calibration/               # 🎯 标定与平差全套工具链 (五步黄金工序)
+│       ├── generate_apriltags.py         # 工序 1: 标靶 0~29 高清矢量图与 A4 排版 PDF
+│       ├── tag_capture_wizard.py         # 工序 2: 交互式多视角采图向导 (1080P @ 8fps 连拍)
+│       ├── tag_super_extractor.py        # 工序 3: 离线超精重提取引擎 (16级网格+CLAHE+CONTOUR拟合)
+│       ├── tag_manifest_reviewer.py      # 工序 4: 采图清单交互画板 (右键菜单/整帧旁路/主从握手)
+│       ├── tag_map_builder.py            # 工序 5A: 离线极限两阶段 BA 建图平差求解器
+│       ├── tag_calibration_verifier.py   # 工序 5B: 现场 AR 盲测/时域去噪/原地一键BA与HUD
+│       ├── diagnose_tag_frame.py         # 辅助诊断: 标靶漏检病因切片深度诊断
+│       └── hand_eye_calibration.py       # 备用通道: SCARA 经典接触式物理标定向导
 │
 └── data/snapshots/                # 📸 真实快照库 (RGB + 点云 + 标注图)
 ```
@@ -141,6 +142,7 @@ flux_vision_3d/
 
 | 文档 | 内容概述 | 适用读者 |
 | :--- | :--- | :--- |
+| [CHANGELOG.md](docs/CHANGELOG.md) | 系统版本演进历程、重大架构升级与实测战报 | 全员、项目管理、架构评审 |
 | [architecture.md](docs/architecture.md) | 系统分层架构、模块职责、工具矩阵与数据流 | 新成员入门、架构评审 |
 | [algorithm_pipeline.md](docs/algorithm_pipeline.md) | 九大算法环节逐层剖析（含数学推导与 Mermaid 流程图） | 算法开发、调参优化 |
 | [requirements.md](docs/requirements.md) | 功能/非功能需求、里程碑进度 | 需求评审、项目管理 |

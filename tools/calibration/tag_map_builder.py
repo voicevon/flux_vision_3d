@@ -480,11 +480,13 @@ class TagMapBuilder:
         """
         # 读取已有清单以保留用户此前的手工标记
         existing_prefs = {}
+        existing_enabled = {}
         if os.path.exists(manifest_path):
             try:
                 with open(manifest_path, "r", encoding="utf-8") as f:
                     old_manifest = yaml.safe_load(f) or {}
                 for img_key, img_info in old_manifest.get("images", {}).items():
+                    existing_enabled[img_key] = img_info.get("enabled", True)
                     for obs in img_info.get("observations", []):
                         tid = obs.get("tag_id")
                         keep = obs.get("keep", True)
@@ -549,6 +551,7 @@ class TagMapBuilder:
                 "file_name": base_name,
                 "image_path": path.replace("\\", "/"),
                 "annotated_path": annotated_path.replace("\\", "/"),
+                "enabled": existing_enabled.get(base_name, True),
                 "detected_count": len(obs_list),
                 "observations": obs_list
             }
@@ -595,6 +598,26 @@ class TagMapBuilder:
         with open(manifest_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
+        # 核心自愈机制：检测磁盘是否存在未登记的新图片 (如 view_0016~view_0022)，自动增量录入
+        manifest_dir = os.path.dirname(os.path.abspath(manifest_path))
+        disk_files = sorted(glob.glob(os.path.join(manifest_dir, "view_*.png")))
+        if not disk_files:
+            disk_files = sorted([
+                p for p in glob.glob(os.path.join(manifest_dir, "*.png"))
+                if not p.endswith("_annotated.png") and not p.endswith("_quiver.png")
+            ])
+        existing_imgs = data.get("images", {})
+        disk_bases = {os.path.basename(p) for p in disk_files}
+        manifest_bases = set(existing_imgs.keys())
+        
+        # 若磁盘包含未在清单中出现的新文件，自动触发增量导出
+        if disk_bases - manifest_bases:
+            missing_count = len(disk_bases - manifest_bases)
+            print(f"[*] 检测到采图目录新增 {missing_count} 张照片，正在自动增量同步录入清单与可视化...")
+            self.export_observations_manifest(disk_files, manifest_path=manifest_path, generate_visualized=True)
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+
         frame_detections = []
         valid_frame_names = []
         stats = {
@@ -602,12 +625,26 @@ class TagMapBuilder:
             "total_observations": 0,
             "total_kept": 0,
             "total_excluded": 0,
+            "total_excluded_frames": 0,
             "dropped_single_tag_frames": [],
             "excluded_items": []
         }
 
         manifest_dir = os.path.dirname(os.path.abspath(manifest_path))
         for img_name, img_info in data.get("images", {}).items():
+            # 核心旁路拦截：若当前帧已被人工临时剔除 (enabled: false)，整帧所有观测直接旁路跳过
+            if not img_info.get("enabled", True):
+                stats["total_excluded_frames"] += 1
+                for obs in img_info.get("observations", []):
+                    stats["total_observations"] += 1
+                    stats["total_excluded"] += 1
+                    stats["excluded_items"].append({
+                        "image": img_name,
+                        "tag_id": int(obs["tag_id"]),
+                        "note": "整张图片已被人工临时停用剔除"
+                    })
+                continue
+
             tags_in_frame = {}
             # 探测原图是否存在以执行实时亚像素精修
             raw_img_path = img_info.get("image_path", os.path.join(manifest_dir, img_name))
