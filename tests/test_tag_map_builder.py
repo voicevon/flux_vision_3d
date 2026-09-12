@@ -13,7 +13,7 @@ import cv2
 # 添加工程根目录到 sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from tools.tag_map_builder import TagMapBuilder
+from tools.calibration.tag_map_builder import TagMapBuilder
 
 
 def test_tag_builder_initialization():
@@ -140,7 +140,7 @@ def test_synthetic_bundle_adjustment():
 
 def test_covisibility_guard():
     """测试共视连通性安全守门员 (Co-visibility Guard)"""
-    from tools.tag_map_builder import CovisibilityGraphError
+    from tools.calibration.tag_map_builder import CovisibilityGraphError
     builder = TagMapBuilder(marker_size_mm=50.0)
 
     # 1. 正常连通图: Frame1 (0, 1), Frame2 (1, 2) -> 0-1-2 完全连通
@@ -227,7 +227,7 @@ def test_tag_manifest_reviewer_logic():
     """测试 TagManifestReviewer 点击翻转、命中测试与数据同步逻辑"""
     import tempfile
     import yaml
-    from tools.tag_manifest_reviewer import TagManifestReviewer
+    from tools.calibration.tag_manifest_reviewer import TagManifestReviewer
 
     temp_dir = tempfile.mkdtemp()
     manifest_path = os.path.join(temp_dir, "test_reviewer_manifest.yaml")

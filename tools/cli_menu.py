@@ -152,7 +152,7 @@ def print_calibration_banner(status):
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
     print(f"{C_CYAN}{C_BOLD}       【手眼标定与 AprilTag 空间建图专区】(Calibration & Tag Mapping)         {C_RESET}")
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
-    print(f" 标准工序: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 建图平差]{C_RESET} -> {C_YELLOW}[4 AR精度验证]{C_RESET}")
+    print(f" 标准工序: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 建图平差]{C_RESET} -> {C_YELLOW}[4 AR综合验证]{C_RESET} -> {C_YELLOW}[5 接触式标定(备用)]{C_RESET}")
     map_status_str = f"{C_GREEN}已生成 (config/tags_map.yaml){C_RESET}" if status['has_tag_map'] else f"{C_YELLOW}未生成 (请按 1->2->3 依次执行){C_RESET}"
     if not status.get('valid_tag_ids'):
         wl_status_str = f"{C_CYAN}全量探索 (放行所有标靶 0~29){C_RESET}"
@@ -170,7 +170,7 @@ def print_calibration_banner(status):
     print(f"   {C_GREEN}[1]{C_RESET} 标靶图纸生成                           (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
     print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (实时视频+Tag识别+空格一键连拍)")
     print(f"   {C_GREEN}[3]{C_RESET} 运行 AprilTag 3D 空间立体建图与平差    (两阶段人工审核+BA平差+连通性守门员)")
-    print(f"   {C_GREEN}[4]{C_RESET} 标定精度与 3D 坐标系在线实时验证      (实时 AR 叠加 3D 坐标轴与 6DoF 坐标)")
+    print(f"   {C_GREEN}[4]{C_RESET} 标定精度在线 AR 综合验证              (实时动态 / 静态时域滤波高精量测一键切换)")
     print(f"   {C_GREEN}[5]{C_RESET} 备用通道: SCARA 经典接触式物理标定    (SVD 点对刚体配准，极端无Tag备用)")
     print(f"   {C_GREEN}[O]{C_RESET} 启动标靶交互审核画板                  (鼠标点选剔除/恢复，实时连通性红绿灯)")
     print(f"   {C_GREEN}[W]{C_RESET} AprilTag 标靶白名单查看与管理          (查看当前/一键放行探索/自定义ID)")
@@ -193,6 +193,7 @@ def print_test_banner():
     print(f"   {C_GREEN}[1]{C_RESET} 运行端到端视觉管线仿真测试             (tests/test_mock_pipeline.py)")
     print(f"   {C_GREEN}[2]{C_RESET} 运行真实快照芦笋算法测试               (tests/test_real_snapshot.py)")
     print(f"   {C_GREEN}[3]{C_RESET} 运行 AprilTag 空间建图与平差单元测试    (tests/test_tag_map_builder.py)")
+    print(f"   {C_GREEN}[4]{C_RESET} 运行 AprilTag 在线 AR 综合验证单元测试  (tests/test_tag_calibration_verifier.py)")
     print(f"   {C_GREEN}[A]{C_RESET} 一键运行全部自动化测试")
     print("")
     print(f"   {C_YELLOW}[B]{C_RESET} 返回主菜单")
@@ -248,13 +249,11 @@ def run_tool_d435_real():
 
     print(f"{C_GRAY}操作提示: [Space]定格/暂停画面 | [V]切换视图 | [G]打印G-code | [D]芦笋检测 | [S]抓拍 | [Q]退出{C_RESET}")
     subprocess.run([sys.executable, "tools/d435_viewer.py"])
-    pause_prompt()
 
 
 def run_tool_d435_mock():
     print(f"\n{C_CYAN}[启动]{C_RESET} 正在以仿真模拟模式启动 D435 可视化查看器 (--mock)...")
     subprocess.run([sys.executable, "tools/d435_viewer.py", "--mock"])
-    pause_prompt()
 
 
 def run_tool_top_real():
@@ -311,7 +310,7 @@ def run_gen_mock_snapshot():
 
 def run_generate_tags():
     print(f"\n{C_CYAN}[制靶]{C_RESET} 正在生成 AprilTag 16h5 高清标靶与排版图...")
-    subprocess.run([sys.executable, "tools/generate_apriltags.py"])
+    subprocess.run([sys.executable, "tools/calibration/generate_apriltags.py"])
     pause_prompt()
 
 
@@ -319,13 +318,13 @@ def run_tag_capture_wizard():
     print(f"\n{C_CYAN}[采图]{C_RESET} 正在启动 AprilTag 交互式多视角采图向导 (tag_capture_wizard.py)...")
     # 检查硬件
     ok, mode = ensure_camera_connected()
-    cmd = [sys.executable, "tools/tag_capture_wizard.py"]
+    cmd = [sys.executable, "tools/calibration/tag_capture_wizard.py"]
     if mode == "mock" or not ok:
         print(f"{C_YELLOW}[提示]{C_RESET} 正在以 --mock 仿真模式启动采图向导...")
         cmd.append("--mock")
     
     subprocess.run(cmd)
-    pause_prompt()
+    # 图形窗口退出后直接返回菜单，无需再次按回车确认
 
 
 def run_build_tag_map():
@@ -337,12 +336,12 @@ def run_build_tag_map():
         pause_prompt()
         return
 
-    subprocess.run([sys.executable, "tools/tag_map_builder.py"])
+    subprocess.run([sys.executable, "tools/calibration/tag_map_builder.py"])
     pause_prompt()
 
 
 def run_tag_calibration_verifier():
-    print(f"\n{C_CYAN}[验证]{C_RESET} 正在启动标定精度与 3D 坐标系在线实时 AR 验证工具...")
+    print(f"\n{C_CYAN}[验证]{C_RESET} 正在启动标定精度与 3D 坐标系在线 AR 综合验证系统 (tag_calibration_verifier.py)...")
     map_path = "config/tags_map.yaml"
     if not os.path.exists(map_path):
         print(f"{C_YELLOW}[提示]{C_RESET} 尚未检测到标靶地图文件: {map_path}！")
@@ -351,24 +350,24 @@ def run_tag_calibration_verifier():
         return
 
     ok, mode = ensure_camera_connected()
-    cmd = [sys.executable, "tools/tag_calibration_verifier.py"]
+    cmd = [sys.executable, "tools/calibration/tag_calibration_verifier.py"]
     if mode == "mock" or not ok:
-        print(f"{C_YELLOW}[提示]{C_RESET} 正在以 --mock 仿真模式启动 AR 验证...")
+        print(f"{C_YELLOW}[提示]{C_RESET} 正在以 --mock 仿真模式启动 AR 综合验证...")
         cmd.append("--mock")
 
     subprocess.run(cmd)
-    pause_prompt()
+    # 图形窗口退出后直接返回菜单，无需再次按回车确认
 
 
 def run_hand_eye_calibration():
     print(f"\n{C_CYAN}[标定]{C_RESET} 正在启动 SCARA 经典接触式物理标定向导 (hand_eye_calibration.py)...")
-    subprocess.run([sys.executable, "tools/hand_eye_calibration.py"])
+    subprocess.run([sys.executable, "tools/calibration/hand_eye_calibration.py"])
     pause_prompt()
 
 
 def run_diagnose_tag_frame():
     print(f"\n{C_CYAN}[诊断]{C_RESET} 正在启动 AprilTag 真实图像深度病因诊断 (diagnose_tag_frame.py)...")
-    subprocess.run([sys.executable, "tools/diagnose_tag_frame.py"])
+    subprocess.run([sys.executable, "tools/calibration/diagnose_tag_frame.py"])
     pause_prompt()
 
 
@@ -497,7 +496,6 @@ def run_open_visualized_dir():
         print(f"{C_GREEN}[OK] 已在操作系统资源管理器中弹出该目录窗口，您可以直接双击观察带标注的图示化分析图像。{C_RESET}")
     except Exception as e:
         print(f"{C_RED}[WARN] 无法自动弹出窗口，请手动访问: {vis_dir} ({e}){C_RESET}")
-    pause_prompt()
 
 
 def run_open_observations_manifest():
@@ -510,7 +508,7 @@ def run_open_observations_manifest():
         return
 
     print(f"\n{C_CYAN}[启动]{C_RESET} 正在启动 AprilTag 观测样本轻量级交互审核画板...")
-    res = subprocess.run([sys.executable, "tools/tag_manifest_reviewer.py"])
+    res = subprocess.run([sys.executable, "tools/calibration/tag_manifest_reviewer.py"])
     if res.returncode != 0:
         print(f"{C_YELLOW}[回退]{C_RESET} 无法正常启动图形画板，正在尝试在系统默认文本编辑器中打开 YAML 清单...")
         try:
@@ -522,7 +520,7 @@ def run_open_observations_manifest():
                 subprocess.run(["xdg-open", manifest_path])
         except Exception as e:
             print(f"{C_RED}[WARN] 无法自动打开编辑器: {e}，请手动编辑该文件。{C_RESET}")
-    pause_prompt()
+        pause_prompt()
 
 
 def submenu_calibration_suite():
@@ -579,6 +577,12 @@ def run_test_tag_builder():
     pause_prompt()
 
 
+def run_test_tag_verifier():
+    print(f"\n{C_CYAN}[测试]{C_RESET} 正在执行 AprilTag 在线 AR 综合验证单元测试 (test_tag_calibration_verifier.py)...")
+    subprocess.run([sys.executable, "tests/test_tag_calibration_verifier.py"])
+    pause_prompt()
+
+
 def run_test_all():
     print(f"\n{C_CYAN}[测试]{C_RESET} 正在一键执行全部自动化测试...")
     print(f"{C_BOLD}--- 1. 运行仿真管线测试 ---{C_RESET}")
@@ -587,11 +591,14 @@ def run_test_all():
     res2 = subprocess.run([sys.executable, "tests/test_real_snapshot.py"]).returncode
     print(f"\n{C_BOLD}--- 3. 运行 AprilTag 空间建图单元测试 ---{C_RESET}")
     res3 = subprocess.run([sys.executable, "tests/test_tag_map_builder.py"]).returncode
+    print(f"\n{C_BOLD}--- 4. 运行 AprilTag 在线 AR 综合验证单元测试 ---{C_RESET}")
+    res4 = subprocess.run([sys.executable, "tests/test_tag_calibration_verifier.py"]).returncode
 
     print(f"\n{C_CYAN}================ 测试汇总结果 ================{C_RESET}")
     print(f" 1. 仿真管线: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res1 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f" 2. 真实快照: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res2 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f" 3. 空间建图: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res3 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
+    print(f" 4. 综合验证: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res4 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f"{C_CYAN}=============================================={C_RESET}")
     pause_prompt()
 
@@ -600,7 +607,7 @@ def submenu_test_suite():
     """二级子菜单：自动化测试与算法验证专区"""
     while True:
         print_test_banner()
-        choice = input(f"请输入测试选项 [1-3, A, B]: ").strip().upper()
+        choice = input(f"请输入测试选项 [1-4, A, B]: ").strip().upper()
         
         if choice == '1':
             run_test_mock()
@@ -608,6 +615,8 @@ def submenu_test_suite():
             run_test_real()
         elif choice == '3':
             run_test_tag_builder()
+        elif choice == '4':
+            run_test_tag_verifier()
         elif choice == 'A':
             run_test_all()
         elif choice == 'B' or choice == '0':

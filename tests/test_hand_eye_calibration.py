@@ -15,7 +15,7 @@ import numpy as np
 # 导入工程模块
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
-from tools.hand_eye_calibration import compute_rigid_transform_svd
+from tools.calibration.hand_eye_calibration import compute_rigid_transform_svd
 
 
 class TestHandEyeCalibrationAndSafety(unittest.TestCase):
