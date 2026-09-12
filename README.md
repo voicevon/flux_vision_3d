@@ -40,13 +40,13 @@ graph LR
 | **3D 传感器** | Intel RealSense D435 (主动红外双目 RGB-D) | 无 IMU，纯双目结构光 + 彩色图像 |
 | **安装方式** | 黑色传送带正上方，大倾角俯视 $(\pm 30°)$ | 算法通过传送带点云平面拟合自解算倾角，无需人工测量 |
 | **工作距离** | $550 \sim 700\text{ mm}$（基准 ~640mm） | 避开 D435 近距盲区 (28cm) |
-| **空间标靶** | AprilTag 16h5 × 20 枚 (ID 0~19, 50mm) | Tag 0 锁定 SCARA 原点，Tag 1~19 贴机架静止刚体阵列 |
-| **坐标标定** | AprilTag 地图在线定位 *(设计目标)* | 当前过渡方案：手工多点触碰 SVD 配准（见下方说明） |
+| **空间标靶** | AprilTag 16h5 × 30 枚 (ID 0~29, 50mm) | Tag 0 锁定 SCARA 原点，Tag 1~29 贴机架静止刚体阵列 |
+| **坐标标定** | AprilTag 地图在线自定位 + 手眼标定融合 | 支持实时 PnP (`tag_online`)、历史缓存 (`tag_cached`) 与 SVD 接触式标定 (`hand_eye`) |
 | **执行机构** | 4 轴 SCARA + 双开闭夹爪 (Marlin G-code) | 串口通信：`G0 X.. Y.. R..` → `G1 Z..` → `M4` |
 | **分拣机构** | 8 级级联步进翻料 (ESP32 BLE) | 蓝牙单播：`Target ID: 1~8` |
 
-> [!IMPORTANT]
-> **坐标标定双轨现状**：当前代码中 `asparagus_analyzer.py` 的世界坐标变换仍使用 `hand_eye_calibration.py`（手工多点触碰 SVD 配准），**尚未集成 `tag_localizer.py` 的 AprilTag 在线定位**。按设计方案，最终目标是用 AprilTag 多标靶地图完全替代手工点触标定——详见 [apriltag_calibration.md](docs/apriltag_calibration.md)。
+> [!TIP]
+> **多源标定融合与安全降级**：`asparagus_analyzer.py` 优先使用 AprilTag 在线实时解算的世界外参；当现场标靶被遮挡时平滑沿用历史锁定缓存；若无 Tag 地图则回退至手工接触式手眼标定矩阵（`hand_eye`）；若完全未标定则触发防撞兜底，绝对拦截相机高程直接传入机械臂。详见 [apriltag_calibration.md](docs/apriltag_calibration.md)。
 
 ---
 
@@ -68,14 +68,16 @@ pip install -r requirements.txt
 run.bat        # CMD
 ```
 
-进入控制终端后，通过编号触发功能：
+进入控制终端后，系统分为顶级核心功能与二级标定专区：
 
-| 编号 | 功能 | 说明 |
-| :---: | :--- | :--- |
-| `1` | D435 实时相机查看器 | 鼠标探测 3D 坐标，`[D]` 检测高亮，`[G]` 打印 G-code，`[S]` 抓拍 |
-| `4` | 离线快照抓取解算 | 读取本地最新快照进行算法验证 |
-| `7` | 真实快照自动测试 | 遍历全部快照统计成功率与尺寸指标 |
-| `9` | 环境与驱动诊断 | 检测 Python、OpenCV、D435 连接与固件 |
+| 顶级功能入口 | 说明 |
+| :--- | :--- |
+| `[1] 实时相机主视窗` | D435 查看器、鼠标 3D 探测、`[D]` 芦笋检测、`[G]` 打印 G-code、`[S]` 抓拍快照 |
+| `[2] 手眼标定与 AprilTag 建图` | **进入标定专区**：制靶、采图、BA 建图平差、在线 AR 验证、审核画板、白名单管理 |
+| `[3] 模拟生成快照帧` | 无真实相机时，一键生成虚拟芦笋点云快照帧 |
+| `[4] 运行最新快照解算` | 单独载入本地最新快照进行算法快速验证 |
+| `[5] 自动化全量测试` | 运行测试专区（真实快照 20 组、仿真管线、空间平差单元测试等） |
+| `[9] 硬件与环境诊断` | 诊断 Python、OpenCV、pyrealsense2、固件与连接状态 |
 
 ### 查看器快捷键
 
@@ -93,35 +95,42 @@ run.bat        # CMD
 
 ```text
 flux_vision_3d/
-├── config.yaml                    # 系统核心配置 (相机、滤波、视觉门限、串口)
+├── config.yaml                    # 系统核心配置 (相机、滤波、视觉门限、白名单、串口)
 ├── README.md                      # 本文件：项目总览与快速上手
 ├── requirements.txt               # Python 依赖清单
 ├── run.bat / run.ps1              # 一键启动入口
 │
 ├── docs/                          # 📚 技术文档库
-│   ├── architecture.md            #    系统架构与模块职责
+│   ├── architecture.md            #    系统分层架构与模块职责
 │   ├── algorithm_pipeline.md      #    核心算法处理管线详解
 │   ├── requirements.md            #    系统需求与设计规格书
-│   └── apriltag_calibration.md    #    AprilTag 多标靶标定设计方案
+│   └── apriltag_calibration.md    #    AprilTag 多标靶标定设计方案 (v2.0)
 │
 ├── src/vision/                    # 🧠 核心算法源码
 │   ├── asparagus_analyzer.py      #    感知引擎 (平面标定→暗缝分离→主轴拟合→顶层解算)
 │   └── tag_localizer.py           #    AprilTag 在线相机外参定位器
 │
-├── tests/                         # ✅ 自动化测试
+├── tests/                         # ✅ 自动化测试套件
 │   ├── test_real_snapshot.py      #    真实快照全量测试 (20 组, 100% 通过)
 │   ├── test_mock_pipeline.py      #    仿真管线回归测试
-│   ├── test_tag_map_builder.py    #    多标靶建图单元测试
+│   ├── test_tag_map_builder.py    #    多标靶建图与两阶段 BA 单元测试
+│   ├── test_tag_calibration_verifier.py # 在线 AR 验证器与时域去噪测试
 │   ├── test_tag_localizer.py      #    在线定位器单元测试
 │   └── test_hand_eye_calibration.py # 手眼标定精度验证
 │
-├── tools/                         # 🔧 运维与调试工具
-│   ├── cli_menu.py                #    交互式统一控制终端
+├── tools/                         # 🔧 运维与顶级应用 (极简根目录)
+│   ├── cli_menu.py                #    交互式统一控制终端主入口
 │   ├── d435_viewer.py             #    实时相机查看器与深度探针
-│   ├── find_top_asparagus.py      #    单帧抓取解算 (输出 G-code)
-│   ├── generate_apriltags.py      #    AprilTag 标靶高清图生成器
-│   ├── tag_map_builder.py         #    多标靶空间建图与 BA 平差工具
-│   └── hand_eye_calibration.py    #    SCARA 手眼标定向导
+│   ├── find_top_asparagus.py      #    单帧抓取解算 (输出 G-code 与 JSON)
+│   │
+│   └── calibration/               # 🎯 标定与平差全套工具链
+│       ├── generate_apriltags.py         # 标靶 0~29 高清矢量图与 A4 排版 PDF
+│       ├── tag_capture_wizard.py         # 交互式多视角采图向导
+│       ├── tag_manifest_reviewer.py      # 采图清单可视化质检画板
+│       ├── tag_map_builder.py            # 离线极限 BA 建图与平差求解器
+│       ├── tag_calibration_verifier.py   # 现场 AR 盲测与时域去噪验证系统
+│       ├── diagnose_tag_frame.py         # 标靶漏检病因切片深度诊断
+│       └── hand_eye_calibration.py       # SCARA 经典接触式物理标定向导
 │
 └── data/snapshots/                # 📸 真实快照库 (RGB + 点云 + 标注图)
 ```
@@ -132,16 +141,17 @@ flux_vision_3d/
 
 | 文档 | 内容概述 | 适用读者 |
 | :--- | :--- | :--- |
-| [architecture.md](docs/architecture.md) | 系统分层架构、模块职责与数据流 | 新成员入门、架构评审 |
+| [architecture.md](docs/architecture.md) | 系统分层架构、模块职责、工具矩阵与数据流 | 新成员入门、架构评审 |
 | [algorithm_pipeline.md](docs/algorithm_pipeline.md) | 九大算法环节逐层剖析（含数学推导与 Mermaid 流程图） | 算法开发、调参优化 |
 | [requirements.md](docs/requirements.md) | 功能/非功能需求、里程碑进度 | 需求评审、项目管理 |
-| [apriltag_calibration.md](docs/apriltag_calibration.md) | AprilTag 16h5 多标靶建图与在线自定位方案 | 标定实施、现场部署 |
+| [apriltag_calibration.md](docs/apriltag_calibration.md) | AprilTag 16h5 多标靶建图、两阶段 BA 平差与在线自定位方案 | 标定实施、现场部署 |
 
 ---
 
 ## 质量保证
 
 - **真实快照测试**：覆盖 **20 组**现场快照，**100.0%** 顶层锁定成功率（累计 136 根次）
+- **空间平差优化**：实采图全局重投影 RMSE 从 52.28px 压降至 **4.14px**，标准图达 **0.032px**
 - **仿真管线测试**：脱机开发环境的虚拟点云与三层叠压回归验证
 - **手眼标定验证**：Horn/Kabsch SVD 刚体变换精度与 500+mm 危险深度拦截
 

@@ -1,6 +1,6 @@
 # AprilTag 多标靶空间建图与相机自定位方案
 
-> **文档版本**：v1.1  
+> **文档版本**：v2.0 (已同步 Phase 1 极限平差与模块化工具链)  
 > **适用范围**：`flux_vision_3d` 视觉系统的多标靶空间标定、Tag 地图建图与生产运行时相机在线自定位。  
 > **适用读者**：标定实施、现场部署、算法开发。
 
@@ -14,12 +14,12 @@
 
 | # | 要点 | 说明 |
 | :---: | :--- | :--- |
-| 1 | 多标靶空间散布 | 视野与机架周围布设 ~20 个标靶 (ID 0~19) |
+| 1 | 多标靶空间散布 | 视野与机架周围布设 ~30 个标靶 (ID 0~29) |
 | 2 | 免高精装配 | 各 Tag 高低错落、微小倾斜，非共面消除 PnP 歧义 |
 | 3 | 边长免精测 | 同批次打印统一尺寸即可，无需预先精密测量 |
 | 4 | 大基线尺度锁定 | 两个远距标靶中心用卷尺测距，一键锁定全场绝对物理尺寸 |
-| 5 | 离线多视角建图 | ~20 个视角拍摄，BA 平差输出 `tags_map.yaml` |
-| 6 | 在线单帧自定位 | 视野内 $\ge 2$ 个标靶即实时解算相机 6DoF 外参 |
+| 5 | 离线极限 BA 建图 | 多视角拍摄 + 鲁棒核函数 + MAD 离群清洗，输出高精度 `tags_map.yaml` |
+| 6 | 在线单帧自定位 | 视野内 $\ge 2$ 个标靶即实时解算相机 6DoF 外参，支持时域滤波锁定 |
 
 ---
 
@@ -31,9 +31,9 @@
 | :--- | :--- |
 | 族类 | AprilTag `tag16h5` (4×4 数据格，汉明距离 5) |
 | API | `cv2.aruco.DICT_APRILTAG_16h5` (OpenCV 4.x+ 内置) |
-| ID 范围 | ID 0 ~ ID 19（共 20 个） |
-| 推荐尺寸 | $50.0\text{mm} \times 50.0\text{mm}$ |
-| 角点精度 | 灰度梯度连续边界拟合，重复性 0.05~0.1 像素 |
+| ID 范围 | ID 0 ~ ID 29（共 30 个） |
+| 推荐尺寸 | $50.0\text{mm} \times 50.0\text{mm}$ (白边外框 60mm) |
+| 角点精度 | 亚像素梯度精修 (`cv2.cornerSubPix`)，重复性 0.03~0.08 像素 |
 
 ### 2.2 双角色体系
 
@@ -48,7 +48,7 @@
 └──────────────┬───────────────────────┘
                │ 空间联合约束
 ┌──────────────▼───────────────────────┐
-│      Tag 1 ~ 19 — 静止刚体阵列         │
+│      Tag 1 ~ 29 — 静止刚体阵列         │
 │  · 贴在传送带/机架/立柱，高低错落       │
 │  · 6DoF 位置与姿态完全静止              │
 │  · 联合锁定水平面 X/Y 旋转基准          │
@@ -63,7 +63,7 @@
 | **法向固定** | 表面法向 $\vec{n}_z$ 恒平行于 SCARA 垂直 $Z$ 轴 |
 | **Yaw 自由** | 绕 $Z$ 轴存在未知转角，**禁止**将 Tag 0 局部 $X$ 轴当世界 $X$ 轴 |
 
-#### Tag 1~19 的刚体约束
+#### Tag 1~29 的刚体约束
 
 - 全部贴在**绝对静止结构**（机架、立柱、传送带支撑梁）
 - 各 Tag 间相对位姿 100% 固定，形成三维立体刚体网络
@@ -76,7 +76,7 @@
 | $Z$ 轴 | Tag 0 表面法向量 |
 | $X$ 轴 | Tag 0 中心→Tag 1 中心在水平面上的投影方向 |
 
-> **关键优势**：即使 Tag 0 被机械臂挡住，只要看到 Tag 1~19 中任意 2 个，相机位姿依然精准无漂移。
+> **关键优势**：即使 Tag 0 被机械臂挡住，只要看到 Tag 1~29 中任意 2 个，相机位姿依然精准无漂移。
 
 ---
 
@@ -86,8 +86,8 @@
 
 | 步骤 | 操作 |
 | :--- | :--- |
-| **1. 同构重构** | 以名义边长 $s_{nominal} = 50.0\text{mm}$ 进行 BA 平差，恢复完美相对拓扑 |
-| **2. 基线测距** | 现场选定两个远距标靶 $A, B$，卷尺测量中心直线距离 $D_{real}$ |
+| **1. 同构重构** | 以名义边长 $s_{nominal} = 50.0\text{mm}$ 进行 BA 平差，恢复高保真相对几何拓扑 |
+| **2. 基线测距** | 现场选定两个远距标靶 $A, B$ (推荐相距 $\ge 500\text{mm}$)，卷尺测量中心物理距离 $D_{real}$ |
 | **3. 尺度锁定** | $\text{Scale} = D_{real} / D_{nominal}$，全局等比缩放所有坐标与边长 |
 
 $$\mathbf{P}_i^{metric} = \text{Scale} \times \mathbf{P}_i^{nominal}, \quad s_{real} = \text{Scale} \times s_{nominal}$$
@@ -96,41 +96,56 @@ $$\mathbf{P}_i^{metric} = \text{Scale} \times \mathbf{P}_i^{nominal}, \quad s_{r
 
 ---
 
-## 4. 标定流程
+## 4. 离线建图与在线定位全景流程
 
 ```mermaid
 graph TD
-    subgraph 离线建图
-        A["安装标靶<br>Tag 0: SCARA 中心<br>Tag 1~19: 静止机架"] --> B["移动相机拍摄 ~20 张<br>(每张覆盖 ≥ 2 个 Tag)"]
-        B --> C["Aruco 提取<br>2D 亚像素角点"]
-        C --> D["构建共视连通图"]
-        D --> E["BA 平差求解<br>Tag 0~19 相对刚体结构"]
-        E --> F["输入两标靶真实距离<br>计算 Scale 锁定绝对尺寸"]
-        F --> G["Tag 0 中心平移至原点"]
-        G --> H["Tag 0→Tag 1 矢量<br>锁定世界 X 轴"]
-        H --> I["导出 tags_map.yaml"]
+    subgraph 离线极限平差建图
+        A["安装标靶<br>Tag 0: SCARA 原点<br>Tag 1~29: 静止机架"] --> B["采图向导拍摄 10~20 张<br>(tools/calibration/tag_capture_wizard.py)"]
+        B --> C["亚像素梯度精修 + 物理噪点拦截<br>(剔除远景微小噪点与极端深度)"]
+        C --> D["审核画板人工质检<br>(tools/calibration/tag_manifest_reviewer.py)"]
+        D --> E["共视连通图拓扑守门员检查<br>(防止孤岛割裂矩阵奇异)"]
+        E --> F["多标靶超定 PnP 初值估计<br>(消除俯仰二义性)"]
+        F --> G["两阶段鲁棒 BA 求解<br>(Cauchy粗平差 → MAD清洗 → 1e-9 微容差精平差)"]
+        G --> H["基线比例尺度缩放 + Tag 0 原点锁定"]
+        H --> I["输出 tags_map.yaml 与 Quiver 矢量图"]
     end
 
-    subgraph 在线定位
-        J["固定相机拍摄<br>(芦笋 + ≥ 2 个 Tag)"] --> K["检测 Tag 并查询地图"]
-        K --> L["匹配 3D↔2D 角点"]
-        L --> M["cv2.solvePnPRansac()<br>(< 3ms, 亚毫米级)"]
-        M --> N["输出 T_cam_to_world"]
-        N --> O["芦笋抓取位姿直通 SCARA"]
+    subgraph 现场 AR 在线验证
+        I --> J["在线 AR 验证系统<br>(tools/calibration/tag_calibration_verifier.py)"]
+        J --> K["⚡ 实时动态 ⇋ 🎯 静态时域滤波锁定 (30F/60F)"]
+        J --> L["留一盲测: 顶栏点选 Tag<br>由其余标靶反推 3D 棱柱并评估残差"]
+    end
+
+    subgraph 生产运行时自定位
+        I --> M["AsparagusAnalyzer 核心感知引擎"]
+        M --> N{"视野内可见已知 Tag 数"}
+        N -- "≥ 2" --> O["实时 PnP 解算 T_cam_to_world (tag_online)"]
+        N -- "< 2" --> P["沿用上一帧锁定有效位姿 (tag_cached)"]
+        P -- "连续丢标" --> Q["回退至手工接触式手眼标定矩阵 (hand_eye)"]
     end
 ```
 
 ---
 
-## 5. 容错降级策略
+## 5. 核心平差与稳健性攻坚机制
 
-在高速生产中，可能因芦笋遮挡、强光反射或过载导致检出标靶不足：
+### 5.1 物理噪点守门员 (Physical Outlier Guard)
+在离线建图与采图中，背景反光物（如紧固螺栓、金属反光点）在汉明纠错放宽时可能被误判为极小标靶。求解器内置了严格的物理守门员：
+- **面积过滤**：角点四边形面积 $< 120\text{px}$ 坚决拦截；
+- **深度过滤**：单靶 PnP 深度超出工作区间 ($150\text{mm} \le Z \le 2200\text{mm}$) 直接丢弃；
+- **杜绝毒瘤**：彻底杜绝远景微小噪点带偏整个全局优化场。
 
-| 场景 | 策略 |
-| :--- | :--- |
-| 静止 Tag $\ge 2$ | 实时刷新并缓存外参矩阵 |
-| 静止 Tag $< 2$ | **禁止异常中断**，沿用上一帧锁定的有效外参 |
-| 连续 $> 10$ 帧不足 | 输出黄色预警，触发声光提示，但主调度保持运转 |
+### 5.2 共视连通图拓扑守门员 (Covisibility Gatekeeper)
+为防止人工剔除标记时误删关键“桥梁帧”导致共视图裂解为不连通子图，求解器在优化前执行基于 NetworkX 的连通度分析。若发现孤立标靶，自动阻断并输出明确的修复建议，杜绝优化器奇异崩溃。
+
+### 5.3 雅可比对角归一化 (`x_scale='jac'`)
+旋转分量（弧度量纲，约 $0 \sim 3$）与平移分量（毫米量纲，约 $100 \sim 1000$）尺度相差近 3 个数量级。采用雅可比列模长对角归一化后，彻底释放优化器潜力，优化步数从受限早退的 7 步拓展为深层收敛的 200+ 步。
+
+### 5.4 两阶段平差与 MAD 鲁棒清洗
+1. **阶段一（Cauchy 粗平差）**：采用 Cauchy 鲁棒损失函数降低离群点对整体几何结构的拉偏；
+2. **MAD 统计清洗**：基于中位数绝对偏差（MAD）动态计算重投影残差门限，清洗大残差观测；
+3. **阶段二（微容差精平差）**：设置 `ftol=1e-9`, `gtol=1e-9` 进行极致深层收敛，实测真实照片 RMSE 压降至 4.14px。
 
 ---
 
@@ -141,6 +156,7 @@ graph TD
 ```yaml
 tag_family: "DICT_APRILTAG_16h5"
 marker_size_mm: 50.0              # 标靶外框边长 (mm)
+rmse_reprojection_px: 4.14        # 全局重投影均方根误差 (px)
 
 world_definition:
   origin_tag_id: 0                # SCARA J1 旋转中心原点
@@ -156,26 +172,25 @@ tags:
     rpy_deg: [0.5, -1.2, 0.0]
     is_origin: false
     is_dynamic_yaw: false
-  2:
-    position_mm: [280.5, 95.3, 45.2]
-    rpy_deg: [-3.1, 2.0, 44.5]
-    is_origin: false
-    is_dynamic_yaw: false
-  # ... Tag 3~19
-
-rmse_reprojection_px: 0.35        # BA 重投影均方根误差 (px)
+  # ... Tag 2 ~ 29 (包含空间 3D 棱柱顶点与位姿)
 ```
 
 ---
 
-## 7. 实施工具链
+## 7. 实施工具链矩阵
 
-| 步骤 | 工具 | 功能 |
+所有标定与平差工具均集中归纳于 `tools/calibration/` 模块：
+
+| 工具名称 | 物理路径 | 定位与核心功能 |
 | :--- | :--- | :--- |
-| 标靶生成 | `tools/generate_apriltags.py` | 生成 0~19 号高清标靶图，支持排版打印 |
-| 多视角采集 | `tools/tag_photo_collector.py` | 交互辅助采图，实时显示可见 Tag 数 |
-| 全局建图 | `tools/tag_map_builder.py` | 角点检测→共视边→BA 平差→锁定原点→导出 YAML |
-| 在线集成 | `src/vision/tag_localizer.py` | 每帧自动检测背景 Tag，实时获取 6DoF 外参 |
+| **标靶图纸生成** | `tools/calibration/generate_apriltags.py` | 生成 0~29 号 16h5 高清标靶与 1:1 A4 排版可打印 PDF |
+| **交互采图向导** | `tools/calibration/tag_capture_wizard.py` | 实时视频流 + 双路互补检测 + 空格一键连拍多视角相片 |
+| **采图清单画板** | `tools/calibration/tag_manifest_reviewer.py` | 轻量级原生 GUI 画板，鼠标点击切换标记保留/剔除，实时连通性红绿灯 |
+| **空间建图平差** | `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD清洗、生成 Quiver 图与体检报告 |
+| **在线 AR 验证** | `tools/calibration/tag_calibration_verifier.py` | 实时/30帧时域去噪锁定、留一盲测立体棱柱评估、空间坐标系投射 |
+| **病因深度诊断** | `tools/calibration/diagnose_tag_frame.py` | 标靶漏检/大残差病因切片分析（反差/尺寸/边缘梯度/倾角） |
+| **接触标定向导** | `tools/calibration/hand_eye_calibration.py` | SCARA 经典接触式点对物理标定向导 (备用通道) |
+| **在线定位器** | `src/vision/tag_localizer.py` | 运行时每帧毫秒级检测已知标靶，输出相机外参 $T_{cam\_to\_world}$ |
 
 ---
 
