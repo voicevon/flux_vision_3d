@@ -201,7 +201,54 @@ class TestTagOfflineStudio(unittest.TestCase):
         self.studio.render(canvas)
         self.assertGreater(canvas.shape[0], 0)
 
+    def test_dropdowns_and_sorting(self):
+        """测试下拉菜单展开、项选择、外部点击收起及按残差降序排序"""
+        # 1. 点击展开 FILTER_DROPDOWN
+        self.assertIsNone(self.studio.active_dropdown)
+        self.studio._handle_button_click("TOGGLE_FILTER_DROPDOWN", "FILTER_DROPDOWN", 0, 0)
+        self.assertEqual(self.studio.active_dropdown, "FILTER_DROPDOWN")
+
+        # 2. 点击外部收起
+        self.studio._on_mouse(cv2.EVENT_LBUTTONDOWN, mx=999, my=999, flags=0, param=None)
+        self.assertIsNone(self.studio.active_dropdown, "点击外部应收起下拉菜单")
+
+        # 3. 选择排序方式: 按残差降序 (err_desc)
+        # 为 3 个图像伪造不同的残差
+        f0 = os.path.basename(self.studio.image_files[0])
+        f1 = os.path.basename(self.studio.image_files[1])
+        f2 = os.path.basename(self.studio.image_files[2])
+        self.studio.frame_metrics_cache[f0]["mean_err"] = 0.12
+        self.studio.frame_metrics_cache[f1]["mean_err"] = 0.88  # 最高残差
+        self.studio.frame_metrics_cache[f2]["mean_err"] = 0.45
+
+        self.studio._handle_button_click("DD_SELECT_SORT_DROPDOWN_err_desc", ("SORT_DROPDOWN", "err_desc"), 0, 0)
+        self.assertEqual(self.studio.sort_mode, "err_desc")
+        self.assertIsNone(self.studio.active_dropdown)
+
+        sorted_indices = self.studio._get_filtered_indices()
+        self.assertEqual(sorted_indices[0], 1, "残差最高 (0.88px) 的 view_0002 应排在第 0 位")
+        self.assertEqual(sorted_indices[1], 2, "残差次高 (0.45px) 的 view_0003 应排在第 1 位")
+        self.assertEqual(sorted_indices[2], 0, "残差最低 (0.12px) 的 view_0001 应排在第 2 位")
+
+    def test_view_mode_and_ba_progress(self):
+        """测试视口显示模式 (3D/2D/混合) 与全局平差进度条渲染"""
+        # 1. 测试切换模式
+        for mode in ["3d", "2d", "mix"]:
+            self.studio._handle_button_click(f"DD_SELECT_VIEW_DROPDOWN_{mode}", ("VIEW_DROPDOWN", mode), 0, 0)
+            self.assertEqual(self.studio.view_mode, mode)
+            canvas = np.zeros((self.studio.win_h, self.studio.win_w, 3), dtype=np.uint8)
+            self.studio.render(canvas)
+            self.assertGreater(canvas.shape[0], 0)
+
+        # 2. 测试带有平差进度条的渲染
+        self.studio.is_ba_running = True
+        self.studio.ba_progress = 0.65
+        self.studio.ba_stage_text = "阶段 2/4: 两阶段 Cauchy 平差求解中..."
+        canvas = np.zeros((self.studio.win_h, self.studio.win_w, 3), dtype=np.uint8)
+        self.studio.render(canvas)
+        self.assertGreater(canvas.shape[0], 0)
 
 
 if __name__ == "__main__":
     unittest.main()
+

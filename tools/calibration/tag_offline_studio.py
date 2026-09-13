@@ -63,9 +63,67 @@ DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
 MANIFEST_PATH = os.path.join(CALIB_IMAGES_DIR, "tag_observations.yaml")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
+VIEW_MODE_OPTIONS = [
+    ("mix", "混合透视 (2D+3D)"),
+    ("3d", "3D 双四棱柱对比"),
+    ("2d", "2D 识别框与残差矢量")
+]
+
+FILTER_MODE_OPTIONS = [
+    ("all", "全部帧"),
+    ("warning", "高残差 (>0.5px)"),
+    ("excluded", "已剔除帧")
+]
+
+SORT_MODE_OPTIONS = [
+    ("name_asc", "文件名升序"),
+    ("err_desc", "残差降序 (最差优先 ↓)"),
+    ("err_asc", "残差升序 (最优优先 ↑)"),
+    ("tags_desc", "标靶数量降序")
+]
+
+
+def draw_dropdown_button(
+    canvas: np.ndarray,
+    rect: Tuple[int, int, int, int],
+    label: str,
+    is_open: bool,
+    mouse_pos: Tuple[int, int],
+    prefix: str = ""
+):
+    """绘制现代扁平化微质感下拉菜单头部按钮"""
+    x1, y1, x2, y2 = rect
+    mx, my = mouse_pos
+    is_hover = (x1 <= mx <= x2 and y1 <= my <= y2)
+
+    if is_open:
+        bg_col = (48, 56, 72)
+        border_col = (0, 220, 255)
+        text_col = (255, 255, 255)
+        arrow = "▲"
+    elif is_hover:
+        bg_col = (36, 40, 52)
+        border_col = (0, 180, 220)
+        text_col = (240, 240, 240)
+        arrow = "▼"
+    else:
+        bg_col = (28, 30, 38)
+        border_col = (55, 60, 75)
+        text_col = (200, 200, 200)
+        arrow = "▼"
+
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), bg_col, -1)
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), border_col, 1)
+
+    display_txt = f"{prefix}{label} {arrow}" if prefix else f"{label} {arrow}"
+    (tw, th), _ = cv2.getTextSize(display_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+    tx = x1 + max(6, (x2 - x1 - tw) // 2)
+    ty = y1 + (y2 - y1 + th) // 2
+    cv2.putText(canvas, display_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, text_col, 1, cv2.LINE_AA)
 
 
 class TagOfflineStudio:
+
     """AprilTag 离线标定综合工作站 (Offline Studio) 控制器"""
 
     def __init__(
@@ -121,17 +179,27 @@ class TagOfflineStudio:
         self.current_img_idx = 0
         self.scroll_offset = 0  # 左侧列表滚动偏移行数
 
-        # 筛选模式: "all" (全部), "warning" (仅高残差>0.5px), "excluded" (仅已剔除)
-        self.filter_mode = "all"
+        # 筛选与排序模式
+        self.filter_mode: str = "all"
+        self.sort_mode: str = "name_asc"
+
+        # 视口显示模式: "mix" (混合 2D+3D), "3d" (仅 3D 棱柱), "2d" (仅 2D 识别与残差矢量)
+        self.view_mode: str = "mix"
+
+        # 下拉菜单展开态标识 ("FILTER_DROPDOWN", "SORT_DROPDOWN", "VIEW_DROPDOWN" 或 None)
+        self.active_dropdown: Optional[str] = None
+        self.dropdown_boxes: Dict[str, Dict[str, Any]] = {}
 
         # 4. 单帧与全集指标缓存
         self.frame_metrics_cache: Dict[str, Dict[str, Any]] = {}
         self.global_rmse = 0.0
 
-        # 5. 异步 BA 全局平差任务状态
+        # 5. 异步 BA 全局平差任务状态与进度
         self.is_ba_running = False
         self.ba_thread: Optional[threading.Thread] = None
         self.ba_result_queue: Optional[Tuple[bool, str]] = None
+        self.ba_progress: float = 0.0
+        self.ba_stage_text: str = ""
 
         # 6. 单帧深度病因切片诊断开关
         self.show_frame_diagnostics = False
@@ -154,6 +222,7 @@ class TagOfflineStudio:
 
         # 首次预热并计算全集残差指标
         self.refresh_all_frame_metrics()
+
 
     def reset_viewport_zoom(self):
         """重置中间视口缩放与平移状态为适应屏幕 (1.0x)"""
@@ -386,7 +455,7 @@ class TagOfflineStudio:
 
 
     def _get_filtered_indices(self) -> List[int]:
-        """依据当前的过滤模式获取匹配的帧索引列表"""
+        """依据当前的过滤模式与排序模式获取最终展示的帧索引列表"""
         matched = []
         for idx, p in enumerate(self.image_files):
             base_name = os.path.basename(p)
@@ -399,7 +468,19 @@ class TagOfflineStudio:
             elif self.filter_mode == "excluded":
                 if meta.get("is_excluded", False):
                     matched.append(idx)
+
+        # 排序规则处理
+        if self.sort_mode == "name_asc":
+            matched.sort(key=lambda i: os.path.basename(self.image_files[i]))
+        elif self.sort_mode == "err_desc":
+            matched.sort(key=lambda i: self.frame_metrics_cache.get(os.path.basename(self.image_files[i]), {}).get("mean_err", 0.0), reverse=True)
+        elif self.sort_mode == "err_asc":
+            matched.sort(key=lambda i: self.frame_metrics_cache.get(os.path.basename(self.image_files[i]), {}).get("mean_err", 0.0))
+        elif self.sort_mode == "tags_desc":
+            matched.sort(key=lambda i: self.frame_metrics_cache.get(os.path.basename(self.image_files[i]), {}).get("tag_count", 0), reverse=True)
+
         return matched
+
 
     def toggle_current_frame_exclusion(self):
         """翻转当前选中帧的保留/剔除状态"""
@@ -449,15 +530,24 @@ class TagOfflineStudio:
 
         def _worker():
             try:
-                # 重新保存当前清洗后的清单
+                self.ba_progress = 0.08
+                self.ba_stage_text = "阶段 1/4: 准备观测清单与共视拓扑分析..."
                 self._save_manifest()
-                # 从清单加载
+                time.sleep(0.05)
+
+                self.ba_progress = 0.22
+                self.ba_stage_text = "阶段 2/4: 过滤已剔除样本并构建全局初值..."
                 frame_detections, valid_frame_names, _ = self.manifest_repo.load_manifest(self.manifest_path)
                 if len(frame_detections) < 2:
                     self.ba_result_queue = (False, "有效图像帧不足 2 帧，无法执行 BA 平差")
                     return
 
+                self.ba_progress = 0.48
+                self.ba_stage_text = "阶段 3/4: 两阶段 Cauchy 稳健核平差全局收敛求解..."
                 opt_res = self.optimizer.optimize(frame_detections, valid_frame_names)
+
+                self.ba_progress = 0.88
+                self.ba_stage_text = "阶段 4/4: 重映射空间立体地图与外参反算..."
                 if opt_res and "final_tag_poses_aligned" in opt_res:
                     tags_dict = {}
                     for tid, T in opt_res["final_tag_poses_aligned"].items():
@@ -472,6 +562,8 @@ class TagOfflineStudio:
                     }
                     ManifestRepository.save_map(new_map, self.map_path)
                     self.tags_map_data = new_map
+                    self.ba_progress = 1.0
+                    self.ba_stage_text = "全局平差完成！正在同步就地热更新..."
                     msg = f"BA 优化成功！新全局 RMSE: {opt_res.get('final_rmse', 0.0):.3f} px (地图已就地热重载)"
                     self.ba_result_queue = (True, msg)
                 else:
@@ -481,6 +573,7 @@ class TagOfflineStudio:
 
         self.ba_thread = threading.Thread(target=_worker, daemon=True)
         self.ba_thread.start()
+
 
 
     def export_verification_report(self):
@@ -562,7 +655,72 @@ class TagOfflineStudio:
         if time.time() - self.status_toast_time < 3.0 and self.status_toast:
             self._render_toast(canvas, w, h, bot_h)
 
+        # 6. 置顶渲染展开状态的下拉菜单浮层 (最高 Z-Index, 绝不被下层视口截断)
+        if self.active_dropdown:
+            self._render_active_dropdown(canvas)
+
+    def _render_active_dropdown(self, canvas: np.ndarray):
+        """在全局最顶层 (Z-Index 最高) 渲染当前展开的下拉选项列表"""
+        if not self.active_dropdown or self.active_dropdown not in self.dropdown_boxes:
+            return
+
+        box = self.dropdown_boxes[self.active_dropdown]
+        rect = box["rect"]
+        options = box["options"]
+        active_key = box["active_key"]
+
+        x1, y1, x2, y2 = rect
+        item_h = 32
+        pop_w = max(x2 - x1, 175)
+        pop_h = len(options) * item_h + 6
+        pop_x1 = x1
+        pop_y1 = y2 + 2
+        pop_x2 = pop_x1 + pop_w
+        pop_y2 = pop_y1 + pop_h
+
+        # 防超出画布左右与底部边界
+        if pop_x2 > self.win_w - 6:
+            pop_x1 = self.win_w - pop_w - 6
+            pop_x2 = pop_x1 + pop_w
+        if pop_y2 > self.win_h - 10:
+            pop_y1 = y1 - pop_h - 2
+            pop_y2 = pop_y1 + pop_h
+
+        # 浮层半透明背景与青色发光边框
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (pop_x1, pop_y1), (pop_x2, pop_y2), (18, 20, 26), -1)
+        cv2.addWeighted(overlay, 0.95, canvas, 0.05, 0, canvas)
+        cv2.rectangle(canvas, (pop_x1, pop_y1), (pop_x2, pop_y2), (0, 200, 255), 1)
+
+        mx, my = self.mouse_pos
+        for idx, (opt_key, opt_label) in enumerate(options):
+            iy1 = pop_y1 + 3 + idx * item_h
+            iy2 = iy1 + item_h - 1
+            is_active = (opt_key == active_key)
+            is_hover = (pop_x1 <= mx <= pop_x2 and iy1 <= my <= iy2)
+
+            if is_active:
+                row_bg = (52, 45, 20)
+                txt_col = (0, 230, 255)
+            elif is_hover:
+                row_bg = (36, 42, 56)
+                txt_col = (255, 255, 255)
+            else:
+                row_bg = (22, 25, 32)
+                txt_col = (190, 190, 190)
+
+            cv2.rectangle(canvas, (pop_x1 + 3, iy1), (pop_x2 - 3, iy2), row_bg, -1)
+            prefix = "✔ " if is_active else "  "
+            (tw, th), _ = cv2.getTextSize(prefix + opt_label, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+            cv2.putText(canvas, prefix + opt_label, (pop_x1 + 8, iy1 + (item_h + th) // 2 - 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_col, 1, cv2.LINE_AA)
+
+            # 注册选项点击按钮
+            btn_id = f"DD_SELECT_{self.active_dropdown}_{opt_key}"
+            self.gui_buttons.append((btn_id, (pop_x1, iy1, pop_x2, iy2), (self.active_dropdown, opt_key)))
+
     def _render_top_bar(self, canvas: np.ndarray, w: int, top_h: int):
+
         cv2.rectangle(canvas, (0, 0), (w, top_h), (24, 26, 32), -1)
         cv2.line(canvas, (0, top_h), (w, top_h), (55, 60, 72), 1)
 
@@ -585,10 +743,10 @@ class TagOfflineStudio:
         bx = 16
         mx, my = self.mouse_pos
 
-        # [B] 一键全局平差
-        ba_w = 145
+        # [B] 全局平差
+        ba_w = 135
         ba_type = "warning" if self.is_ba_running else "primary"
-        ba_txt = "正在平差..." if self.is_ba_running else "一键全局平差 (B)"
+        ba_txt = "正在平差..." if self.is_ba_running else "全局平差 (B)"
         draw_styled_button(canvas, (bx, btn_y_top, bx + ba_w, btn_y_bot), ba_txt,
                            mouse_pos=(mx, my), btn_type=ba_type)
         self.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_w, btn_y_bot), "RUN_BA"))
@@ -627,17 +785,46 @@ class TagOfflineStudio:
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (22, 24, 30), -1)
         cv2.line(canvas, (x + w, y), (x + w, y + h), (50, 54, 66), 1)
 
-        # 顶部胶囊筛选栏 (高度 40px)
-        filter_h = 38
-        opts = [("all", "全部"), ("warning", "高残差"), ("excluded", "已剔除")]
-        draw_segmented_toggle(canvas, (x + 8, y + 6, x + w - 8, y + filter_h),
-                              opts, mouse_pos=self.mouse_pos, active_key=self.filter_mode)
-        self.gui_buttons.append(("FILTER_TOGGLE", (x + 8, y + 6, x + w - 8, y + filter_h), opts))
+        # 顶部并排双下拉菜单 (筛选范围 + 排序方式, 高度 34px)
+        header_h = 36
+        dd_y1 = y + 6
+        dd_y2 = y + header_h
+        dd1_w = (w - 24) // 2
+        dd1_x1 = x + 8
+        dd1_x2 = dd1_x1 + dd1_w
+        dd2_x1 = dd1_x2 + 8
+        dd2_x2 = x + w - 8
+
+        # 1. 筛选范围下拉框
+        cur_filter_label = dict(FILTER_MODE_OPTIONS).get(self.filter_mode, "全部帧")
+        is_f_open = (self.active_dropdown == "FILTER_DROPDOWN")
+        draw_dropdown_button(canvas, (dd1_x1, dd_y1, dd1_x2, dd_y2), cur_filter_label,
+                             is_open=is_f_open, mouse_pos=self.mouse_pos)
+        self.dropdown_boxes["FILTER_DROPDOWN"] = {
+            "rect": (dd1_x1, dd_y1, dd1_x2, dd_y2),
+            "options": FILTER_MODE_OPTIONS,
+            "active_key": self.filter_mode
+        }
+        self.gui_buttons.append(("TOGGLE_FILTER_DROPDOWN", (dd1_x1, dd_y1, dd1_x2, dd_y2), "FILTER_DROPDOWN"))
+
+        # 2. 排序方式下拉框
+        cur_sort_label = dict(SORT_MODE_OPTIONS).get(self.sort_mode, "文件名升序")
+        short_sort = cur_sort_label.split(" ")[0] if "(" in cur_sort_label else cur_sort_label
+        is_s_open = (self.active_dropdown == "SORT_DROPDOWN")
+        draw_dropdown_button(canvas, (dd2_x1, dd_y1, dd2_x2, dd_y2), short_sort,
+                             is_open=is_s_open, mouse_pos=self.mouse_pos)
+        self.dropdown_boxes["SORT_DROPDOWN"] = {
+            "rect": (dd2_x1, dd_y1, dd2_x2, dd_y2),
+            "options": SORT_MODE_OPTIONS,
+            "active_key": self.sort_mode
+        }
+        self.gui_buttons.append(("TOGGLE_SORT_DROPDOWN", (dd2_x1, dd_y1, dd2_x2, dd_y2), "SORT_DROPDOWN"))
 
         # 帧列表区域
-        list_y = y + filter_h + 6
+        list_y = y + header_h + 8
         item_h = 36
-        visible_count = (h - filter_h - 12) // item_h
+        visible_count = (h - header_h - 16) // item_h
+
 
         filtered_indices = self._get_filtered_indices()
         if not filtered_indices:
@@ -772,8 +959,24 @@ class TagOfflineStudio:
         # 视口外边框
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (55, 60, 70), 1)
 
+        # 视口左上角：显示模式下拉菜单 (2D / 3D / 混合)
+        vx1 = x + 12
+        vy1 = y + 10
+        vx2 = vx1 + 175
+        vy2 = vy1 + 28
+        cur_view_label = dict(VIEW_MODE_OPTIONS).get(self.view_mode, "混合透视")
+        is_v_open = (self.active_dropdown == "VIEW_DROPDOWN")
+        draw_dropdown_button(canvas, (vx1, vy1, vx2, vy2), cur_view_label,
+                             is_open=is_v_open, mouse_pos=self.mouse_pos, prefix="模式: ")
+        self.dropdown_boxes["VIEW_DROPDOWN"] = {
+            "rect": (vx1, vy1, vx2, vy2),
+            "options": VIEW_MODE_OPTIONS,
+            "active_key": self.view_mode
+        }
+        self.gui_buttons.append(("TOGGLE_VIEW_DROPDOWN", (vx1, vy1, vx2, vy2), "VIEW_DROPDOWN"))
+
         # 视口右上角悬浮提示胶囊
-        zoom_badge = f"缩放: {self.zoom_level:.1f}x | 拖拽: 鼠标右键/中键 | 双击/Z: 重置"
+        zoom_badge = f"缩放: {self.zoom_level:.1f}x | 切换模式: V | 拖拽: 右键/中键 | 双击/Z: 重置"
         (zw, zh), _ = cv2.getTextSize(zoom_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
         bx1 = x + w - zw - 24
         by1 = y + 10
@@ -786,7 +989,10 @@ class TagOfflineStudio:
 
 
     def _overlay_visual_elements(self, disp_frame: np.ndarray, observations: List[Dict[str, Any]], is_frame_excluded: bool):
-        """在工作底图上绘制识别框、3D 轴与重投影残差矢量"""
+        """在工作底图上依据 view_mode 分离渲染 2D 识别框、3D 棱柱与重投影残差矢量"""
+        show_2d = self.view_mode in ("2d", "mix")
+        show_3d = self.view_mode in ("3d", "mix")
+
         obj_pts = []
         img_pts = []
         valid_obs = []
@@ -796,14 +1002,15 @@ class TagOfflineStudio:
             pts = np.array(obs["corners"], dtype=np.int32).reshape((-1, 2))
             keep = obs.get("keep", True) and not is_frame_excluded
 
-            # 识别框与标牌
-            box_col = (0, 230, 80) if keep else (80, 80, 80)
-            thick = 2 if keep else 1
-            cv2.polylines(disp_frame, [pts], isClosed=True, color=box_col, thickness=thick, lineType=cv2.LINE_AA)
+            # 2D 识别框与标牌 (仅在 2d 或 mix 模式下绘制)
+            if show_2d:
+                box_col = (0, 230, 80) if keep else (80, 80, 80)
+                thick = 2 if keep else 1
+                cv2.polylines(disp_frame, [pts], isClosed=True, color=box_col, thickness=thick, lineType=cv2.LINE_AA)
 
-            cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
-            badge_txt = f"Tag #{tid}" if keep else f"Tag #{tid} [EXCL]"
-            cv2.putText(disp_frame, badge_txt, (cx - 35, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.55, box_col, 2, cv2.LINE_AA)
+                cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
+                badge_txt = f"Tag #{tid}" if keep else f"Tag #{tid} [EXCL]"
+                cv2.putText(disp_frame, badge_txt, (cx - 35, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.55, box_col, 2, cv2.LINE_AA)
 
             # 收集参与解算的标靶
             if keep:
@@ -813,42 +1020,44 @@ class TagOfflineStudio:
                     img_pts.append(np.array(obs["corners"], dtype=np.float64))
                     valid_obs.append(obs)
 
-
         # 3D 棱柱与残差矢量投影
         if len(obj_pts) >= 1:
             obj_flat = np.concatenate(obj_pts, axis=0)
             img_flat = np.concatenate(img_pts, axis=0)
             rvec, tvec, success = self.engine.solve_pnp(obj_flat, img_flat)
             if success:
-                # 绘制 3D 双棱柱
-                for obs in valid_obs:
-                    tid = obs["tag_id"]
-                    T_w_t = self.get_tag_transform(tid)
-                    if T_w_t is not None:
-                        R_c_w, _ = cv2.Rodrigues(rvec)
-                        T_c_w = np.eye(4, dtype=np.float64)
-                        T_c_w[:3, :3] = R_c_w
-                        T_c_w[:3, 3] = tvec.flatten()
-                        T_c_t = T_c_w @ T_w_t
-                        r_tag, _ = cv2.Rodrigues(T_c_t[:3, :3])
-                        t_tag = T_c_t[:3, 3].reshape((3, 1))
-                        self.visualizer.render_tag_dual_prisms(
-                            img=disp_frame,
-                            ba_rvec=r_tag,
-                            ba_tvec=t_tag,
-                            obs_rvec=None,
-                            obs_tvec=None,
-                            tag_id=tid,
-                            err_px=0.2,
-                            err_mm=0.2,
-                            observed_corners=np.array(obs["corners"], dtype=np.float64)
-                        )
+                # 绘制 3D 双棱柱 (仅在 3d 或 mix 模式下绘制)
+                if show_3d:
+                    for obs in valid_obs:
+                        tid = obs["tag_id"]
+                        T_w_t = self.get_tag_transform(tid)
+                        if T_w_t is not None:
+                            R_c_w, _ = cv2.Rodrigues(rvec)
+                            T_c_w = np.eye(4, dtype=np.float64)
+                            T_c_w[:3, :3] = R_c_w
+                            T_c_w[:3, 3] = tvec.flatten()
+                            T_c_t = T_c_w @ T_w_t
+                            r_tag, _ = cv2.Rodrigues(T_c_t[:3, :3])
+                            t_tag = T_c_t[:3, 3].reshape((3, 1))
+                            self.visualizer.render_tag_dual_prisms(
+                                img=disp_frame,
+                                ba_rvec=r_tag,
+                                ba_tvec=t_tag,
+                                obs_rvec=None,
+                                obs_tvec=None,
+                                tag_id=tid,
+                                err_px=0.2,
+                                err_mm=0.2,
+                                observed_corners=np.array(obs["corners"], dtype=np.float64)
+                            )
 
-                # 绘制亚像素残差红色放大矢量箭头
-                proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, self.engine.camera_matrix, self.engine.dist_coeffs)
-                proj_flat = proj_pts.reshape((-1, 2))
-                if hasattr(self.visualizer, "draw_reprojection_vectors"):
-                    self.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
+                # 绘制亚像素残差红色放大矢量箭头 (仅在 2d 或 mix 模式下绘制)
+                if show_2d:
+                    proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, self.engine.camera_matrix, self.engine.dist_coeffs)
+                    proj_flat = proj_pts.reshape((-1, 2))
+                    if hasattr(self.visualizer, "draw_reprojection_vectors"):
+                        self.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
+
 
 
     def _render_right_inspector(self, canvas: np.ndarray, x: int, y: int, w: int, h: int):
@@ -941,18 +1150,46 @@ class TagOfflineStudio:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 200, 255), 1, cv2.LINE_AA)
 
     def _render_ba_loading_card(self, canvas: np.ndarray, w: int, h: int):
-        """居中展示异步 BA 全局平差优化进度卡片"""
-        card_w, card_h = 520, 85
+        """居中展示异步 BA 全局平差优化进度卡片 (含实时进度条与阶段指示)"""
+        card_w, card_h = 580, 120
         cx1, cy1 = (w - card_w) // 2, (h - card_h) // 2
         overlay = canvas.copy()
         cv2.rectangle(overlay, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (20, 22, 28), -1)
-        cv2.addWeighted(overlay, 0.90, canvas, 0.10, 0, canvas)
+        cv2.addWeighted(overlay, 0.92, canvas, 0.08, 0, canvas)
         cv2.rectangle(canvas, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (0, 220, 255), 2)
 
-        cv2.putText(canvas, "[BA] 正在执行两阶段全局平差优化计算...", (cx1 + 24, cy1 + 34),
+        pct = max(0.0, min(1.0, self.ba_progress))
+        pct_int = int(round(pct * 100))
+
+        # 标题与进度百分比
+        cv2.putText(canvas, "[BA] 全局平差优化求解中...", (cx1 + 24, cy1 + 32),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, "正在消除多视角累计空间残差，前台持续响应，请稍候...", (cx1 + 24, cy1 + 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
+        pct_str = f"{pct_int}%"
+        (pw, _), _ = cv2.getTextSize(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
+        cv2.putText(canvas, pct_str, (cx1 + card_w - 24 - pw, cy1 + 32),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 235, 255), 2, cv2.LINE_AA)
+
+        # 进度条槽位 (高 14px)
+        bar_x1 = cx1 + 24
+        bar_y1 = cy1 + 46
+        bar_x2 = cx1 + card_w - 24
+        bar_y2 = bar_y1 + 14
+        bar_w = bar_x2 - bar_x1
+
+        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (32, 36, 46), -1)
+        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (58, 65, 82), 1)
+
+        fill_w = int(bar_w * pct)
+        if fill_w > 0:
+            cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y2), (0, 220, 255), -1)
+            # 顶部细微高光线
+            cv2.line(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y1), (180, 250, 255), 1)
+
+        # 底部当前阶段提示文本
+        stage_txt = self.ba_stage_text or "正在消除多视角累计空间残差，前台持续响应..."
+        cv2.putText(canvas, stage_txt, (cx1 + 24, cy1 + 92),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 210, 240), 1, cv2.LINE_AA)
+
 
     def _render_toast(self, canvas: np.ndarray, w: int, h: int, bot_h: int):
         (tw, _), _ = cv2.getTextSize(self.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
@@ -1040,12 +1277,19 @@ class TagOfflineStudio:
                 self.reset_viewport_zoom()
                 return
 
-        # 4. 鼠标左键点击事件 (GUI 按钮分发)
+        # 4. 鼠标左键点击事件 (GUI 按钮分发，优先命中置顶下拉层)
         if event == cv2.EVENT_LBUTTONDOWN:
-            for btn_id, (bx1, by1, bx2, by2), extra in self.gui_buttons:
+            clicked_any = False
+            for btn_id, (bx1, by1, bx2, by2), extra in reversed(self.gui_buttons):
                 if bx1 <= mx <= bx2 and by1 <= my <= by2:
                     self._handle_button_click(btn_id, extra, mx, my)
+                    clicked_any = True
                     return
+
+            # 若未点击任何已注册按钮，且当前有下拉菜单展开，则自动收起 (Click-outside)
+            if not clicked_any and self.active_dropdown:
+                self.active_dropdown = None
+                return
 
 
     def _handle_button_click(self, btn_id: str, extra: Any, mx: int, my: int):
@@ -1061,24 +1305,40 @@ class TagOfflineStudio:
         elif btn_id == "SAVE_MAP":
             self.manifest_repo.save_tags_map(self.map_path, self.tags_map_data)
             self.set_toast(f"空间立体地图已成功保存至 {self.map_path}")
+        elif btn_id == "TOGGLE_VIEW_DROPDOWN":
+            self.active_dropdown = None if self.active_dropdown == "VIEW_DROPDOWN" else "VIEW_DROPDOWN"
+        elif btn_id == "TOGGLE_FILTER_DROPDOWN":
+            self.active_dropdown = None if self.active_dropdown == "FILTER_DROPDOWN" else "FILTER_DROPDOWN"
+        elif btn_id == "TOGGLE_SORT_DROPDOWN":
+            self.active_dropdown = None if self.active_dropdown == "SORT_DROPDOWN" else "SORT_DROPDOWN"
+        elif btn_id.startswith("DD_SELECT_"):
+            dd_name, selected_val = extra
+            if dd_name == "VIEW_DROPDOWN":
+                self.view_mode = selected_val
+                lbl = dict(VIEW_MODE_OPTIONS).get(selected_val, selected_val)
+                self.set_toast(f"显示模式已切换为: {lbl}")
+            elif dd_name == "FILTER_DROPDOWN":
+                self.filter_mode = selected_val
+                self.scroll_offset = 0
+                lbl = dict(FILTER_MODE_OPTIONS).get(selected_val, selected_val)
+                self.set_toast(f"筛选模式已切换为: {lbl}")
+            elif dd_name == "SORT_DROPDOWN":
+                self.sort_mode = selected_val
+                self.scroll_offset = 0
+                lbl = dict(SORT_MODE_OPTIONS).get(selected_val, selected_val)
+                self.set_toast(f"排序方式已切换为: {lbl}")
+            self.active_dropdown = None
         elif btn_id.startswith("SELECT_FRAME_"):
             orig_idx = int(extra)
             self.current_img_idx = orig_idx
             self.set_toast(f"已选中帧: {os.path.basename(self.image_files[orig_idx])}")
+            self.active_dropdown = None
         elif btn_id == "TOGGLE_FRAME_STATUS":
             self.toggle_current_frame_exclusion()
         elif btn_id.startswith("TOGGLE_TAG_"):
             tid = int(extra)
             self.toggle_tag_exclusion_in_current_frame(tid)
-        elif btn_id == "FILTER_TOGGLE":
-            # 分段开关点击判定
-            opts = extra
-            x1, y1, x2, y2 = [b for b_id, b, _ in self.gui_buttons if b_id == "FILTER_TOGGLE"][0]
-            seg_w = (x2 - x1) // len(opts)
-            clicked_seg = min(len(opts) - 1, max(0, (mx - x1) // seg_w))
-            self.filter_mode = opts[clicked_seg][0]
-            self.scroll_offset = 0
-            self.set_toast(f"筛选模式切换为: {opts[clicked_seg][1]}")
+
         elif btn_id == "SUPER_EXTRACT_FRAME":
             self.set_toast("正在对当前单帧执行超精重提取...")
             # 单帧重提取
@@ -1120,12 +1380,13 @@ class TagOfflineStudio:
         print(f" [空间立体地图] : {self.map_path}")
         print(" [工作流指南]   :")
         print("   - [↑] / [↓] 或 [W] / [S] : 上下顺序切换当前选定的图像帧")
+        print("   - [V]                    : 循环切换视口模式 (混合 ⇋ 3D双棱柱 ⇋ 2D残差矢量)")
         print("   - [滚轮 (中间画布)]      : 以鼠标为中心实时精准放大/缩小图像 (0.4x ~ 15.0x)")
         print("   - [右键/中键拖拽]        : 在中间画布中自由平移浏览图像细节")
         print("   - [滚轮 (左侧栏)]        : 上下滚动浏览帧序列列表")
         print("   - [双击画布] / [Z] / [0] : 一键重置图像缩放和平移为适应视口 (1.0x)")
         print("   - [T] / [Space]          : 翻转当前帧有效性状态 (保留 ⇋ 剔除)")
-        print("   - [B]                    : 一键异步执行两阶段 BA 全局平差优化并就地热重载")
+        print("   - [B]                    : 异步执行全局平差优化 (BA) 并就地热重载")
         print("   - [P]                    : 全量重算并刷新所有帧精度体检残差指标")
         print("   - [R]                    : 导出离线全景精度体检 Markdown 质检单")
         print("   - [S]                    : 保存当前优化后的空间立体地图")
@@ -1158,6 +1419,12 @@ class TagOfflineStudio:
                     if self.image_files:
                         self.current_img_idx = (self.current_img_idx + 1) % len(self.image_files)
                         self.set_toast(f"选定帧: {os.path.basename(self.image_files[self.current_img_idx])}")
+                elif key in (ord('v'), ord('V')):      # V 键 -> 循环切换显示模式
+                    modes = ["mix", "3d", "2d"]
+                    curr_i = modes.index(self.view_mode) if self.view_mode in modes else 0
+                    self.view_mode = modes[(curr_i + 1) % len(modes)]
+                    lbl = dict(VIEW_MODE_OPTIONS).get(self.view_mode, self.view_mode)
+                    self.set_toast(f"显示模式已切换为: {lbl}")
                 elif key in (ord('z'), ord('Z'), ord('0')):  # Z / 0 键 -> 重置缩放
                     self.reset_viewport_zoom()
                 elif key in (ord('t'), ord('T'), 32):  # T 键或空格键 -> 翻转状态
@@ -1172,6 +1439,7 @@ class TagOfflineStudio:
                 elif key in (ord('s'), ord('S')):      # S 键 -> 保存地图
                     ManifestRepository.save_map(self.tags_map_data, self.map_path)
                     self.set_toast("空间立体地图已保存！")
+
 
 
 
