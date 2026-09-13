@@ -162,6 +162,46 @@ class TestTagOfflineStudio(unittest.TestCase):
         reports = glob.glob(os.path.join(report_dir, "studio_qa_report_*.md"))
         self.assertGreater(len(reports), 0, "应成功生成质检报告 Markdown 文件")
 
+    def test_viewport_zoom_and_pan(self):
+        """测试视口区分区域滚轮 (左栏列表滚动 vs 中间画布缩放) 与平移重置"""
+        # 1. 鼠标在左栏 (x=100, y=200): 滚轮只影响 scroll_offset
+        self.assertEqual(self.studio.scroll_offset, 0)
+        self.assertEqual(self.studio.zoom_level, 1.0)
+        self.studio._on_mouse(cv2.EVENT_MOUSEWHEEL, mx=100, my=200, flags=-1, param=None)
+        self.assertGreater(self.studio.scroll_offset, 0, "左栏滚轮应增加列表偏移")
+        self.assertEqual(self.studio.zoom_level, 1.0, "左栏滚轮不应影响画布缩放")
+
+        # 2. 鼠标在中间画布 (x=800, y=500): 滚轮只放大画布图像
+        old_scroll = self.studio.scroll_offset
+        self.studio._on_mouse(cv2.EVENT_MOUSEWHEEL, mx=800, my=500, flags=1, param=None)
+        self.assertGreater(self.studio.zoom_level, 1.0, "中间画布滚轮向上应放大图像")
+        self.assertEqual(self.studio.scroll_offset, old_scroll, "中间画布滚轮不应影响左栏列表")
+
+        # 3. 鼠标右键在中间画布按住并拖拽
+        old_pan_x = self.studio.pan_offset_x
+        old_pan_y = self.studio.pan_offset_y
+        self.studio._on_mouse(cv2.EVENT_RBUTTONDOWN, mx=800, my=500, flags=0, param=None)
+        self.assertTrue(self.studio.is_panning)
+        self.studio._on_mouse(cv2.EVENT_MOUSEMOVE, mx=830, my=520, flags=0, param=None)
+        self.studio._on_mouse(cv2.EVENT_RBUTTONUP, mx=830, my=520, flags=0, param=None)
+        self.assertFalse(self.studio.is_panning)
+        self.assertEqual(self.studio.pan_offset_x, old_pan_x + 30.0)
+        self.assertEqual(self.studio.pan_offset_y, old_pan_y + 20.0)
+
+
+        # 4. 双击中间画布重置缩放与平移
+        self.studio._on_mouse(cv2.EVENT_LBUTTONDBLCLK, mx=800, my=500, flags=0, param=None)
+        self.assertEqual(self.studio.zoom_level, 1.0, "双击应重置缩放至 1.0x")
+        self.assertEqual(self.studio.pan_offset_x, 0.0, "双击应重置平移偏置")
+        self.assertEqual(self.studio.pan_offset_y, 0.0)
+
+        # 5. 放大到 3.0x 下渲染画布无异常
+        self.studio.zoom_level = 3.0
+        canvas = np.zeros((self.studio.win_h, self.studio.win_w, 3), dtype=np.uint8)
+        self.studio.render(canvas)
+        self.assertGreater(canvas.shape[0], 0)
+
+
 
 if __name__ == "__main__":
     unittest.main()

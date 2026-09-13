@@ -145,8 +145,22 @@ class TagOfflineStudio:
         self.mouse_pos = (-1, -1)
         self.is_running = True
 
+        # 9. 中间画布视口变换与平移缩放状态 (Viewport Zoom & Pan)
+        self.zoom_level: float = 1.0
+        self.pan_offset_x: float = 0.0
+        self.pan_offset_y: float = 0.0
+        self.is_panning: bool = False
+        self.pan_start_pos: Tuple[int, int] = (0, 0)
+
         # 首次预热并计算全集残差指标
         self.refresh_all_frame_metrics()
+
+    def reset_viewport_zoom(self):
+        """重置中间视口缩放与平移状态为适应屏幕 (1.0x)"""
+        self.zoom_level = 1.0
+        self.pan_offset_x = 0.0
+        self.pan_offset_y = 0.0
+        self.set_toast("视口缩放已重置 (1.0x 适应视口)")
 
     def set_toast(self, msg: str):
         self.status_toast = msg
@@ -714,19 +728,62 @@ class TagOfflineStudio:
         # 叠加标靶与 3D 双棱柱
         self._overlay_visual_elements(disp_frame, obs_list, meta.get("is_excluded", False))
 
-        # 视口等比居中放置
+        # 视口等比与平移缩放渲染
         frame_h, frame_w = disp_frame.shape[:2]
-        scale = min(w / frame_w, h / frame_h)
-        scaled_w = int(frame_w * scale)
-        scaled_h = int(frame_h * scale)
-        resized_view = cv2.resize(disp_frame, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
+        base_scale = min(w / frame_w, h / frame_h)
+        curr_scale = base_scale * self.zoom_level
+        target_w = int(round(frame_w * curr_scale))
+        target_h = int(round(frame_h * curr_scale))
 
-        offset_x = x + (w - scaled_w) // 2
-        offset_y = y + (h - scaled_h) // 2
-        canvas[offset_y:offset_y + scaled_h, offset_x:offset_x + scaled_w] = resized_view
+        center_x = x + w / 2.0 + self.pan_offset_x
+        center_y = y + h / 2.0 + self.pan_offset_y
 
-        # 边框勾勒
-        cv2.rectangle(canvas, (offset_x, offset_y), (offset_x + scaled_w, offset_y + scaled_h), (60, 65, 75), 1)
+        img_x1 = int(round(center_x - target_w / 2.0))
+        img_y1 = int(round(center_y - target_h / 2.0))
+        img_x2 = img_x1 + target_w
+        img_y2 = img_y1 + target_h
+
+        # 计算视口矩形 [x, y, x + w, y + h] 与目标虚拟矩形 [img_x1, img_y1, img_x2, img_y2] 的求交
+        dst_x1 = max(x, img_x1)
+        dst_y1 = max(y, img_y1)
+        dst_x2 = min(x + w, img_x2)
+        dst_y2 = min(y + h, img_y2)
+
+        if dst_x2 > dst_x1 and dst_y2 > dst_y1:
+            rel_x1 = (dst_x1 - img_x1) / float(target_w)
+            rel_y1 = (dst_y1 - img_y1) / float(target_h)
+            rel_x2 = (dst_x2 - img_x1) / float(target_w)
+            rel_y2 = (dst_y2 - img_y1) / float(target_h)
+
+            src_x1 = max(0, min(frame_w - 1, int(round(rel_x1 * frame_w))))
+            src_y1 = max(0, min(frame_h - 1, int(round(rel_y1 * frame_h))))
+            src_x2 = max(src_x1 + 1, min(frame_w, int(round(rel_x2 * frame_w))))
+            src_y2 = max(src_y1 + 1, min(frame_h, int(round(rel_y2 * frame_h))))
+
+            src_roi = disp_frame[src_y1:src_y2, src_x1:src_x2]
+            dst_w = dst_x2 - dst_x1
+            dst_h = dst_y2 - dst_y1
+
+            if dst_w > 0 and dst_h > 0 and src_roi.size > 0:
+                interp = cv2.INTER_LINEAR if self.zoom_level > 1.2 else cv2.INTER_AREA
+                resized_roi = cv2.resize(src_roi, (dst_w, dst_h), interpolation=interp)
+                canvas[dst_y1:dst_y2, dst_x1:dst_x2] = resized_roi
+
+        # 视口外边框
+        cv2.rectangle(canvas, (x, y), (x + w, y + h), (55, 60, 70), 1)
+
+        # 视口右上角悬浮提示胶囊
+        zoom_badge = f"缩放: {self.zoom_level:.1f}x | 拖拽: 鼠标右键/中键 | 双击/Z: 重置"
+        (zw, zh), _ = cv2.getTextSize(zoom_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+        bx1 = x + w - zw - 24
+        by1 = y + 10
+        bx2 = bx1 + zw + 14
+        by2 = by1 + zh + 10
+        cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (20, 24, 32), -1)
+        cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (70, 75, 88), 1)
+        cv2.putText(canvas, zoom_badge, (bx1 + 7, by1 + zh + 3),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 210, 230), 1, cv2.LINE_AA)
+
 
     def _overlay_visual_elements(self, disp_frame: np.ndarray, observations: List[Dict[str, Any]], is_frame_excluded: bool):
         """在工作底图上绘制识别框、3D 轴与重投影残差矢量"""
@@ -914,20 +971,82 @@ class TagOfflineStudio:
     def _on_mouse(self, event, mx, my, flags, param):
         self.mouse_pos = (mx, my)
 
-        # 滚轮切换左栏列表
-        if event == cv2.EVENT_MOUSEWHEEL:
-            if flags > 0:
-                self.scroll_offset = max(0, self.scroll_offset - 2)
-            else:
-                self.scroll_offset += 2
-            return
+        top_h = self.viewport.top_bar_h if self.viewport else 44
+        bot_h = self.viewport.bottom_bar_h if self.viewport else 52
+        content_y1 = top_h
+        content_y2 = self.win_h - bot_h
 
-        # 鼠标左键点击事件
+        left_x1, left_x2 = 0, self.left_bar_w
+        mid_x1, mid_x2 = self.left_bar_w, self.win_w - self.right_bar_w
+
+        # 1. 鼠标滚轮事件 (精准区分：左侧列表滚动 vs 中间视口以鼠标为中心缩放)
+        if event == cv2.EVENT_MOUSEWHEEL:
+            # 滚轮判定方向: flags > 0 为向上滚, flags < 0 为向下滚
+            wheel_up = (flags > 0)
+
+            # A. 鼠标光标位于左栏：上下滚动帧资产列表
+            if left_x1 <= mx < left_x2:
+                if wheel_up:
+                    self.scroll_offset = max(0, self.scroll_offset - 2)
+                else:
+                    self.scroll_offset += 2
+                return
+
+            # B. 鼠标光标位于中间画布视口：执行以光标为中心的精准缩放 (Zoom In/Out)
+            elif mid_x1 <= mx < mid_x2 and content_y1 <= my < content_y2:
+                zoom_factor = 1.15 if wheel_up else (1.0 / 1.15)
+                new_zoom = max(0.4, min(15.0, self.zoom_level * zoom_factor))
+                ratio = new_zoom / self.zoom_level
+
+                # 当前视口几何中心
+                mid_w = mid_x2 - mid_x1
+                mid_h = content_y2 - content_y1
+                curr_center_x = mid_x1 + mid_w / 2.0 + self.pan_offset_x
+                curr_center_y = content_y1 + mid_h / 2.0 + self.pan_offset_y
+
+                # 保持当前鼠标指向的图像局部坐标在缩放前后完全重合
+                dx = mx - curr_center_x
+                dy = my - curr_center_y
+                new_center_x = mx - dx * ratio
+                new_center_y = my - dy * ratio
+
+                self.pan_offset_x = new_center_x - (mid_x1 + mid_w / 2.0)
+                self.pan_offset_y = new_center_y - (content_y1 + mid_h / 2.0)
+                self.zoom_level = new_zoom
+                return
+
+        # 2. 拖拽平移事件 (支持鼠标右键或中键按住平移)
+        if event in (cv2.EVENT_RBUTTONDOWN, cv2.EVENT_MBUTTONDOWN):
+            if mid_x1 <= mx < mid_x2 and content_y1 <= my < content_y2:
+                self.is_panning = True
+                self.pan_start_pos = (mx, my)
+                return
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if self.is_panning:
+                dx = mx - self.pan_start_pos[0]
+                dy = my - self.pan_start_pos[1]
+                self.pan_offset_x += dx
+                self.pan_offset_y += dy
+                self.pan_start_pos = (mx, my)
+                return
+        elif event in (cv2.EVENT_RBUTTONUP, cv2.EVENT_MBUTTONUP):
+            if self.is_panning:
+                self.is_panning = False
+                return
+
+        # 3. 双击事件 (双击左键或右键一键重置缩放)
+        if event in (cv2.EVENT_LBUTTONDBLCLK, cv2.EVENT_RBUTTONDBLCLK):
+            if mid_x1 <= mx < mid_x2 and content_y1 <= my < content_y2:
+                self.reset_viewport_zoom()
+                return
+
+        # 4. 鼠标左键点击事件 (GUI 按钮分发)
         if event == cv2.EVENT_LBUTTONDOWN:
             for btn_id, (bx1, by1, bx2, by2), extra in self.gui_buttons:
                 if bx1 <= mx <= bx2 and by1 <= my <= by2:
                     self._handle_button_click(btn_id, extra, mx, my)
                     return
+
 
     def _handle_button_click(self, btn_id: str, extra: Any, mx: int, my: int):
         if btn_id == "EXIT":
@@ -1001,6 +1120,10 @@ class TagOfflineStudio:
         print(f" [空间立体地图] : {self.map_path}")
         print(" [工作流指南]   :")
         print("   - [↑] / [↓] 或 [W] / [S] : 上下顺序切换当前选定的图像帧")
+        print("   - [滚轮 (中间画布)]      : 以鼠标为中心实时精准放大/缩小图像 (0.4x ~ 15.0x)")
+        print("   - [右键/中键拖拽]        : 在中间画布中自由平移浏览图像细节")
+        print("   - [滚轮 (左侧栏)]        : 上下滚动浏览帧序列列表")
+        print("   - [双击画布] / [Z] / [0] : 一键重置图像缩放和平移为适应视口 (1.0x)")
         print("   - [T] / [Space]          : 翻转当前帧有效性状态 (保留 ⇋ 剔除)")
         print("   - [B]                    : 一键异步执行两阶段 BA 全局平差优化并就地热重载")
         print("   - [P]                    : 全量重算并刷新所有帧精度体检残差指标")
@@ -1035,6 +1158,8 @@ class TagOfflineStudio:
                     if self.image_files:
                         self.current_img_idx = (self.current_img_idx + 1) % len(self.image_files)
                         self.set_toast(f"选定帧: {os.path.basename(self.image_files[self.current_img_idx])}")
+                elif key in (ord('z'), ord('Z'), ord('0')):  # Z / 0 键 -> 重置缩放
+                    self.reset_viewport_zoom()
                 elif key in (ord('t'), ord('T'), 32):  # T 键或空格键 -> 翻转状态
                     self.toggle_current_frame_exclusion()
                 elif key in (ord('b'), ord('B')):      # B 键 -> 一键 BA
@@ -1047,6 +1172,7 @@ class TagOfflineStudio:
                 elif key in (ord('s'), ord('S')):      # S 键 -> 保存地图
                     ManifestRepository.save_map(self.tags_map_data, self.map_path)
                     self.set_toast("空间立体地图已保存！")
+
 
 
         finally:
