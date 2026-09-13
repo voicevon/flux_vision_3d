@@ -324,6 +324,8 @@ class TagManifestReviewer:
         curr_key = self.image_keys[self.current_idx]
         img_info = self.raw_manifest["images"][curr_key]
         raw_path = img_info.get("image_path", "")
+        if not os.path.isabs(raw_path):
+            raw_path = os.path.join(PROJECT_ROOT, raw_path)
 
         raw_img = cv2.imread(raw_path)
         if raw_img is None:
@@ -387,6 +389,8 @@ class TagManifestReviewer:
         for k in self.image_keys:
             img_info = self.raw_manifest["images"][k]
             raw_path = img_info.get("image_path", "")
+            if not os.path.isabs(raw_path):
+                raw_path = os.path.join(PROJECT_ROOT, raw_path)
             raw_img = cv2.imread(raw_path)
             if raw_img is None:
                 continue

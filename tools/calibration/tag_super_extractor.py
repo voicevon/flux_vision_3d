@@ -402,6 +402,8 @@ class TagSuperExtractor:
             base_name = os.path.basename(f_path)
             hist_entry = existing_imgs.get(base_name, {})
             is_frame_enabled = hist_entry.get("enabled", True)
+            if is_frame_enabled:
+                total_enabled += 1
 
             # 建立历史观测查询字典 {tag_id: obs_dict}
             hist_obs_map = {obs["tag_id"]: obs for obs in hist_entry.get("observations", [])}
