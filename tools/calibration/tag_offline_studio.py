@@ -200,6 +200,8 @@ class TagOfflineStudio:
         self.ba_result_queue: Optional[Tuple[bool, str]] = None
         self.ba_progress: float = 0.0
         self.ba_stage_text: str = ""
+        self.ba_sub_progress: float = 0.0
+        self.ba_sub_text: str = ""
 
         # 6. 单帧深度病因切片诊断开关
         self.show_frame_diagnostics = False
@@ -525,29 +527,59 @@ class TagOfflineStudio:
             return
 
         self.is_ba_running = True
+        self.ba_progress = 0.05
+        self.ba_sub_progress = 0.0
+        self.ba_stage_text = "正在启动两阶段全局 BA 平差优化计算..."
+        self.ba_sub_text = "初始化优化工作空间..."
         self.set_toast("正在启动两阶段全局 BA 平差优化计算...")
         print("\n[*] [STUDIO] 正在启动异步 BA 全局平差优化计算...")
 
         def _worker():
             try:
-                self.ba_progress = 0.08
+                self.ba_progress = 0.10
+                self.ba_sub_progress = 0.30
                 self.ba_stage_text = "阶段 1/4: 准备观测清单与共视拓扑分析..."
+                self.ba_sub_text = "校验数据清单并分析共视连通性图..."
                 self._save_manifest()
                 time.sleep(0.05)
 
-                self.ba_progress = 0.22
+                self.ba_progress = 0.25
+                self.ba_sub_progress = 0.60
                 self.ba_stage_text = "阶段 2/4: 过滤已剔除样本并构建全局初值..."
+                self.ba_sub_text = "构建超定 PnP 初始机位与标靶三维姿态..."
                 frame_detections, valid_frame_names, _ = self.manifest_repo.load_manifest(self.manifest_path)
                 if len(frame_detections) < 2:
                     self.ba_result_queue = (False, "有效图像帧不足 2 帧，无法执行 BA 平差")
                     return
 
-                self.ba_progress = 0.48
+                self.ba_progress = 0.40
+                self.ba_sub_progress = 0.0
                 self.ba_stage_text = "阶段 3/4: 两阶段 Cauchy 稳健核平差全局收敛求解..."
-                opt_res = self.optimizer.optimize(frame_detections, valid_frame_names)
+                self.ba_sub_text = "准备启动非线性平差求解器..."
+
+                def on_ba_callback(info: Dict[str, Any]):
+                    stg = info.get("stage", 1)
+                    stg_name = info.get("stage_name", "")
+                    cur_it = info.get("iter", 0)
+                    max_it = info.get("max_iter", 1)
+                    cur_rmse = info.get("rmse", 0.0)
+                    sub_pct = max(0.0, min(1.0, info.get("sub_progress", 0.0)))
+
+                    # 全局大进度条在阶段 3/4 期间平滑推进：阶段一占 40%~62%，阶段二占 62%~84%
+                    if stg == 1:
+                        self.ba_progress = 0.40 + 0.22 * sub_pct
+                    else:
+                        self.ba_progress = 0.62 + 0.22 * sub_pct
+
+                    self.ba_sub_progress = sub_pct
+                    self.ba_sub_text = f"[{stg_name}] 轮次 #{cur_it}/{max_it} | 实时 RMSE: {cur_rmse:.3f} px"
+
+                opt_res = self.optimizer.optimize(frame_detections, valid_frame_names, callback=on_ba_callback)
 
                 self.ba_progress = 0.88
+                self.ba_sub_progress = 0.50
                 self.ba_stage_text = "阶段 4/4: 重映射空间立体地图与外参反算..."
+                self.ba_sub_text = "对齐世界原点并写入立体几何地图缓存..."
                 if opt_res and "final_tag_poses_aligned" in opt_res:
                     tags_dict = {}
                     for tid, T in opt_res["final_tag_poses_aligned"].items():
@@ -563,7 +595,9 @@ class TagOfflineStudio:
                     ManifestRepository.save_map(new_map, self.map_path)
                     self.tags_map_data = new_map
                     self.ba_progress = 1.0
+                    self.ba_sub_progress = 1.0
                     self.ba_stage_text = "全局平差完成！正在同步就地热更新..."
+                    self.ba_sub_text = f"最终全局 RMSE: {opt_res.get('final_rmse', 0.0):.3f} px (已就地生效)"
                     msg = f"BA 优化成功！新全局 RMSE: {opt_res.get('final_rmse', 0.0):.3f} px (地图已就地热重载)"
                     self.ba_result_queue = (True, msg)
                 else:
@@ -1169,45 +1203,77 @@ class TagOfflineStudio:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 200, 255), 1, cv2.LINE_AA)
 
     def _render_ba_loading_card(self, canvas: np.ndarray, w: int, h: int):
-        """居中展示异步 BA 全局平差优化进度卡片 (含实时进度条与阶段指示)"""
-        card_w, card_h = 580, 120
+        """居中展示异步 BA 全局平差双轨进度卡片 (大阶段主进度条 + 求解器子进度条与实时收敛指标)"""
+        card_w, card_h = 640, 162
         cx1, cy1 = (w - card_w) // 2, (h - card_h) // 2
         overlay = canvas.copy()
-        cv2.rectangle(overlay, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (20, 22, 28), -1)
-        cv2.addWeighted(overlay, 0.92, canvas, 0.08, 0, canvas)
+        cv2.rectangle(overlay, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (18, 20, 26), -1)
+        cv2.addWeighted(overlay, 0.94, canvas, 0.06, 0, canvas)
         cv2.rectangle(canvas, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (0, 220, 255), 2)
 
+        # ---------------- 1. 主阶段总流程进度条 ----------------
         pct = max(0.0, min(1.0, self.ba_progress))
         pct_int = int(round(pct * 100))
 
-        # 标题与进度百分比
-        cv2.putText(canvas, "[BA] 全局平差优化求解中...", (cx1 + 24, cy1 + 32),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+        # 主标题与主进度百分比
+        cv2.putText(canvas, "[BA] 全局平差整体收敛进度", (cx1 + 22, cy1 + 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
         pct_str = f"{pct_int}%"
-        (pw, _), _ = cv2.getTextSize(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
-        cv2.putText(canvas, pct_str, (cx1 + card_w - 24 - pw, cy1 + 32),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 235, 255), 2, cv2.LINE_AA)
+        (pw, _), _ = cv2.getTextSize(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
+        cv2.putText(canvas, pct_str, (cx1 + card_w - 22 - pw, cy1 + 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 235, 255), 2, cv2.LINE_AA)
 
-        # 进度条槽位 (高 14px)
-        bar_x1 = cx1 + 24
-        bar_y1 = cy1 + 46
-        bar_x2 = cx1 + card_w - 24
-        bar_y2 = bar_y1 + 14
+        # 主进度条槽位 (高 12px)
+        bar_x1 = cx1 + 22
+        bar_y1 = cy1 + 34
+        bar_x2 = cx1 + card_w - 22
+        bar_y2 = bar_y1 + 12
         bar_w = bar_x2 - bar_x1
 
-        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (32, 36, 46), -1)
-        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (58, 65, 82), 1)
+        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (30, 34, 44), -1)
+        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (55, 62, 78), 1)
 
         fill_w = int(bar_w * pct)
         if fill_w > 0:
-            cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y2), (0, 220, 255), -1)
-            # 顶部细微高光线
-            cv2.line(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y1), (180, 250, 255), 1)
+            cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y2), (0, 210, 255), -1)
+            cv2.line(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y1), (180, 245, 255), 1)
 
-        # 底部当前阶段提示文本
-        stage_txt = self.ba_stage_text or "正在消除多视角累计空间残差，前台持续响应..."
-        cv2.putText(canvas, stage_txt, (cx1 + 24, cy1 + 92),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 210, 240), 1, cv2.LINE_AA)
+        # 主阶段当前说明
+        stage_txt = self.ba_stage_text or "准备进入优化平差管线..."
+        cv2.putText(canvas, stage_txt, (cx1 + 22, cy1 + 62),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 215, 240), 1, cv2.LINE_AA)
+
+        # ---------------- 细微居中分割线 ----------------
+        cv2.line(canvas, (cx1 + 22, cy1 + 74), (cx1 + card_w - 22, cy1 + 74), (45, 48, 60), 1)
+
+        # ---------------- 2. 求解器内部子阶段与迭代进度条 ----------------
+        sub_pct = max(0.0, min(1.0, self.ba_sub_progress))
+        sub_pct_int = int(round(sub_pct * 100))
+
+        # 子阶段标题与百分比
+        cv2.putText(canvas, "优化器实时迭代收敛监控 (Sub-Iteration)", (cx1 + 22, cy1 + 94),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 205, 215), 1, cv2.LINE_AA)
+        sub_pct_str = f"{sub_pct_int}%"
+        (spw, _), _ = cv2.getTextSize(sub_pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 2)
+        cv2.putText(canvas, sub_pct_str, (cx1 + card_w - 22 - spw, cy1 + 94),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 180, 255), 2, cv2.LINE_AA)
+
+        # 子进度条槽位 (高 10px)
+        sbar_y1 = cy1 + 102
+        sbar_y2 = sbar_y1 + 10
+        cv2.rectangle(canvas, (bar_x1, sbar_y1), (bar_x2, sbar_y2), (25, 28, 36), -1)
+        cv2.rectangle(canvas, (bar_x1, sbar_y1), (bar_x2, sbar_y2), (48, 54, 68), 1)
+
+        sub_fill_w = int(bar_w * sub_pct)
+        if sub_fill_w > 0:
+            # 琥珀金 / 亮橙高光填充，与主进度条形成高辨识度层次区分
+            cv2.rectangle(canvas, (bar_x1, sbar_y1), (bar_x1 + sub_fill_w, sbar_y2), (0, 160, 255), -1)
+            cv2.line(canvas, (bar_x1, sbar_y1), (bar_x1 + sub_fill_w, sbar_y1), (120, 220, 255), 1)
+
+        # 底部动态收敛指标与轮次
+        sub_txt = self.ba_sub_text or "等待当前阶段迭代步进推进..."
+        cv2.putText(canvas, sub_txt, (cx1 + 22, cy1 + 132),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1, cv2.LINE_AA)
 
 
     def _render_toast(self, canvas: np.ndarray, w: int, h: int, bot_h: int):

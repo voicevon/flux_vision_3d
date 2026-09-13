@@ -240,10 +240,12 @@ class TestTagOfflineStudio(unittest.TestCase):
             self.studio.render(canvas)
             self.assertGreater(canvas.shape[0], 0)
 
-        # 2. 测试带有平差进度条的渲染
+        # 2. 测试带有大阶段+子阶段双进度条的渲染
         self.studio.is_ba_running = True
         self.studio.ba_progress = 0.65
-        self.studio.ba_stage_text = "阶段 2/4: 两阶段 Cauchy 平差求解中..."
+        self.studio.ba_stage_text = "阶段 3/4: 两阶段 Cauchy 平差求解中..."
+        self.studio.ba_sub_progress = 0.42
+        self.studio.ba_sub_text = "[微容差深度平差] 轮次 #14/35 | 实时 RMSE: 0.198 px"
         canvas = np.zeros((self.studio.win_h, self.studio.win_w, 3), dtype=np.uint8)
         self.studio.render(canvas)
         self.assertGreater(canvas.shape[0], 0)

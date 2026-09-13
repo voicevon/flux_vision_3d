@@ -14,7 +14,7 @@
 import os
 import math
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Any, Set
+from typing import Dict, List, Tuple, Optional, Any, Set, Callable
 import numpy as np
 import cv2
 from scipy.optimize import least_squares
@@ -98,7 +98,8 @@ class BundleAdjustmentOptimizer:
                  active_frame_names: Optional[List[str]] = None,
                  origin_tag_id: int = 0,
                  x_align_tag_id: int = 1,
-                 baseline_pair: Optional[Tuple[int, int, float]] = None) -> Dict[str, Any]:
+                 baseline_pair: Optional[Tuple[int, int, float]] = None,
+                 callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         """
         基于非线性最小二乘 (Bundle Adjustment) 联合优化所有标靶位姿与相机位姿
         平差前严格调用共视连通性安全守门员校验，杜绝奇异矩阵。
@@ -249,21 +250,91 @@ class BundleAdjustmentOptimizer:
 
             return np.array(residuals, dtype=np.float64)
 
+        # 内部轻量迭代步进与残差监控器
+        class _OptimizationMonitor:
+            def __init__(self, stage: int, stage_name: str, max_iters: int, cb=None):
+                self.stage = stage
+                self.stage_name = stage_name
+                self.max_iters = max_iters
+                self.cb = cb
+                self.call_count = 0
+                self.iter_count = 0
+                self.last_x = None
+
+            def wrap_residuals(self, base_func, weights_dict, active_outliers):
+                def _wrapped(x):
+                    self.call_count += 1
+                    res = base_func(x, weights_dict, active_outliers)
+
+                    # 判断是否为新的优化主步 (过滤雅可比差分时的微摄动)
+                    is_new_step = False
+                    if self.last_x is None:
+                        is_new_step = True
+                        self.last_x = x.copy()
+                    else:
+                        diff = np.linalg.norm(x - self.last_x)
+                        if diff > 1e-4:
+                            is_new_step = True
+                            self.last_x = x.copy()
+
+                    if is_new_step:
+                        self.iter_count += 1
+                        rmse = float(np.sqrt(np.mean(res ** 2))) if len(res) > 0 else 0.0
+                        sub_pct = min(1.0, self.iter_count / float(max(1, self.max_iters)))
+                        if self.cb:
+                            try:
+                                self.cb({
+                                    "stage": self.stage,
+                                    "stage_name": self.stage_name,
+                                    "iter": self.iter_count,
+                                    "max_iter": self.max_iters,
+                                    "rmse": rmse,
+                                    "sub_progress": sub_pct,
+                                    "call_count": self.call_count
+                                })
+                            except Exception:
+                                pass
+                    return res
+                return _wrapped
+
         x0 = pack_params(tag_poses_init, camera_poses_init)
 
+        if callback:
+            callback({
+                "stage": 1,
+                "stage_name": "粗差清洗与收敛",
+                "iter": 0,
+                "max_iter": 30,
+                "rmse": 1.0,
+                "sub_progress": 0.0,
+                "call_count": 0
+            })
+
         print("[*] 正在执行 Phase 1 阶段一：基于 Cauchy 鲁棒核的粗差清洗与全局收敛...")
+        monitor1 = _OptimizationMonitor(stage=1, stage_name="粗差清洗收敛", max_iters=30, cb=callback)
         res_stage1 = least_squares(
-            residuals_func, x0,
-            args=(obs_weights, None),
+            monitor1.wrap_residuals(residuals_func, obs_weights, None), x0,
             method='trf',
             loss='cauchy',
             f_scale=1.5,
             x_scale='jac',
             ftol=1e-5,
             xtol=1e-5,
+            gtol=1e-5,
             max_nfev=200,
             verbose=0
         )
+
+        if callback:
+            callback({
+                "stage": 1,
+                "stage_name": "粗差清洗收敛",
+                "iter": monitor1.iter_count,
+                "max_iter": 30,
+                "rmse": float(np.sqrt(np.mean(res_stage1.fun ** 2))) if len(res_stage1.fun) > 0 else 0.0,
+                "sub_progress": 1.0,
+                "call_count": monitor1.call_count
+            })
 
         # 统计阶段一未加权像元残差，自动识别标准化残差 > 3.0 sigma 的粗差观测
         tags_p1, cams_p1 = unpack_params(res_stage1.x)
@@ -295,20 +366,43 @@ class BundleAdjustmentOptimizer:
                 f_name = active_frame_names[f] if f < len(active_frame_names) else f"frame_{f}"
                 print(f"        - [{f_name}] Tag #{t_id}")
 
-        print("[*] 正在执行 Phase 1 阶段二：微容差 (ftol=1e-9) 极致深层平差收敛...")
+        max_iters_p2 = 35
+        if callback:
+            callback({
+                "stage": 2,
+                "stage_name": "微容差深度平差",
+                "iter": 0,
+                "max_iter": max_iters_p2,
+                "rmse": float(np.sqrt(np.mean(res_stage1.fun ** 2))) if len(res_stage1.fun) > 0 else 0.0,
+                "sub_progress": 0.0,
+                "call_count": 0
+            })
+
+        print("[*] 正在执行 Phase 1 阶段二：微容差 (ftol=1e-5) 极致深层平差收敛...")
+        monitor2 = _OptimizationMonitor(stage=2, stage_name="微容差深度平差", max_iters=max_iters_p2, cb=callback)
         res_stage2 = least_squares(
-            residuals_func, res_stage1.x,
-            args=(obs_weights, outliers_detected),
+            monitor2.wrap_residuals(residuals_func, obs_weights, outliers_detected), res_stage1.x,
             method='trf',
             loss='cauchy',
             f_scale=1.0,
             x_scale='jac',
-            ftol=1e-9,
-            xtol=1e-9,
-            gtol=1e-9,
-            max_nfev=500,
+            ftol=1e-5,
+            xtol=1e-5,
+            gtol=1e-5,
+            max_nfev=200,
             verbose=0
         )
+
+        if callback:
+            callback({
+                "stage": 2,
+                "stage_name": "微容差深度平差",
+                "iter": monitor2.iter_count,
+                "max_iter": max_iters_p2,
+                "rmse": float(np.sqrt(np.mean(res_stage2.fun ** 2))) if len(res_stage2.fun) > 0 else 0.0,
+                "sub_progress": 1.0,
+                "call_count": monitor2.call_count
+            })
 
         optimized_tags_pose, optimized_cams_pose = unpack_params(res_stage2.x)
 
@@ -374,6 +468,11 @@ class BundleAdjustmentOptimizer:
         final_tags_map["tag_family"] = "DICT_APRILTAG_16h5"
         final_tags_map["calibrated_images_count"] = len(active_frames)
         final_tags_map["cleaned_outliers_count"] = len(outliers_detected)
+        final_tags_map["final_rmse"] = rmse_px
+        final_tags_map["final_tag_poses_aligned"] = {
+            tid: np.array(t_info["transform_matrix"], dtype=np.float64)
+            for tid, t_info in final_tags_map.get("tags", {}).items()
+        }
         if baseline_info:
             final_tags_map["baseline_gauge"] = baseline_info
         if tag_uncertainties:
