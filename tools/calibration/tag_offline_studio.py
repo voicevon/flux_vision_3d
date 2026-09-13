@@ -913,7 +913,7 @@ class TagOfflineStudio:
         obs_list = meta.get("observations", [])
 
         # 叠加标靶与 3D 双棱柱
-        self._overlay_visual_elements(disp_frame, obs_list, meta.get("is_excluded", False))
+        self._overlay_visual_elements(disp_frame, obs_list, meta.get("is_excluded", False), meta=meta)
 
         # 视口等比与平移缩放渲染
         frame_h, frame_w = disp_frame.shape[:2]
@@ -988,7 +988,14 @@ class TagOfflineStudio:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 210, 230), 1, cv2.LINE_AA)
 
 
-    def _overlay_visual_elements(self, disp_frame: np.ndarray, observations: List[Dict[str, Any]], is_frame_excluded: bool):
+    def _overlay_visual_elements(
+        self,
+        disp_frame: np.ndarray,
+        observations: List[Dict[str, Any]],
+        is_frame_excluded: bool,
+        meta: Optional[Dict[str, Any]] = None
+    ):
+
         """在工作底图上依据 view_mode 分离渲染 2D 识别框、3D 棱柱与重投影残差矢量"""
         show_2d = self.view_mode in ("2d", "mix")
         show_3d = self.view_mode in ("3d", "mix")
@@ -1039,17 +1046,29 @@ class TagOfflineStudio:
                             T_c_t = T_c_w @ T_w_t
                             r_tag, _ = cv2.Rodrigues(T_c_t[:3, :3])
                             t_tag = T_c_t[:3, 3].reshape((3, 1))
+
+                            # 解算单标靶本地实测位姿 (用于 3D 蓝色实测棱柱)
+                            c_arr = np.array(obs["corners"], dtype=np.float64).reshape((4, 2))
+                            succ_single, obs_r, obs_t = self.engine.solve_single_tag_pnp(c_arr)
+
+                            # 计算空间位移误差 (mm) 与 2D 重投影残差 (px)
+                            err_mm = 0.0
+                            if t_tag is not None and succ_single and obs_t is not None:
+                                err_mm = float(np.linalg.norm(t_tag - obs_t))
+                            err_px = (meta or {}).get("tag_errors", {}).get(tid, 0.2)
+
                             self.visualizer.render_tag_dual_prisms(
                                 img=disp_frame,
                                 ba_rvec=r_tag,
                                 ba_tvec=t_tag,
-                                obs_rvec=None,
-                                obs_tvec=None,
+                                obs_rvec=obs_r if succ_single else None,
+                                obs_tvec=obs_t if succ_single else None,
                                 tag_id=tid,
-                                err_px=0.2,
-                                err_mm=0.2,
-                                observed_corners=np.array(obs["corners"], dtype=np.float64)
+                                err_px=err_px,
+                                err_mm=err_mm,
+                                observed_corners=c_arr
                             )
+
 
                 # 绘制亚像素残差红色放大矢量箭头 (仅在 2d 或 mix 模式下绘制)
                 if show_2d:

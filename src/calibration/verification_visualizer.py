@@ -38,8 +38,9 @@ class VerificationVisualizer:
         err_mm: float,
         observed_corners: Optional[np.ndarray] = None
     ):
+
         """
-        绘制全局 BA 平差理论位姿 (绿色) 与单帧实测抓取位姿 (金色/橙红) 的 3D 双四棱柱空间对比
+        绘制全局 BA 平差理论位姿 (纯正翠绿) 与单帧本地实测抓取位姿 (科技天蓝) 的 3D 双四棱柱立体对比
         """
         try:
             hw = 15.0   # 截面半宽 15mm，整体截面 30.0mm x 30.0mm
@@ -60,136 +61,95 @@ class VerificationVisualizer:
                 [0.0, 0.0, L]
             ], dtype=np.float64)
 
-            # 1. 投影 BA 理论棱柱
+            # 1. 投影全局 BA 理论棱柱 (绿色)
             proj_ba = None
             if ba_rvec is not None and ba_tvec is not None:
                 p, _ = cv2.projectPoints(pts_3d, ba_rvec, ba_tvec, self.camera_matrix, self.dist_coeffs)
                 proj_ba = p.reshape((-1, 2)).astype(int)
 
-            # 2. 投影实测观测棱柱
+            # 2. 投影本地单靶实测观测棱柱 (蓝色)
             proj_obs = None
             if obs_rvec is not None and obs_tvec is not None:
                 p, _ = cv2.projectPoints(pts_3d, obs_rvec, obs_tvec, self.camera_matrix, self.dist_coeffs)
                 proj_obs = p.reshape((-1, 2)).astype(int)
 
-            is_good = (err_px <= 1.5 and err_mm <= 1.5)
-            is_moderate = (err_px <= 3.0 and err_mm <= 2.5)
+            if proj_ba is None and proj_obs is None:
+                return
 
             overlay = img.copy()
 
-            # A. 良好达标样本 (BA 与实测高度吻合，渲染纯正翠绿立体方柱)
-            if is_good:
-                pts = proj_ba if proj_ba is not None else proj_obs
-                if pts is not None:
-                    b_pts = pts[0:4]
-                    t_pts = pts[4:8]
-                    top_c = tuple(pts[8])
+            # A. 全局 BA 理论棱柱 (翡翠绿: 侧面 0, 185, 60 / 顶盖 50, 240, 100)
+            if proj_ba is not None:
+                ba_b = proj_ba[0:4]
+                ba_t = proj_ba[4:8]
+                side_c_ba = (0, 185, 60)
+                cap_c_ba = (50, 240, 100)
+                for i in range(4):
+                    next_i = (i + 1) % 4
+                    side_poly = np.array([ba_b[i], ba_b[next_i], ba_t[next_i], ba_t[i]], dtype=np.int32)
+                    cv2.fillPoly(overlay, [side_poly], side_c_ba)
+                cv2.fillPoly(overlay, [ba_t], cap_c_ba)
 
-                    # 翠绿色半透明实心柱体
-                    side_color = (0, 190, 50)
-                    cap_color = (80, 255, 120)
-                    for i in range(4):
-                        next_i = (i + 1) % 4
-                        side_poly = np.array([b_pts[i], b_pts[next_i], t_pts[next_i], t_pts[i]], dtype=np.int32)
-                        cv2.fillPoly(overlay, [side_poly], side_color)
-                    cv2.fillPoly(overlay, [t_pts], cap_color)
-                    cv2.addWeighted(overlay, 0.42, img, 0.58, 0, img)
+            # B. 本地单靶实测观测棱柱 (科技天蓝: 侧面 235, 125, 20 / 顶盖 255, 175, 50)
+            if proj_obs is not None:
+                obs_b = proj_obs[0:4]
+                obs_t = proj_obs[4:8]
+                side_c_obs = (235, 125, 20)
+                cap_c_obs = (255, 175, 50)
+                for i in range(4):
+                    next_i = (i + 1) % 4
+                    side_poly = np.array([obs_b[i], obs_b[next_i], obs_t[next_i], obs_t[i]], dtype=np.int32)
+                    cv2.fillPoly(overlay, [side_poly], side_c_obs)
+                cv2.fillPoly(overlay, [obs_t], cap_c_obs)
 
-                    # 纯净亮白/亮绿棱线描边
-                    edge_c = (0, 245, 100)
-                    cv2.polylines(img, [b_pts], True, edge_c, 2, cv2.LINE_AA)
-                    cv2.polylines(img, [t_pts], True, (255, 255, 255), 2, cv2.LINE_AA)
-                    for i in range(4):
-                        cv2.line(img, tuple(b_pts[i]), tuple(t_pts[i]), edge_c, 2, cv2.LINE_AA)
+            # 半透明图层合成
+            cv2.addWeighted(overlay, 0.35, img, 0.65, 0, img)
 
-                    # 顶盖中心与标识
-                    cv2.circle(img, top_c, 4, (255, 255, 255), -1, cv2.LINE_AA)
-                    cv2.putText(img, "BA", (top_c[0] + 5, top_c[1] - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA)
+            # C. 棱线描边与顶盖中心标牌 (BA 翠绿描边 vs OBS 亮蓝描边)
+            if proj_ba is not None:
+                edge_ba = (0, 255, 100)
+                cv2.polylines(img, [ba_b], True, edge_ba, 2, cv2.LINE_AA)
+                cv2.polylines(img, [ba_t], True, (120, 255, 160), 2, cv2.LINE_AA)
+                for i in range(4):
+                    cv2.line(img, tuple(ba_b[i]), tuple(ba_t[i]), edge_ba, 2, cv2.LINE_AA)
+                ba_c = tuple(proj_ba[8])
+                cv2.circle(img, ba_c, 4, (0, 255, 120), -1, cv2.LINE_AA)
+                cv2.putText(img, "BA(绿)", (ba_c[0] + 6, ba_c[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 120), 1, cv2.LINE_AA)
 
-                    # 底面实测角点连线与四色圆点
-                    if observed_corners is not None:
-                        c_int = observed_corners.reshape((4, 2)).astype(np.int32)
-                        cv2.polylines(img, [c_int], True, (0, 255, 100), 2, cv2.LINE_AA)
-                        dot_colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
-                        for pt_i, pt in enumerate(c_int):
-                            cv2.circle(img, tuple(pt), 4, dot_colors[pt_i], -1)
+            if proj_obs is not None:
+                edge_obs = (255, 195, 70)
+                cv2.polylines(img, [obs_b], True, edge_obs, 2, cv2.LINE_AA)
+                cv2.polylines(img, [obs_t], True, (255, 255, 255), 2, cv2.LINE_AA)
+                for i in range(4):
+                    cv2.line(img, tuple(obs_b[i]), tuple(obs_t[i]), edge_obs, 2, cv2.LINE_AA)
+                obs_c = tuple(proj_obs[8])
+                cv2.circle(img, obs_c, 4, (255, 200, 60), -1, cv2.LINE_AA)
+                cv2.putText(img, "实测(蓝)", (obs_c[0] + 6, obs_c[1] + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 210, 80), 1, cv2.LINE_AA)
 
-                    # 悬浮高对比度稳态绿色标牌
-                    min_x = min(np.min(b_pts[:, 0]), np.min(t_pts[:, 0]))
-                    min_y = min(np.min(b_pts[:, 1]), np.min(t_pts[:, 1]))
-                    bx = max(10, int(min_x - 10))
-                    by = max(40, int(min_y - 14))
+            # D. 两者顶面中心空间错位拉扯连线 (橙黄连线与红绿小圆点)
+            if proj_ba is not None and proj_obs is not None:
+                cv2.line(img, obs_c, ba_c, (0, 80, 255), 2, cv2.LINE_AA)
+                cv2.circle(img, obs_c, 5, (255, 180, 0), -1, cv2.LINE_AA)
+                cv2.circle(img, ba_c, 5, (0, 255, 100), -1, cv2.LINE_AA)
 
-                    label = f"Tag#{tag_id} [PASS] {err_mm:.2f}mm ({err_px:.2f}px)"
-                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                    cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), (10, 42, 16), -1)
-                    cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), (0, 240, 90), 1)
-                    cv2.putText(img, label, (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+            # E. 悬浮状态标签
+            anchor = proj_ba if proj_ba is not None else proj_obs
+            min_x = np.min(anchor[:, 0])
+            min_y = np.min(anchor[:, 1])
+            bx = max(10, int(min_x - 10))
+            by = max(40, int(min_y - 14))
 
-            # B. 偏差/需回审样本 (绿色 BA 棱柱 vs 金黄/橙红实测棱柱，形成空间错位拉线)
-            else:
-                if proj_ba is not None:
-                    ba_b = proj_ba[0:4]
-                    ba_t = proj_ba[4:8]
-                    ba_c = tuple(proj_ba[8])
-
-                    side_c = (0, 180, 80)
-                    for i in range(4):
-                        next_i = (i + 1) % 4
-                        side_poly = np.array([ba_b[i], ba_b[next_i], ba_t[next_i], ba_t[i]], dtype=np.int32)
-                        cv2.fillPoly(overlay, [side_poly], side_c)
-                    cv2.fillPoly(overlay, [ba_t], (50, 250, 140))
-                    cv2.addWeighted(overlay, 0.35, img, 0.65, 0, img)
-
-                    cv2.polylines(img, [ba_b], True, (0, 220, 80), 2, cv2.LINE_AA)
-                    cv2.polylines(img, [ba_t], True, (120, 255, 160), 2, cv2.LINE_AA)
-                    for i in range(4):
-                        cv2.line(img, tuple(ba_b[i]), tuple(ba_t[i]), (0, 220, 80), 2, cv2.LINE_AA)
-                    cv2.circle(img, ba_c, 4, (0, 255, 100), -1, cv2.LINE_AA)
-                    cv2.putText(img, "BA", (ba_c[0] + 6, ba_c[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 120), 1, cv2.LINE_AA)
-
-                if proj_obs is not None:
-                    obs_b = proj_obs[0:4]
-                    obs_t = proj_obs[4:8]
-                    obs_c = tuple(proj_obs[8])
-
-                    warn_c = (0, 80, 240) if not is_moderate else (0, 160, 255)
-                    overlay2 = img.copy()
-                    for i in range(4):
-                        next_i = (i + 1) % 4
-                        side_poly = np.array([obs_b[i], obs_b[next_i], obs_t[next_i], obs_t[i]], dtype=np.int32)
-                        cv2.fillPoly(overlay2, [side_poly], warn_c)
-                    cv2.fillPoly(overlay2, [obs_t], (0, 210, 255))
-                    cv2.addWeighted(overlay2, 0.30, img, 0.70, 0, img)
-
-                    cv2.polylines(img, [obs_b], True, warn_c, 2, cv2.LINE_AA)
-                    cv2.polylines(img, [obs_t], True, (255, 255, 255), 2, cv2.LINE_AA)
-                    for i in range(4):
-                        cv2.line(img, tuple(obs_b[i]), tuple(obs_t[i]), warn_c, 2, cv2.LINE_AA)
-                    cv2.circle(img, obs_c, 4, (0, 200, 255), -1, cv2.LINE_AA)
-                    cv2.putText(img, "OBS", (obs_c[0] + 6, obs_c[1] + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 210, 255), 1, cv2.LINE_AA)
-
-                    if proj_ba is not None:
-                        cv2.line(img, obs_c, ba_c, (0, 50, 255), 3, cv2.LINE_AA)
-                        cv2.circle(img, obs_c, 5, (0, 0, 255), -1, cv2.LINE_AA)
-                        cv2.circle(img, ba_c, 5, (0, 255, 0), -1, cv2.LINE_AA)
-
-                anchor_pts = proj_ba if proj_ba is not None else proj_obs
-                if anchor_pts is not None:
-                    min_x = np.min(anchor_pts[:, 0])
-                    min_y = np.min(anchor_pts[:, 1])
-                    bx = max(10, int(min_x - 10))
-                    by = max(40, int(min_y - 14))
-                    tag_status = "[WARN]" if is_moderate else "[FAIL-回审]"
-                    border_c = (0, 160, 255) if is_moderate else (0, 0, 255)
-                    bg_c = (15, 30, 60) if is_moderate else (15, 15, 65)
-                    label = f"Tag#{tag_id} {tag_status} {err_mm:.2f}mm ({err_px:.2f}px)"
-                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                    cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), bg_c, -1)
-                    cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), border_c, 2)
-                    cv2.putText(img, label, (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+            is_good = (err_px <= 0.6 and err_mm <= 1.0)
+            status_badge = "[吻合良好]" if is_good else f"[空间偏差 {err_mm:.2f}mm]"
+            border_c = (0, 240, 90) if is_good else (0, 180, 255)
+            label = f"Tag#{tag_id} {status_badge} ({err_px:.2f}px)"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)
+            cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), (16, 22, 28), -1)
+            cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), border_c, 1)
+            cv2.putText(img, label, (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA)
         except Exception:
             pass
+
 
     def render_verification_frame(
         self,
