@@ -63,10 +63,22 @@ DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
 MANIFEST_PATH = os.path.join(CALIB_IMAGES_DIR, "tag_observations.yaml")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
+BA_VIEW_OPTIONS = [
+    ("3d", "3D 翡翠绿棱柱"),
+    ("2d", "2D 理论投影框"),
+    ("off", "隐藏/关闭")
+]
+
+OBS_VIEW_OPTIONS = [
+    ("3d", "3D 科技天蓝棱柱"),
+    ("2d", "2D 识别角点框"),
+    ("off", "隐藏/关闭")
+]
+
 VIEW_MODE_OPTIONS = [
-    ("mix", "混合透视 (2D+3D)"),
     ("3d", "3D 双四棱柱对比"),
-    ("2d", "2D 识别框与残差矢量")
+    ("2d", "2D 识别框与残差矢量"),
+    ("mix", "混合透视模式")
 ]
 
 FILTER_MODE_OPTIONS = [
@@ -143,7 +155,7 @@ class TagOfflineStudio:
         # 1. 初始化视口管理器与物理布局尺寸
         self.viewport = ViewportManager(win_w=win_w, win_h=win_h, top_bar_h=44, bottom_bar_h=52)
         self.left_bar_w = 340   # 左侧紧凑列表宽度
-        self.right_bar_w = 340  # 右侧属性诊断栏宽度
+        self.right_bar_w = 180  # 右侧精简属性栏宽度 (瘦身至 180px，充分释放主视口空间)
 
         # 2. 相机内参与领域模型装配
         self.camera_matrix, self.dist_coeffs = self._load_camera_intrinsics()
@@ -183,10 +195,12 @@ class TagOfflineStudio:
         self.filter_mode: str = "all"
         self.sort_mode: str = "name_asc"
 
-        # 视口显示模式: "mix" (混合 2D+3D), "3d" (仅 3D 棱柱), "2d" (仅 2D 识别与残差矢量)
-        self.view_mode: str = "mix"
+        # 视口显示双独立正交模式 (用户指定默认 3d)
+        self.ba_view_mode: str = "3d"    # BA 理论值: "3d" (翡翠绿棱柱), "2d" (投影框), "off" (隐藏)
+        self.obs_view_mode: str = "3d"   # 实测识别值: "3d" (天蓝棱柱), "2d" (实测角点框), "off" (隐藏)
+        self.view_mode: str = "3d"       # 兼容器
 
-        # 下拉菜单展开态标识 ("FILTER_DROPDOWN", "SORT_DROPDOWN", "VIEW_DROPDOWN" 或 None)
+        # 下拉菜单展开态标识 ("FILTER_DROPDOWN", "SORT_DROPDOWN", "BA_VIEW_DROPDOWN", "OBS_VIEW_DROPDOWN" 或 None)
         self.active_dropdown: Optional[str] = None
         self.dropdown_boxes: Dict[str, Dict[str, Any]] = {}
 
@@ -993,24 +1007,39 @@ class TagOfflineStudio:
         # 视口外边框
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (55, 60, 70), 1)
 
-        # 视口左上角：显示模式下拉菜单 (2D / 3D / 混合)
-        vx1 = x + 12
-        vy1 = y + 10
-        vx2 = vx1 + 175
-        vy2 = vy1 + 28
-        cur_view_label = dict(VIEW_MODE_OPTIONS).get(self.view_mode, "混合透视")
-        is_v_open = (self.active_dropdown == "VIEW_DROPDOWN")
-        draw_dropdown_button(canvas, (vx1, vy1, vx2, vy2), cur_view_label,
-                             is_open=is_v_open, mouse_pos=self.mouse_pos, prefix="模式: ")
-        self.dropdown_boxes["VIEW_DROPDOWN"] = {
-            "rect": (vx1, vy1, vx2, vy2),
-            "options": VIEW_MODE_OPTIONS,
-            "active_key": self.view_mode
+        # 视口左上角：双独立下拉菜单 (BA 理论值控制 + 单帧实测值控制)
+        ba_x1 = x + 12
+        ba_y1 = y + 10
+        ba_x2 = ba_x1 + 148
+        ba_y2 = ba_y1 + 28
+        cur_ba_label = dict(BA_VIEW_OPTIONS).get(self.ba_view_mode, "3D 翡翠绿棱柱")
+        is_ba_open = (self.active_dropdown == "BA_VIEW_DROPDOWN")
+        draw_dropdown_button(canvas, (ba_x1, ba_y1, ba_x2, ba_y2), cur_ba_label,
+                             is_open=is_ba_open, mouse_pos=self.mouse_pos, prefix="BA理论: ")
+        self.dropdown_boxes["BA_VIEW_DROPDOWN"] = {
+            "rect": (ba_x1, ba_y1, ba_x2, ba_y2),
+            "options": BA_VIEW_OPTIONS,
+            "active_key": self.ba_view_mode
         }
-        self.gui_buttons.append(("TOGGLE_VIEW_DROPDOWN", (vx1, vy1, vx2, vy2), "VIEW_DROPDOWN"))
+        self.gui_buttons.append(("TOGGLE_BA_VIEW_DROPDOWN", (ba_x1, ba_y1, ba_x2, ba_y2), "BA_VIEW_DROPDOWN"))
+
+        obs_x1 = ba_x2 + 8
+        obs_y1 = y + 10
+        obs_x2 = obs_x1 + 148
+        obs_y2 = obs_y1 + 28
+        cur_obs_label = dict(OBS_VIEW_OPTIONS).get(self.obs_view_mode, "3D 科技天蓝棱柱")
+        is_obs_open = (self.active_dropdown == "OBS_VIEW_DROPDOWN")
+        draw_dropdown_button(canvas, (obs_x1, obs_y1, obs_x2, obs_y2), cur_obs_label,
+                             is_open=is_obs_open, mouse_pos=self.mouse_pos, prefix="实测识别: ")
+        self.dropdown_boxes["OBS_VIEW_DROPDOWN"] = {
+            "rect": (obs_x1, obs_y1, obs_x2, obs_y2),
+            "options": OBS_VIEW_OPTIONS,
+            "active_key": self.obs_view_mode
+        }
+        self.gui_buttons.append(("TOGGLE_OBS_VIEW_DROPDOWN", (obs_x1, obs_y1, obs_x2, obs_y2), "OBS_VIEW_DROPDOWN"))
 
         # 视口右上角悬浮提示胶囊
-        zoom_badge = f"缩放: {self.zoom_level:.1f}x | 切换模式: V | 拖拽: 右键/中键 | 双击/Z: 重置"
+        zoom_badge = f"缩放: {self.zoom_level:.1f}x | 点击Tag: 剔除/恢复(打叉) | 切换模式: V | 拖拽: 右键/中键 | 双击/Z: 重置"
         (zw, zh), _ = cv2.getTextSize(zoom_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
         bx1 = x + w - zw - 24
         by1 = y + 10
@@ -1029,10 +1058,9 @@ class TagOfflineStudio:
         is_frame_excluded: bool,
         meta: Optional[Dict[str, Any]] = None
     ):
-
-        """在工作底图上依据 view_mode 分离渲染 2D 识别框、3D 棱柱与重投影残差矢量"""
-        show_2d = self.view_mode in ("2d", "mix")
-        show_3d = self.view_mode in ("3d", "mix")
+        """依据 ba_view_mode 与 obs_view_mode 双独立维度解耦渲染，剔除标靶显著打红叉"""
+        ba_mode = self.ba_view_mode
+        obs_mode = self.obs_view_mode
 
         obj_pts = []
         img_pts = []
@@ -1043,36 +1071,44 @@ class TagOfflineStudio:
             pts = np.array(obs["corners"], dtype=np.int32).reshape((-1, 2))
             keep = obs.get("keep", True) and not is_frame_excluded
 
-            # 2D 识别框与标牌 (仅在 2d 或 mix 模式下绘制)
-            if show_2d:
-                box_col = (0, 230, 80) if keep else (80, 80, 80)
-                thick = 2 if keep else 1
-                cv2.polylines(disp_frame, [pts], isClosed=True, color=box_col, thickness=thick, lineType=cv2.LINE_AA)
-
+            # 1. 剔除状态下在标靶上绘制鲜红显著的大叉号 (打叉审核模式)
+            if not keep:
+                cv2.line(disp_frame, (pts[0][0], pts[0][1]), (pts[2][0], pts[2][1]), (0, 0, 235), 3, cv2.LINE_AA)
+                cv2.line(disp_frame, (pts[1][0], pts[1][1]), (pts[3][0], pts[3][1]), (0, 0, 235), 3, cv2.LINE_AA)
+                cv2.polylines(disp_frame, [pts], isClosed=True, color=(40, 40, 180), thickness=2, lineType=cv2.LINE_AA)
                 cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
-                badge_txt = f"Tag #{tid}" if keep else f"Tag #{tid} [EXCL]"
-                cv2.putText(disp_frame, badge_txt, (cx - 35, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.55, box_col, 2, cv2.LINE_AA)
+                cv2.putText(disp_frame, f"Tag #{tid} [EXCL]", (cx - 42, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 0, 240), 2, cv2.LINE_AA)
+                continue
 
-            # 收集参与解算的标靶
-            if keep:
-                w_c = self.get_tag_world_corners(tid)
-                if w_c is not None:
-                    obj_pts.append(w_c)
-                    img_pts.append(np.array(obs["corners"], dtype=np.float64))
-                    valid_obs.append(obs)
+            # 2. 正常保留状态：根据 obs_view_mode 绘制 2D 实测角点多边形与标牌
+            if obs_mode == "2d":
+                cv2.polylines(disp_frame, [pts], isClosed=True, color=(0, 230, 80), thickness=2, lineType=cv2.LINE_AA)
+                cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
+                cv2.putText(disp_frame, f"Tag #{tid}", (cx - 35, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 230, 80), 2, cv2.LINE_AA)
 
-        # 3D 棱柱与残差矢量投影
+            # 收集参与三维解算的已知标靶
+            w_c = self.get_tag_world_corners(tid)
+            if w_c is not None:
+                obj_pts.append(w_c)
+                img_pts.append(np.array(obs["corners"], dtype=np.float64))
+                valid_obs.append(obs)
+
+        # 3. 3D 棱柱与残差矢量投影
         if len(obj_pts) >= 1:
             obj_flat = np.concatenate(obj_pts, axis=0)
             img_flat = np.concatenate(img_pts, axis=0)
             rvec, tvec, success = self.engine.solve_pnp(obj_flat, img_flat)
             if success:
-                # 绘制 3D 双棱柱 (仅在 3d 或 mix 模式下绘制)
-                if show_3d:
+                # 只要 BA 3D 或 OBS 3D 开启，就进入 3D 棱柱渲染管线
+                need_3d = (ba_mode == "3d" or obs_mode == "3d")
+                if need_3d:
                     for obs in valid_obs:
                         tid = obs["tag_id"]
                         T_w_t = self.get_tag_transform(tid)
-                        if T_w_t is not None:
+
+                        # 计算 BA 理论世界位姿 (翡翠绿)
+                        r_tag, t_tag = None, None
+                        if ba_mode == "3d" and T_w_t is not None:
                             R_c_w, _ = cv2.Rodrigues(rvec)
                             T_c_w = np.eye(4, dtype=np.float64)
                             T_c_w[:3, :3] = R_c_w
@@ -1081,40 +1117,49 @@ class TagOfflineStudio:
                             r_tag, _ = cv2.Rodrigues(T_c_t[:3, :3])
                             t_tag = T_c_t[:3, 3].reshape((3, 1))
 
-                            # 解算单标靶本地实测位姿 (用于 3D 蓝色实测棱柱)
-                            c_arr = np.array(obs["corners"], dtype=np.float64).reshape((4, 2))
+                        # 计算单标靶本地实测位姿 (用于科技天蓝 OBS 棱柱)
+                        obs_r, obs_t = None, None
+                        c_arr = np.array(obs["corners"], dtype=np.float64).reshape((4, 2))
+                        succ_single = False
+                        if obs_mode == "3d":
                             succ_single, obs_r, obs_t = self.engine.solve_single_tag_pnp(c_arr)
 
-                            # 计算空间位移误差 (mm) 与 2D 重投影残差 (px)
-                            err_mm = 0.0
-                            if t_tag is not None and succ_single and obs_t is not None:
-                                err_mm = float(np.linalg.norm(t_tag - obs_t))
-                            err_px = (meta or {}).get("tag_errors", {}).get(tid, 0.2)
+                        err_mm = 0.0
+                        if t_tag is not None and succ_single and obs_t is not None:
+                            err_mm = float(np.linalg.norm(t_tag - obs_t))
+                        err_px = (meta or {}).get("tag_errors", {}).get(tid, 0.2)
 
-                            self.visualizer.render_tag_dual_prisms(
-                                img=disp_frame,
-                                ba_rvec=r_tag,
-                                ba_tvec=t_tag,
-                                obs_rvec=obs_r if succ_single else None,
-                                obs_tvec=obs_t if succ_single else None,
-                                tag_id=tid,
-                                err_px=err_px,
-                                err_mm=err_mm,
-                                observed_corners=c_arr
-                            )
+                        self.visualizer.render_tag_dual_prisms(
+                            img=disp_frame,
+                            ba_rvec=r_tag if ba_mode == "3d" else None,
+                            ba_tvec=t_tag if ba_mode == "3d" else None,
+                            obs_rvec=obs_r if (obs_mode == "3d" and succ_single) else None,
+                            obs_tvec=obs_t if (obs_mode == "3d" and succ_single) else None,
+                            tag_id=tid,
+                            err_px=err_px,
+                            err_mm=err_mm,
+                            observed_corners=c_arr
+                        )
 
+                # 4. 2D 理论重投影框与残差矢量
+                proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, self.engine.camera_matrix, self.engine.dist_coeffs)
+                proj_flat = proj_pts.reshape((-1, 2))
 
-                # 绘制亚像素残差红色放大矢量箭头 (仅在 2d 或 mix 模式下绘制)
-                if show_2d:
-                    proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, self.engine.camera_matrix, self.engine.dist_coeffs)
-                    proj_flat = proj_pts.reshape((-1, 2))
+                # 若开启了 BA 2D 理论投影框
+                if ba_mode == "2d":
+                    for i in range(len(valid_obs)):
+                        p4 = proj_flat[i * 4:(i + 1) * 4].astype(np.int32)
+                        cv2.polylines(disp_frame, [p4], isClosed=True, color=(0, 210, 255), thickness=1, lineType=cv2.LINE_AA)
+
+                # 若两边均未关闭且有至少一边为 2D，绘制放大的重投影残差红色箭头
+                if (ba_mode != "off" and obs_mode != "off") and (ba_mode == "2d" or obs_mode == "2d"):
                     if hasattr(self.visualizer, "draw_reprojection_vectors"):
                         self.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
 
 
 
     def _render_right_inspector(self, canvas: np.ndarray, x: int, y: int, w: int, h: int):
-        """右栏：属性、细目列表与漏检切片诊断面板"""
+        """右栏：精简瘦身属性与标靶残差清单面板 (瘦身宽度: 180px)"""
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (22, 24, 30), -1)
         cv2.line(canvas, (x, y), (x, y + h), (50, 54, 66), 1)
 
@@ -1125,82 +1170,68 @@ class TagOfflineStudio:
         bname = os.path.basename(cur_file)
         meta = self.frame_metrics_cache.get(bname, {})
 
-        # 1. 顶部当前帧摘要卡片 (高度: 110px)
-        cv2.putText(canvas, "当前选定帧属性", (x + 12, y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (220, 220, 220), 1, cv2.LINE_AA)
-        cv2.putText(canvas, bname, (x + 12, y + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2, cv2.LINE_AA)
+        # 1. 顶部当前帧摘要卡片
+        cv2.putText(canvas, bname, (x + 8, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
 
-        # 状态切换大按钮 (保留 / 剔除)
+        # 状态切换按钮 (保留 / 剔除)
         is_excl = meta.get("is_excluded", False)
-        btn_w = w - 24
-        btn_y1 = y + 62
-        btn_y2 = btn_y1 + 34
         b_type = "danger" if is_excl else "success"
-        b_label = "[已剔除] 点击恢复保留 (T)" if is_excl else "[保留中] 点击剔除此帧 (T)"
-        draw_styled_button(canvas, (x + 12, btn_y1, x + 12 + btn_w, btn_y2), b_label,
+        b_label = "恢复此帧 (T)" if is_excl else "剔除此帧 (T)"
+        draw_styled_button(canvas, (x + 8, y + 30, x + w - 8, y + 56), b_label,
                            mouse_pos=self.mouse_pos, btn_type=b_type)
-        self.gui_buttons.append(("TOGGLE_FRAME_STATUS", (x + 12, btn_y1, x + 12 + btn_w, btn_y2), bname))
+        self.gui_buttons.append(("TOGGLE_FRAME_STATUS", (x + 8, y + 30, x + w - 8, y + 56), bname))
 
-        # 2. 标靶细目清单 (表格展示)
-        list_y = y + 115
-        cv2.line(canvas, (x + 10, list_y), (x + w - 10, list_y), (45, 48, 58), 1)
-        cv2.putText(canvas, "本帧标靶细目与残差", (x + 12, list_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (200, 200, 200), 1, cv2.LINE_AA)
-
+        # 2. 标靶细目清单 (精简高信息密度表格)
+        list_y = y + 66
+        cv2.line(canvas, (x + 8, list_y), (x + w - 8, list_y), (45, 48, 58), 1)
         obs_list = meta.get("observations", [])
         tag_errors = meta.get("tag_errors", {})
+        cv2.putText(canvas, f"标靶与残差 ({len(obs_list)})", (x + 8, list_y + 16),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 185, 195), 1, cv2.LINE_AA)
 
-        row_y = list_y + 32
-        row_h = 32
+        row_y = list_y + 24
+        row_h = 24
         for obs in obs_list:
             tid = obs["tag_id"]
             keep = obs.get("keep", True)
             err_val = tag_errors.get(tid, 0.0)
 
             # 行底色
-            rx1, ry1, rx2, ry2 = x + 10, row_y, x + w - 10, row_y + row_h - 2
+            rx1, ry1, rx2, ry2 = x + 6, row_y, x + w - 6, row_y + row_h - 2
             is_hover = (rx1 <= self.mouse_pos[0] <= rx2 and ry1 <= self.mouse_pos[1] <= ry2)
             bg_col = (34, 38, 48) if is_hover else (26, 28, 36)
             cv2.rectangle(canvas, (rx1, ry1), (rx2, ry2), bg_col, -1)
             cv2.rectangle(canvas, (rx1, ry1), (rx2, ry2), (48, 52, 64), 1)
             self.gui_buttons.append((f"TOGGLE_TAG_{tid}", (rx1, ry1, rx2, ry2), tid))
 
-            # 文本
-            t_col = (240, 240, 240) if keep else (110, 110, 110)
-            cv2.putText(canvas, f"Tag #{tid}", (rx1 + 10, ry1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.44, t_col, 1, cv2.LINE_AA)
+            # 状态小圆点
+            dot_c = (0, 220, 80) if keep else (0, 0, 220)
+            cv2.circle(canvas, (rx1 + 10, ry1 + 11), 3, dot_c, -1)
 
-            err_c = (0, 200, 255) if err_val > 0.5 else (0, 230, 80)
-            cv2.putText(canvas, f"{err_val:.2f} px", (rx1 + 110, ry1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.42, err_c, 1, cv2.LINE_AA)
+            # 标靶 ID 与残差数值 (右对齐)
+            t_col = (230, 230, 230) if keep else (120, 120, 120)
+            cv2.putText(canvas, f"#{tid}", (rx1 + 18, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.38, t_col, 1, cv2.LINE_AA)
 
-            btn_act = "[剔除]" if keep else "[恢复]"
-            act_c = (0, 160, 255) if keep else (0, 220, 100)
-            cv2.putText(canvas, btn_act, (rx2 - 55, ry1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, act_c, 1, cv2.LINE_AA)
+            err_str = f"{err_val:.2f}px" if keep else "EXCL"
+            err_c = (120, 120, 120) if not keep else ((0, 200, 255) if err_val > 0.5 else (0, 230, 80))
+            (ew, _), _ = cv2.getTextSize(err_str, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
+            cv2.putText(canvas, err_str, (rx2 - ew - 6, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.36, err_c, 1, cv2.LINE_AA)
 
             row_y += row_h
-            if row_y > y + h - 140:
+            if row_y > y + h - 80:
                 break
 
-        # 3. 底部快捷动作与漏检切片诊断卡片
-        diag_y = y + h - 120
-        cv2.line(canvas, (x + 10, diag_y), (x + w - 10, diag_y), (45, 48, 58), 1)
-        cv2.putText(canvas, "单帧快捷动作", (x + 12, diag_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (200, 200, 200), 1, cv2.LINE_AA)
+        # 3. 底部紧凑快捷动作
+        diag_y = y + h - 68
+        cv2.line(canvas, (x + 8, diag_y), (x + w - 8, diag_y), (45, 48, 58), 1)
 
-        act_btn_w = (w - 30) // 2
-        act_y1 = diag_y + 30
-        act_y2 = act_y1 + 36
-
-        # 按钮 1: 超精重提取
-        draw_styled_button(canvas, (x + 10, act_y1, x + 10 + act_btn_w, act_y2), "超精提取 (E)",
+        draw_styled_button(canvas, (x + 8, diag_y + 8, x + w - 8, diag_y + 32), "超精提取 (E)",
                            mouse_pos=self.mouse_pos, btn_type="primary")
-        self.gui_buttons.append(("SUPER_EXTRACT_FRAME", (x + 10, act_y1, x + 10 + act_btn_w, act_y2), bname))
+        self.gui_buttons.append(("SUPER_EXTRACT_FRAME", (x + 8, diag_y + 8, x + w - 8, diag_y + 32), bname))
 
-        # 按钮 2: 漏检病因
-        draw_styled_button(canvas, (x + 15 + act_btn_w, act_y1, x + w - 10, act_y2), "病因诊断 (D)",
+        draw_styled_button(canvas, (x + 8, diag_y + 36, x + w - 8, diag_y + 60), "病因诊断 (D)",
                            mouse_pos=self.mouse_pos, btn_type="warning")
-        self.gui_buttons.append(("DIAGNOSE_FRAME", (x + 15 + act_btn_w, act_y1, x + w - 10, act_y2), bname))
-
-        # 诊断提示小字
-        if len(obs_list) < 3:
-            cv2.putText(canvas, "* 提示: 本帧标靶较少，可按 D 键切片分析漏检原因", (x + 12, act_y2 + 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 200, 255), 1, cv2.LINE_AA)
+        self.gui_buttons.append(("DIAGNOSE_FRAME", (x + 8, diag_y + 36, x + w - 8, diag_y + 60), bname))
 
     def _render_ba_loading_card(self, canvas: np.ndarray, w: int, h: int):
         """居中展示异步 BA 全局平差双轨进度卡片 (大阶段主进度条 + 求解器子进度条与实时收敛指标)"""
@@ -1376,6 +1407,44 @@ class TagOfflineStudio:
                 self.active_dropdown = None
                 return
 
+            # 5. 检查是否直接点击在中间视口图片的标靶区域上 (画布直接打叉剔除 / 恢复审核模式)
+            if mid_x1 <= mx < mid_x2 and content_y1 <= my < content_y2:
+                if self.image_files and 0 <= self.current_img_idx < len(self.image_files):
+                    cur_file = self.image_files[self.current_img_idx]
+                    bname = os.path.basename(cur_file)
+                    meta = self.frame_metrics_cache.get(bname, {})
+                    obs_list = meta.get("observations", [])
+
+                    mid_w = mid_x2 - mid_x1
+                    mid_h = content_y2 - content_y1
+                    bgr = cv2.imread(cur_file)
+                    if bgr is not None and obs_list:
+                        frame_h, frame_w = bgr.shape[:2]
+                        base_scale = min(mid_w / frame_w, mid_h / frame_h)
+                        curr_scale = base_scale * self.zoom_level
+                        target_w = int(round(frame_w * curr_scale))
+                        target_h = int(round(frame_h * curr_scale))
+                        center_x = mid_x1 + mid_w / 2.0 + self.pan_offset_x
+                        center_y = content_y1 + mid_h / 2.0 + self.pan_offset_y
+                        img_x1 = int(round(center_x - target_w / 2.0))
+                        img_y1 = int(round(center_y - target_h / 2.0))
+
+                        if (img_x1 <= mx <= img_x1 + target_w) and (img_y1 <= my <= img_y1 + target_h):
+                            img_px = (mx - img_x1) / float(curr_scale)
+                            img_py = (my - img_y1) / float(curr_scale)
+
+                            hit_tid = None
+                            for obs in obs_list:
+                                c_pts = np.array(obs["corners"], dtype=np.float32).reshape((4, 2))
+                                dist = cv2.pointPolygonTest(c_pts, (img_px, img_py), measureDist=True)
+                                if dist >= -8.0:  # 在标靶多边形内或距边缘 8px 容差内
+                                    hit_tid = obs["tag_id"]
+                                    break
+
+                            if hit_tid is not None:
+                                self.toggle_tag_exclusion_in_current_frame(hit_tid)
+                                return
+
 
     def _handle_button_click(self, btn_id: str, extra: Any, mx: int, my: int):
         if btn_id == "EXIT":
@@ -1390,16 +1459,35 @@ class TagOfflineStudio:
         elif btn_id == "SAVE_MAP":
             self.manifest_repo.save_tags_map(self.map_path, self.tags_map_data)
             self.set_toast(f"空间立体地图已成功保存至 {self.map_path}")
+        elif btn_id == "TOGGLE_BA_VIEW_DROPDOWN":
+            self.active_dropdown = None if self.active_dropdown == "BA_VIEW_DROPDOWN" else "BA_VIEW_DROPDOWN"
+        elif btn_id == "TOGGLE_OBS_VIEW_DROPDOWN":
+            self.active_dropdown = None if self.active_dropdown == "OBS_VIEW_DROPDOWN" else "OBS_VIEW_DROPDOWN"
         elif btn_id == "TOGGLE_VIEW_DROPDOWN":
-            self.active_dropdown = None if self.active_dropdown == "VIEW_DROPDOWN" else "VIEW_DROPDOWN"
+            self.active_dropdown = None if self.active_dropdown == "BA_VIEW_DROPDOWN" else "BA_VIEW_DROPDOWN"
         elif btn_id == "TOGGLE_FILTER_DROPDOWN":
             self.active_dropdown = None if self.active_dropdown == "FILTER_DROPDOWN" else "FILTER_DROPDOWN"
         elif btn_id == "TOGGLE_SORT_DROPDOWN":
             self.active_dropdown = None if self.active_dropdown == "SORT_DROPDOWN" else "SORT_DROPDOWN"
         elif btn_id.startswith("DD_SELECT_"):
             dd_name, selected_val = extra
-            if dd_name == "VIEW_DROPDOWN":
+            if dd_name == "BA_VIEW_DROPDOWN":
+                self.ba_view_mode = selected_val
                 self.view_mode = selected_val
+                lbl = dict(BA_VIEW_OPTIONS).get(selected_val, selected_val)
+                self.set_toast(f"BA 理论显示已切换为: {lbl}")
+            elif dd_name == "OBS_VIEW_DROPDOWN":
+                self.obs_view_mode = selected_val
+                lbl = dict(OBS_VIEW_OPTIONS).get(selected_val, selected_val)
+                self.set_toast(f"实测识别显示已切换为: {lbl}")
+            elif dd_name == "VIEW_DROPDOWN":
+                self.view_mode = selected_val
+                if selected_val == "3d":
+                    self.ba_view_mode = "3d"
+                    self.obs_view_mode = "3d"
+                elif selected_val == "2d":
+                    self.ba_view_mode = "2d"
+                    self.obs_view_mode = "2d"
                 lbl = dict(VIEW_MODE_OPTIONS).get(selected_val, selected_val)
                 self.set_toast(f"显示模式已切换为: {lbl}")
             elif dd_name == "FILTER_DROPDOWN":
@@ -1504,12 +1592,23 @@ class TagOfflineStudio:
                     if self.image_files:
                         self.current_img_idx = (self.current_img_idx + 1) % len(self.image_files)
                         self.set_toast(f"选定帧: {os.path.basename(self.image_files[self.current_img_idx])}")
-                elif key in (ord('v'), ord('V')):      # V 键 -> 循环切换显示模式
-                    modes = ["mix", "3d", "2d"]
-                    curr_i = modes.index(self.view_mode) if self.view_mode in modes else 0
-                    self.view_mode = modes[(curr_i + 1) % len(modes)]
-                    lbl = dict(VIEW_MODE_OPTIONS).get(self.view_mode, self.view_mode)
-                    self.set_toast(f"显示模式已切换为: {lbl}")
+                elif key in (ord('v'), ord('V')):      # V 键 -> 循环切换视口预设模式
+                    presets = [
+                        ("3d", "3d", "全 3D 双棱柱空间对比 (BA 3D + 实测 3D)"),
+                        ("2d", "2d", "全 2D 重投影与残差矢量 (BA 2D + 实测 2D)"),
+                        ("off", "2d", "仅单帧实测识别角点框"),
+                        ("3d", "off", "仅 BA 空间理论 3D 棱柱"),
+                        ("off", "off", "纯净原始采图 (全隐藏)")
+                    ]
+                    curr_idx = -1
+                    for idx, (b_m, o_m, _) in enumerate(presets):
+                        if self.ba_view_mode == b_m and self.obs_view_mode == o_m:
+                            curr_idx = idx
+                            break
+                    next_idx = (curr_idx + 1) % len(presets)
+                    self.ba_view_mode, self.obs_view_mode, desc = presets[next_idx]
+                    self.view_mode = self.ba_view_mode
+                    self.set_toast(f"视口模式: {desc}")
                 elif key in (ord('z'), ord('Z'), ord('0')):  # Z / 0 键 -> 重置缩放
                     self.reset_viewport_zoom()
                 elif key in (ord('t'), ord('T'), 32):  # T 键或空格键 -> 翻转状态

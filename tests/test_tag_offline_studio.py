@@ -231,16 +231,26 @@ class TestTagOfflineStudio(unittest.TestCase):
         self.assertEqual(sorted_indices[2], 0, "残差最低 (0.12px) 的 view_0001 应排在第 2 位")
 
     def test_view_mode_and_ba_progress(self):
-        """测试视口显示模式 (3D/2D/混合) 与全局平差进度条渲染"""
-        # 1. 测试切换模式
-        for mode in ["3d", "2d", "mix"]:
-            self.studio._handle_button_click(f"DD_SELECT_VIEW_DROPDOWN_{mode}", ("VIEW_DROPDOWN", mode), 0, 0)
-            self.assertEqual(self.studio.view_mode, mode)
-            canvas = np.zeros((self.studio.win_h, self.studio.win_w, 3), dtype=np.uint8)
-            self.studio.render(canvas)
-            self.assertGreater(canvas.shape[0], 0)
+        """测试视口双独立正交模式 (BA 理论与单帧实测) 与全局平差进度条渲染"""
+        # 1. 测试默认双 3D 模式
+        self.assertEqual(self.studio.ba_view_mode, "3d")
+        self.assertEqual(self.studio.obs_view_mode, "3d")
+        self.assertEqual(self.studio.right_bar_w, 180, "右侧栏应成功瘦身为 180px")
 
-        # 2. 测试带有大阶段+子阶段双进度条的渲染
+        # 2. 测试切换 BA 与 OBS 独立下拉框
+        for ba_m in ["3d", "2d", "off"]:
+            self.studio._handle_button_click(f"DD_SELECT_BA_VIEW_DROPDOWN_{ba_m}", ("BA_VIEW_DROPDOWN", ba_m), 0, 0)
+            self.assertEqual(self.studio.ba_view_mode, ba_m)
+
+        for obs_m in ["3d", "2d", "off"]:
+            self.studio._handle_button_click(f"DD_SELECT_OBS_VIEW_DROPDOWN_{obs_m}", ("OBS_VIEW_DROPDOWN", obs_m), 0, 0)
+            self.assertEqual(self.studio.obs_view_mode, obs_m)
+
+        canvas = np.zeros((self.studio.win_h, self.studio.win_w, 3), dtype=np.uint8)
+        self.studio.render(canvas)
+        self.assertGreater(canvas.shape[0], 0)
+
+        # 3. 测试带有大阶段+子阶段双进度条的渲染
         self.studio.is_ba_running = True
         self.studio.ba_progress = 0.65
         self.studio.ba_stage_text = "阶段 3/4: 两阶段 Cauchy 平差求解中..."
@@ -249,6 +259,35 @@ class TestTagOfflineStudio(unittest.TestCase):
         canvas = np.zeros((self.studio.win_h, self.studio.win_w, 3), dtype=np.uint8)
         self.studio.render(canvas)
         self.assertGreater(canvas.shape[0], 0)
+
+    def test_canvas_click_tag_toggle(self):
+        """测试在中间视口图片上直接点击 Tag 触发剔除(打叉)与恢复"""
+        bname = os.path.basename(self.studio.image_files[0])
+        self.studio.current_img_idx = 0
+
+        # 为测试帧注入确定性的观测标靶
+        self.studio.manifest_data.setdefault("images", {})[bname] = {
+            "observations": [{
+                "tag_id": 99,
+                "corners": [[100.0, 100.0], [300.0, 100.0], [300.0, 300.0], [100.0, 300.0]],
+                "keep": True
+            }]
+        }
+        self.studio.frame_metrics_cache[bname]["observations"] = self.studio.get_observations_for_image(bname)
+
+        obs_list = self.studio.get_observations_for_image(bname)
+        self.assertEqual(len(obs_list), 1)
+        self.assertTrue(obs_list[0].get("keep", True), "默认初始应为保留状态")
+
+        # 触发翻转
+        self.studio.toggle_tag_exclusion_in_current_frame(99)
+        obs_after = self.studio.get_observations_for_image(bname)
+        self.assertFalse(obs_after[0]["keep"], "翻转后应变为剔除(打红叉)状态")
+
+        # 再次翻转恢复
+        self.studio.toggle_tag_exclusion_in_current_frame(99)
+        obs_restored = self.studio.get_observations_for_image(bname)
+        self.assertTrue(obs_restored[0]["keep"], "再次点击应恢复保留状态")
 
 
 if __name__ == "__main__":
