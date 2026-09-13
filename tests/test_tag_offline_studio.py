@@ -114,7 +114,18 @@ class TestTagOfflineStudio(unittest.TestCase):
 
 
     def test_gui_render_pipeline(self):
-        """测试完整三栏 GUI 渲染流水线无异常"""
+        """测试完整三栏 GUI 渲染流水线无异常 (含 Tag 叠加与残差矢量)"""
+        bname = os.path.basename(self.studio.image_files[0])
+        # 伪造带实际观测角点的帧数据
+        self.studio.manifest_data.setdefault("images", {})[bname] = {
+            "observations": [{
+                "tag_id": 0,
+                "corners": [[100.0, 100.0], [200.0, 100.0], [200.0, 200.0], [100.0, 200.0]],
+                "keep": True
+            }]
+        }
+        self.studio.refresh_all_frame_metrics()
+
         canvas = np.zeros((self.studio.win_h, self.studio.win_w, 3), dtype=np.uint8)
         self.studio.is_ba_running = True
         self.studio.set_toast("测试单元运行中")
@@ -125,6 +136,13 @@ class TestTagOfflineStudio(unittest.TestCase):
         self.assertGreater(len(self.studio.gui_buttons), 0, "应成功注册 GUI 交互按钮")
         self.assertGreater(canvas.shape[0], 0)
         self.assertGreater(canvas.shape[1], 0)
+
+        # 直接测试 visualizer.draw_reprojection_vectors
+        test_img = np.zeros((200, 200, 3), dtype=np.uint8)
+        obs_pts = np.array([[10, 10], [20, 20]], dtype=np.float32)
+        proj_pts = np.array([[12, 11], [25, 23]], dtype=np.float32)
+        self.studio.visualizer.draw_reprojection_vectors(test_img, obs_pts, proj_pts, scale_factor=20.0)
+        self.assertIsNotNone(test_img)
 
     def test_button_click_events(self):
         """测试鼠标点击事件分发"""

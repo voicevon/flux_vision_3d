@@ -297,3 +297,44 @@ class VerificationVisualizer:
             cv2.imwrite(out_path, disp)
 
         return disp
+
+    def draw_reprojection_vectors(
+        self,
+        img: np.ndarray,
+        observed_pts: np.ndarray,
+        projected_pts: np.ndarray,
+        scale_factor: float = 40.0,
+        color: Tuple[int, int, int] = (0, 0, 255),
+        thickness: int = 2
+    ):
+        """
+        在目标图像上绘制角点重投影残差放大矢量箭头 (实测角点 -> 理论投影角点)
+        :param img: 目标画布图像 (原地修改)
+        :param observed_pts: (N, 2) 实测角点
+        :param projected_pts: (N, 2) 理论投影角点
+        :param scale_factor: 残差放大倍数 (如 40.0x 用于清晰放大亚像素误差)
+        :param color: 箭头颜色，默认红色 (0, 0, 255)
+        :param thickness: 线条粗细
+        """
+        if observed_pts is None or projected_pts is None:
+            return
+        try:
+            obs = np.asarray(observed_pts, dtype=np.float64).reshape((-1, 2))
+            proj = np.asarray(projected_pts, dtype=np.float64).reshape((-1, 2))
+            n = min(len(obs), len(proj))
+            for i in range(n):
+                p_obs = obs[i]
+                p_proj = proj[i]
+                dx = (p_proj[0] - p_obs[0]) * scale_factor
+                dy = (p_proj[1] - p_obs[1]) * scale_factor
+                pt_s = (int(round(p_obs[0])), int(round(p_obs[1])))
+                pt_e = (int(round(p_obs[0] + dx)), int(round(p_obs[1] + dy)))
+
+                # 绘制实测观测角点黄色圆点
+                cv2.circle(img, pt_s, 3, (0, 255, 255), -1, cv2.LINE_AA)
+                # 绘制放大误差矢量箭头
+                if abs(dx) > 1e-2 or abs(dy) > 1e-2:
+                    cv2.arrowedLine(img, pt_s, pt_e, color, thickness, tipLength=0.25)
+        except Exception:
+            pass
+

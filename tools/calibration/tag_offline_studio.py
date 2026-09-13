@@ -790,7 +790,8 @@ class TagOfflineStudio:
                 # 绘制亚像素残差红色放大矢量箭头
                 proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, self.engine.camera_matrix, self.engine.dist_coeffs)
                 proj_flat = proj_pts.reshape((-1, 2))
-                self.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
+                if hasattr(self.visualizer, "draw_reprojection_vectors"):
+                    self.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
 
 
     def _render_right_inspector(self, canvas: np.ndarray, x: int, y: int, w: int, h: int):
