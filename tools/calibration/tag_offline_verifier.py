@@ -59,6 +59,10 @@ try:
 except ImportError:
     force_window_focus = None
 
+from src.calibration.verification_reporter import VerificationReporter
+from src.calibration.offline_engine import OfflineVerificationEngine
+from src.calibration.verification_visualizer import VerificationVisualizer
+
 try:
     from src.utils.viewport_manager import (
         ViewportManager, get_safe_screen_size,
@@ -123,6 +127,21 @@ class TagOfflineVerifier:
             [ s, -s, 0.0],
             [-s, -s, 0.0]
         ], dtype=np.float64)
+
+        # 实例化离线标定精度体检纯算法引擎 (解耦纯计算与 GUI 交互)
+        self.engine = OfflineVerificationEngine(
+            tags_map=self.tags_map,
+            camera_matrix=self.camera_matrix,
+            dist_coeffs=self.dist_coeffs,
+            marker_size_mm=self.marker_size_mm,
+            valid_tag_ids=self.valid_tag_ids
+        )
+
+        # 实例化视觉呈现与双模态渲染器 (解耦渲染与交互)
+        self.visualizer = VerificationVisualizer(
+            camera_matrix=self.camera_matrix,
+            dist_coeffs=self.dist_coeffs
+        )
 
         # 确保输出目录存在
         os.makedirs(VERIFICATION_DIR, exist_ok=True)
@@ -189,6 +208,10 @@ class TagOfflineVerifier:
 
         self.marker_size_mm = float(self.tags_map.get("marker_size_mm", self.marker_size_mm))
         self.mapped_tag_ids = sorted([int(tid) for tid in self.tags_map.get("tags", {}).keys()])
+        if hasattr(self, "engine") and self.engine is not None:
+            self.engine.tags_map = self.tags_map
+            self.engine.mapped_tag_ids = self.mapped_tag_ids
+            self.engine.marker_size_mm = self.marker_size_mm
         print(f"[OK] 已加载标靶空间地图: {self.map_path} (包含 {len(self.mapped_tag_ids)} 个标靶: {self.mapped_tag_ids})")
 
     def _load_camera_intrinsics(self):
@@ -241,824 +264,75 @@ class TagOfflineVerifier:
         return det_bright, det_dark
 
     def detect_tags(self, image: np.ndarray) -> Dict[int, np.ndarray]:
-        """双路互补融合检测 (与 TagMapBuilder.detect_tags 一致)"""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        results = {}
-
-        # 路 1: 高光路
-        c1, ids1, _ = self.detector_bright.detectMarkers(gray)
-        if ids1 is not None:
-            for idx, tag_id in enumerate(ids1.flatten()):
-                tid = int(tag_id)
-                if self.valid_tag_ids and tid not in self.valid_tag_ids:
-                    continue
-                results[tid] = c1[idx].reshape((4, 2))
-
-        # 路 2: 低反差路 (动态拉伸)
-        p_low, p_high = np.percentile(gray[::4, ::4], (2, 98))
-        if p_high > p_low + 10:
-            gray_s = np.clip((gray.astype(np.float32) - p_low) * (255.0 / (p_high - p_low)), 0, 255).astype(np.uint8)
-        else:
-            gray_s = gray
-
-        c2, ids2, _ = self.detector_dark.detectMarkers(gray_s)
-        if ids2 is not None:
-            for idx, tag_id in enumerate(ids2.flatten()):
-                tid = int(tag_id)
-                if self.valid_tag_ids and tid not in self.valid_tag_ids:
-                    continue
-                if tid not in results:
-                    results[tid] = c2[idx].reshape((4, 2))
-
-        # 亚像素精修
-        for tid in list(results.keys()):
-            results[tid] = self._refine_corners(gray, results[tid])
-
-        return results
+        """双路互补融合检测 (委托给 OfflineVerificationEngine)"""
+        return self.engine.detect_tags(image)
 
     def _refine_corners(self, gray: np.ndarray, corners: np.ndarray) -> np.ndarray:
-        """亚像素角点精修"""
-        try:
-            pts = corners.reshape((4, 2)).astype(np.float32)
-            side = (np.linalg.norm(pts[0] - pts[1]) + np.linalg.norm(pts[1] - pts[2])) / 2.0
-            hw = int(np.clip(side * 0.06, 3, 9))
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.001)
-            refined = cv2.cornerSubPix(gray, pts.copy(), (hw, hw), (-1, -1), criteria)
-            if np.max(np.linalg.norm(refined - pts, axis=1)) > 2.5:
-                return pts.astype(np.float64)
-            return refined.astype(np.float64)
-        except Exception:
-            return corners.astype(np.float64)
+        """亚像素角点精修 (委托给 OfflineVerificationEngine)"""
+        return self.engine._refine_corners(gray, corners)
 
     def _get_tag_world_transform(self, tag_id: int) -> Optional[np.ndarray]:
-        """获取标靶在世界坐标系下的 4x4 变换矩阵"""
-        tag_data = self.tags_map.get("tags", {}).get(tag_id)
-        if tag_data is None:
-            tag_data = self.tags_map.get("tags", {}).get(str(tag_id))
-        if tag_data is None:
-            return None
-        if "transform_matrix" in tag_data:
-            return np.array(tag_data["transform_matrix"], dtype=np.float64)
-        elif "position_mm" in tag_data:
-            T = np.eye(4, dtype=np.float64)
-            T[:3, 3] = np.array(tag_data["position_mm"], dtype=np.float64)
-            return T
-        return None
+        """获取标靶在世界坐标系下的 4x4 变换矩阵 (委托给 OfflineVerificationEngine)"""
+        return self.engine.get_tag_world_transform(tag_id)
 
     def _get_tag_world_corners(self, tag_id: int) -> Optional[np.ndarray]:
-        """获取标靶 4 个角点在世界坐标系下的 3D 位置"""
-        T = self._get_tag_world_transform(tag_id)
-        if T is None:
-            return None
-        s = self.marker_size_mm / 2.0
-        local = np.array([
-            [-s, s, 0.0, 1.0], [s, s, 0.0, 1.0],
-            [s, -s, 0.0, 1.0], [-s, -s, 0.0, 1.0]
-        ], dtype=np.float64)
-        return (T @ local.T).T[:, :3]
+        """获取标靶 4 个角点在世界坐标系下的 3D 位置 (委托给 OfflineVerificationEngine)"""
+        return self.engine.get_tag_world_corners(tag_id)
 
     def _solve_camera_pose(self, tag_corners_pairs: List[Tuple[int, np.ndarray]]) -> Optional[Dict]:
-        """
-        给定一组 (tag_id, corners_2d) 对，超定 PnP 求解相机位姿。
-        集成物理正深度前置校验与 SQPNP -> EPNP -> ITERATIVE 多级回退机制，彻底杜绝翻转伪解。
-        :return: {"rvec", "tvec", "rmse"} 或 None
-        """
-        all_obj = []
-        all_img = []
-        for tid, c2d in tag_corners_pairs:
-            wc = self._get_tag_world_corners(tid)
-            if wc is not None:
-                all_obj.append(wc)
-                all_img.append(c2d.reshape(4, 2))
-
-        if len(all_obj) < 1:
-            return None
-
-        obj_flat = np.concatenate(all_obj, axis=0)
-        img_flat = np.concatenate(all_img, axis=0)
-
-        best_rvec, best_tvec = None, None
-        best_rmse = float("inf")
-
-        def try_candidate(r, t):
-            nonlocal best_rvec, best_tvec, best_rmse
-            if r is None or t is None:
-                return
-            tz = float(t[2, 0])
-            if tz <= 100.0 or tz > 3500.0:
-                return
-            proj, _ = cv2.projectPoints(obj_flat, r, t, self.camera_matrix, self.dist_coeffs)
-            rmse = float(np.sqrt(np.mean((img_flat - proj.reshape(-1, 2)) ** 2)))
-            if rmse < best_rmse:
-                best_rmse = rmse
-                best_rvec = r.copy()
-                best_tvec = t.copy()
-
-        # 1. 尝试 RANSAC SQPNP (标靶数 >= 3 时抗噪效果佳)
-        if len(all_obj) >= 3:
-            try:
-                succ_r, r_r, t_r, inliers = cv2.solvePnPRansac(
-                    obj_flat, img_flat, self.camera_matrix, self.dist_coeffs,
-                    reprojectionError=4.0, flags=cv2.SOLVEPNP_SQPNP
-                )
-                if succ_r:
-                    try_candidate(r_r, t_r)
-            except Exception:
-                pass
-
-        # 2. 尝试标准 SQPNP
-        try:
-            succ_sq, r_sq, t_sq = cv2.solvePnP(
-                obj_flat, img_flat, self.camera_matrix, self.dist_coeffs,
-                flags=cv2.SOLVEPNP_SQPNP
-            )
-            if succ_sq:
-                try_candidate(r_sq, t_sq)
-        except Exception:
-            pass
-
-        # 3. 若 SQPNP 解算不佳或出现负深度/翻转，尝试 EPNP
-        if best_rmse > 5.0 or best_rvec is None:
-            try:
-                succ_ep, r_ep, t_ep = cv2.solvePnP(
-                    obj_flat, img_flat, self.camera_matrix, self.dist_coeffs,
-                    flags=cv2.SOLVEPNP_EPNP
-                )
-                if succ_ep:
-                    try_candidate(r_ep, t_ep)
-            except Exception:
-                pass
-
-        # 4. 尝试 ITERATIVE
-        if best_rmse > 10.0 or best_rvec is None:
-            try:
-                succ_it, r_it, t_it = cv2.solvePnP(
-                    obj_flat, img_flat, self.camera_matrix, self.dist_coeffs,
-                    flags=cv2.SOLVEPNP_ITERATIVE
-                )
-                if succ_it:
-                    try_candidate(r_it, t_it)
-            except Exception:
-                pass
-
-        if best_rvec is None or best_tvec is None:
-            return None
-
-        # 5. 采用非线性最小二乘极限精修 (ITERATIVE with extrinsic guess)
-        if len(all_obj) >= 2:
-            try:
-                succ_ref, r_ref, t_ref = cv2.solvePnP(
-                    obj_flat, img_flat, self.camera_matrix, self.dist_coeffs,
-                    rvec=best_rvec, tvec=best_tvec, useExtrinsicGuess=True,
-                    flags=cv2.SOLVEPNP_ITERATIVE
-                )
-                if succ_ref and 100.0 < float(t_ref[2, 0]) <= 3500.0:
-                    proj, _ = cv2.projectPoints(obj_flat, r_ref, t_ref, self.camera_matrix, self.dist_coeffs)
-                    ref_rmse = float(np.sqrt(np.mean((img_flat - proj.reshape(-1, 2)) ** 2)))
-                    if ref_rmse <= best_rmse * 1.5:
-                        best_rvec, best_tvec, best_rmse = r_ref, t_ref, ref_rmse
-            except Exception:
-                pass
-
-        return {"rvec": best_rvec, "tvec": best_tvec, "rmse": best_rmse}
+        """超定 PnP 求解相机位姿 (委托给 OfflineVerificationEngine)"""
+        return self.engine.solve_camera_pose(tag_corners_pairs)
 
     def _solve_single_tag_pnp(self, corners_2d: np.ndarray) -> Tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
-        """根据单帧检出的 4 个 2D 角点解算单标靶实测相机外参位姿 (优先 IPPE_SQUARE，兜底 ITERATIVE)"""
-        try:
-            c = corners_2d.reshape((4, 2)).astype(np.float64)
-            succ, rvecs, tvecs, _ = cv2.solvePnPGeneric(
-                self.obj_points, c, self.camera_matrix, self.dist_coeffs,
-                flags=cv2.SOLVEPNP_IPPE_SQUARE
-            )
-            if succ and len(rvecs) > 0:
-                best_r, best_t, min_err = None, None, float("inf")
-                for r, t in zip(rvecs, tvecs):
-                    if t[2, 0] <= 0:
-                        continue
-                    proj, _ = cv2.projectPoints(self.obj_points, r, t, self.camera_matrix, self.dist_coeffs)
-                    err = np.mean(np.linalg.norm(proj.reshape(-1, 2) - c, axis=1))
-                    if err < min_err:
-                        min_err = err
-                        best_r, best_t = r, t
-                if best_r is not None:
-                    return True, best_r, best_t
-        except Exception:
-            pass
-
-        try:
-            c = corners_2d.reshape((4, 2)).astype(np.float64)
-            succ, r, t = cv2.solvePnP(self.obj_points, c, self.camera_matrix, self.dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
-            if succ and t[2, 0] > 0:
-                return True, r, t
-        except Exception:
-            pass
-
-        return False, None, None
+        """解算单标靶实测相机外参位姿 (委托给 OfflineVerificationEngine)"""
+        return self.engine.solve_single_tag_pnp(corners_2d)
 
     def _compute_loo_error(self, rvec, tvec, tag_id: int, observed_corners: np.ndarray) -> Optional[Dict]:
-        """
-        计算单个盲测目标的重投影误差，并记录 BA 理论位姿与单帧实测位姿
-        :return: 包含 2D 误差、3D 误差与双位姿向量的字典
-        """
-        T_w_t = self._get_tag_world_transform(tag_id)
-        if T_w_t is None:
-            return None
-
-        T_c_w = np.eye(4, dtype=np.float64)
-        R, _ = cv2.Rodrigues(rvec)
-        T_c_w[:3, :3] = R
-        T_c_w[:3, 3] = tvec.flatten()
-        T_c_t = T_c_w @ T_w_t
-        r_t, _ = cv2.Rodrigues(T_c_t[:3, :3])
-        t_t = T_c_t[:3, 3].reshape(3, 1)
-
-        proj, _ = cv2.projectPoints(self.obj_points, r_t, t_t, self.camera_matrix, self.dist_coeffs)
-        proj_2d = proj.reshape(4, 2)
-
-        obs = observed_corners.reshape(4, 2)
-        per_corner_err = np.linalg.norm(proj_2d - obs, axis=1)
-        mean_err_px = float(np.mean(per_corner_err))
-
-        # 空间误差估算: err_mm ≈ err_px * depth / fx
-        depth = float(t_t[2, 0])
-        fx = self.camera_matrix[0, 0]
-        err_mm = (mean_err_px * abs(depth)) / fx if fx > 0 else 0.0
-
-        # 解算单帧实测位姿用于 3D 双棱柱虚实比对
-        ok_obs, obs_r, obs_t = self._solve_single_tag_pnp(obs)
-
-        return {
-            "err_px": mean_err_px,
-            "err_mm": err_mm,
-            "depth_mm": depth,
-            "per_corner_px": per_corner_err.tolist(),
-            "proj_corners": proj_2d,
-            "obs_corners": obs,
-            "ba_rvec": r_t,
-            "ba_tvec": t_t,
-            "obs_rvec": obs_r if ok_obs else None,
-            "obs_tvec": obs_t if ok_obs else None
-        }
+        """计算单个盲测目标的重投影误差 (委托给 OfflineVerificationEngine)"""
+        return self.engine.compute_loo_error(rvec, tvec, tag_id, observed_corners)
 
     def _verify_single_frame(self, img_path: str) -> List[Dict]:
-        """
-        对单帧执行全标靶 Leave-One-Out 盲测循环
-        :return: 该帧所有 LOO 测试结果列表
-        """
-        fname = os.path.basename(img_path)
-        known_tags = {}
-
-        # 优先从已审核观测清单中提取有效样本 (保持与 BA 求解输入完全一致)
-        if self.actual_source == "manifest" and self.manifest_data:
-            img_entry = self.manifest_data.get("images", {}).get(fname, {})
-            if not img_entry.get("enabled", True):
-                return []
-            for obs in img_entry.get("observations", []):
-                tid = obs.get("tag_id")
-                if obs.get("keep", True) and tid in self.mapped_tag_ids:
-                    c = np.array(obs["corners"], dtype=np.float64)
-                    area = cv2.contourArea(c.reshape(4, 2).astype(np.float32))
-                    if area >= 250.0:  # 过滤远景噪点与像素过小的极度畸变标靶
-                        known_tags[tid] = c
-
-        # 若非清单模式或清单无数据，则对图像进行实时检测
-        if not known_tags:
-            img = cv2.imread(img_path)
-            if img is None:
-                return []
-            detected = self.detect_tags(img)
-            for tid, c in detected.items():
-                if tid in self.mapped_tag_ids:
-                    area = cv2.contourArea(c.reshape(4, 2).astype(np.float32))
-                    if area >= 250.0:
-                        known_tags[tid] = c
-
-        if len(known_tags) < 2:
-            return []
-
-        results = []
-        for blind_tid in sorted(known_tags.keys()):
-            # 构建排除盲测目标后的求解集
-            solver_pairs = [(tid, c) for tid, c in known_tags.items() if tid != blind_tid]
-            if len(solver_pairs) < 1:
-                continue
-
-            pose = self._solve_camera_pose(solver_pairs)
-            if pose is None or pose["rmse"] > 30.0:
-                continue
-
-            loo = self._compute_loo_error(pose["rvec"], pose["tvec"], blind_tid, known_tags[blind_tid])
-            if loo is None:
-                continue
-
-            results.append({
-                "image": os.path.basename(img_path),
-                "blind_tag_id": blind_tid,
-                "solver_tags": [tid for tid, _ in solver_pairs],
-                "solver_count": len(solver_pairs),
-                "solver_rmse_px": pose["rmse"],
-                **loo
-            })
-
-        return results
+        """对单帧执行全标靶 Leave-One-Out 盲测循环 (委托给 OfflineVerificationEngine)"""
+        return self.engine.verify_single_frame(img_path, self.manifest_data, self.actual_source)
 
     def render_tag_dual_prisms(self, img: np.ndarray,
                                ba_rvec: Optional[np.ndarray], ba_tvec: Optional[np.ndarray],
                                obs_rvec: Optional[np.ndarray], obs_tvec: Optional[np.ndarray],
                                tag_id: int, err_px: float, err_mm: float,
                                observed_corners: Optional[np.ndarray] = None):
-        """
-        绘制全局 BA 平差理论位姿 (绿色) 与单帧实测抓取位姿 (金色/橙红) 的 3D 双四棱柱空间对比
-        """
-        try:
-            hw = 15.0   # 截面半宽 15mm，整体截面 30.0mm x 30.0mm
-            L = 75.0    # 柱体高度 75mm (与实际尺寸协调)
-
-            pts_3d = np.array([
-                # 底面 4 点 (Z=0)
-                [-hw, -hw, 0.0],
-                [ hw, -hw, 0.0],
-                [ hw,  hw, 0.0],
-                [-hw,  hw, 0.0],
-                # 顶面 4 点 (Z=L)
-                [-hw, -hw, L],
-                [ hw, -hw, L],
-                [ hw,  hw, L],
-                [-hw,  hw, L],
-                # 顶面中心
-                [0.0, 0.0, L]
-            ], dtype=np.float64)
-
-            # 1. 投影 BA 理论棱柱
-            proj_ba = None
-            if ba_rvec is not None and ba_tvec is not None:
-                p, _ = cv2.projectPoints(pts_3d, ba_rvec, ba_tvec, self.camera_matrix, self.dist_coeffs)
-                proj_ba = p.reshape((-1, 2)).astype(int)
-
-            # 2. 投影实测观测棱柱
-            proj_obs = None
-            if obs_rvec is not None and obs_tvec is not None:
-                p, _ = cv2.projectPoints(pts_3d, obs_rvec, obs_tvec, self.camera_matrix, self.dist_coeffs)
-                proj_obs = p.reshape((-1, 2)).astype(int)
-
-            is_good = (err_px <= 1.5 and err_mm <= 1.5)
-            is_moderate = (err_px <= 3.0 and err_mm <= 2.5)
-
-            overlay = img.copy()
-
-            # A. 良好达标样本 (BA 与实测高度吻合，渲染巍峨稳健的纯正翠绿棱柱，给用户强烈的踏实感)
-            if is_good:
-                pts = proj_ba if proj_ba is not None else proj_obs
-                if pts is not None:
-                    b_pts = pts[0:4]
-                    t_pts = pts[4:8]
-                    top_c = tuple(pts[8])
-
-                    # 翠绿色半透明实心柱体
-                    side_color = (0, 190, 50)
-                    cap_color = (80, 255, 120)
-                    for i in range(4):
-                        next_i = (i + 1) % 4
-                        side_poly = np.array([b_pts[i], b_pts[next_i], t_pts[next_i], t_pts[i]], dtype=np.int32)
-                        cv2.fillPoly(overlay, [side_poly], side_color)
-                    cv2.fillPoly(overlay, [t_pts], cap_color)
-                    cv2.addWeighted(overlay, 0.42, img, 0.58, 0, img)
-
-                    # 纯净亮白/亮绿棱线描边
-                    edge_c = (0, 245, 100)
-                    cv2.polylines(img, [b_pts], True, edge_c, 2, cv2.LINE_AA)
-                    cv2.polylines(img, [t_pts], True, (255, 255, 255), 2, cv2.LINE_AA)
-                    for i in range(4):
-                        cv2.line(img, tuple(b_pts[i]), tuple(t_pts[i]), edge_c, 2, cv2.LINE_AA)
-
-                    # 顶盖中心与标识
-                    cv2.circle(img, top_c, 4, (255, 255, 255), -1, cv2.LINE_AA)
-                    cv2.putText(img, "BA", (top_c[0] + 5, top_c[1] - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA)
-
-                    # 底面实测角点连线与四色圆点
-                    if observed_corners is not None:
-                        c_int = observed_corners.reshape((4, 2)).astype(np.int32)
-                        cv2.polylines(img, [c_int], True, (0, 255, 100), 2, cv2.LINE_AA)
-                        dot_colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
-                        for pt_i, pt in enumerate(c_int):
-                            cv2.circle(img, tuple(pt), 4, dot_colors[pt_i], -1)
-
-                    # 悬浮高对比度稳态绿色标牌 (彻底告别原本看不清的暗灰色)
-                    min_x = min(np.min(b_pts[:, 0]), np.min(t_pts[:, 0]))
-                    min_y = min(np.min(b_pts[:, 1]), np.min(t_pts[:, 1]))
-                    bx = max(10, int(min_x - 10))
-                    by = max(40, int(min_y - 14))
-
-                    label = f"Tag#{tag_id} [PASS] {err_mm:.2f}mm ({err_px:.2f}px)"
-                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                    cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), (10, 42, 16), -1)
-                    cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), (0, 240, 90), 1)
-                    cv2.putText(img, label, (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-
-            # B. 偏差/需回审样本 (渲染绿色 BA 棱柱 vs 金黄/橙红实测棱柱，形成鲜明空间错位对比)
-            else:
-                # 1. 渲染绿色 BA 理论棱柱 (Truth / 理论目标位置)
-                if proj_ba is not None:
-                    ba_b = proj_ba[0:4]
-                    ba_t = proj_ba[4:8]
-                    ba_c = tuple(proj_ba[8])
-
-                    side_c = (0, 180, 80)
-                    for i in range(4):
-                        next_i = (i + 1) % 4
-                        side_poly = np.array([ba_b[i], ba_b[next_i], ba_t[next_i], ba_t[i]], dtype=np.int32)
-                        cv2.fillPoly(overlay, [side_poly], side_c)
-                    cv2.fillPoly(overlay, [ba_t], (50, 250, 140))
-                    cv2.addWeighted(overlay, 0.35, img, 0.65, 0, img)
-
-                    # 绿色棱线
-                    cv2.polylines(img, [ba_b], True, (0, 220, 80), 2, cv2.LINE_AA)
-                    cv2.polylines(img, [ba_t], True, (120, 255, 160), 2, cv2.LINE_AA)
-                    for i in range(4):
-                        cv2.line(img, tuple(ba_b[i]), tuple(ba_t[i]), (0, 220, 80), 2, cv2.LINE_AA)
-                    cv2.circle(img, ba_c, 4, (0, 255, 100), -1, cv2.LINE_AA)
-                    cv2.putText(img, "BA", (ba_c[0] + 6, ba_c[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 120), 1, cv2.LINE_AA)
-
-                # 2. 渲染金黄/橙红实测棱柱 (Observed / 实测抓拍位置)
-                if proj_obs is not None:
-                    obs_b = proj_obs[0:4]
-                    obs_t = proj_obs[4:8]
-                    obs_c = tuple(proj_obs[8])
-
-                    warn_c = (0, 80, 240) if not is_moderate else (0, 160, 255)
-                    overlay2 = img.copy()
-                    for i in range(4):
-                        next_i = (i + 1) % 4
-                        side_poly = np.array([obs_b[i], obs_b[next_i], obs_t[next_i], obs_t[i]], dtype=np.int32)
-                        cv2.fillPoly(overlay2, [side_poly], warn_c)
-                    cv2.fillPoly(overlay2, [obs_t], (0, 210, 255))
-                    cv2.addWeighted(overlay2, 0.30, img, 0.70, 0, img)
-
-                    # 实测棱线
-                    cv2.polylines(img, [obs_b], True, warn_c, 2, cv2.LINE_AA)
-                    cv2.polylines(img, [obs_t], True, (255, 255, 255), 2, cv2.LINE_AA)
-                    for i in range(4):
-                        cv2.line(img, tuple(obs_b[i]), tuple(obs_t[i]), warn_c, 2, cv2.LINE_AA)
-                    cv2.circle(img, obs_c, 4, (0, 200, 255), -1, cv2.LINE_AA)
-                    cv2.putText(img, "OBS", (obs_c[0] + 6, obs_c[1] + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 210, 255), 1, cv2.LINE_AA)
-
-                    # 3. 顶盖中心拉出 3D 空间残差偏转连线
-                    if proj_ba is not None:
-                        cv2.line(img, obs_c, ba_c, (0, 50, 255), 3, cv2.LINE_AA)
-                        cv2.circle(img, obs_c, 5, (0, 0, 255), -1, cv2.LINE_AA)
-                        cv2.circle(img, ba_c, 5, (0, 255, 0), -1, cv2.LINE_AA)
-
-                # 4. 醒目报警标牌
-                anchor_pts = proj_ba if proj_ba is not None else proj_obs
-                if anchor_pts is not None:
-                    min_x = np.min(anchor_pts[:, 0])
-                    min_y = np.min(anchor_pts[:, 1])
-                    bx = max(10, int(min_x - 10))
-                    by = max(40, int(min_y - 14))
-                    tag_status = "[WARN]" if is_moderate else "[FAIL-回审]"
-                    border_c = (0, 160, 255) if is_moderate else (0, 0, 255)
-                    bg_c = (15, 30, 60) if is_moderate else (15, 15, 65)
-                    label = f"Tag#{tag_id} {tag_status} {err_mm:.2f}mm ({err_px:.2f}px)"
-                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                    cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), bg_c, -1)
-                    cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), border_c, 2)
-                    cv2.putText(img, label, (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-        except Exception:
-            pass
+        """绘制 3D 双四棱柱空间对比 (委托给 VerificationVisualizer)"""
+        return self.visualizer.render_tag_dual_prisms(
+            img=img, ba_rvec=ba_rvec, ba_tvec=ba_tvec,
+            obs_rvec=obs_rvec, obs_tvec=obs_tvec,
+            tag_id=tag_id, err_px=err_px, err_mm=err_mm,
+            observed_corners=observed_corners
+        )
 
     def _render_verification_frame(self, img_path: str, frame_results: List[Dict], out_path: Optional[str] = None) -> np.ndarray:
-        """渲染单帧 LOO 盲测可视化图 (支持 3D 双棱柱空间对比视图 与 2D 角点残差矢量视图)"""
-        img = cv2.imread(img_path)
-        if img is None:
-            return np.zeros((1080, 1920, 3), dtype=np.uint8)
-        disp = img.copy()
-        h, w = disp.shape[:2]
-
-        dot_colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
-
-        # 若当前帧 frame_results 为空（如孤立单靶帧），依然尽可能从清单提取有效样本渲染实测 3D 棱柱，杜绝空白
-        if not frame_results and self.manifest_data:
-            fname = os.path.basename(img_path)
-            img_entry = self.manifest_data.get("images", {}).get(fname, {})
-            for obs in img_entry.get("observations", []):
-                if obs.get("keep", True):
-                    tid = int(obs.get("tag_id", -1))
-                    c = np.array(obs.get("corners", []), dtype=np.float64)
-                    if len(c) == 4:
-                        ok_pnp, r_obs, t_obs = self._solve_single_tag_pnp(c)
-                        if ok_pnp:
-                            self.render_tag_dual_prisms(
-                                disp, ba_rvec=None, ba_tvec=None,
-                                obs_rvec=r_obs, obs_tvec=t_obs,
-                                tag_id=tid, err_px=0.0, err_mm=0.0,
-                                observed_corners=c
-                            )
-
-        if self.view_mode_3d:
-            # =================================================================
-            # 模式 A: 3D 双四棱柱虚实位姿对比模式 (BA 理论真值 vs 实测抓取)
-            # =================================================================
-            for r in frame_results:
-                tid = r["blind_tag_id"]
-                err_px = r["err_px"]
-                err_mm = r["err_mm"]
-                ba_r = r.get("ba_rvec")
-                ba_t = r.get("ba_tvec")
-                obs_r = r.get("obs_rvec")
-                obs_t = r.get("obs_tvec")
-                obs_c = r.get("obs_corners")
-
-                self.render_tag_dual_prisms(
-                    disp, ba_rvec=ba_r, ba_tvec=ba_t,
-                    obs_rvec=obs_r, obs_tvec=obs_t,
-                    tag_id=tid, err_px=err_px, err_mm=err_mm,
-                    observed_corners=obs_c
-                )
-
-            # 左下方悬浮模式胶囊提示条
-            mode_badge = "[ 视图: 3D双四棱柱空间对比模式 (按 T 键切换 2D 残差矢量) ]"
-            (mw, mh), _ = cv2.getTextSize(mode_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
-            cv2.rectangle(disp, (14, h - 35), (14 + mw + 16, h - 8), (18, 22, 30), -1)
-            cv2.rectangle(disp, (14, h - 35), (14 + mw + 16, h - 8), (0, 220, 180), 1)
-            cv2.putText(disp, mode_badge, (22, h - 17), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 240, 200), 1, cv2.LINE_AA)
-
-        else:
-            # =================================================================
-            # 模式 B: 2D 角点残差矢量模式 (高对比度强化版，好样本同样清晰醒目)
-            # =================================================================
-            for r in frame_results:
-                obs = r["obs_corners"].astype(np.int32)
-                proj = r["proj_corners"].astype(np.int32)
-                tid = r["blind_tag_id"]
-                err_px = r["err_px"]
-                err_mm = r["err_mm"]
-
-                is_good = (err_px <= 1.5)
-                is_moderate = (err_px <= 3.0)
-
-                # 观测轮廓 (好样本为翡翠绿，超标样本为深灰色)
-                obs_line_color = (0, 230, 80) if is_good else ((180, 180, 180) if is_moderate else (120, 120, 120))
-                cv2.polylines(disp, [obs], True, obs_line_color, 2 if is_good else 1, cv2.LINE_AA)
-
-                # 反推投影轮廓
-                if is_good:
-                    proj_color = (0, 255, 100)
-                elif is_moderate:
-                    proj_color = (0, 180, 255)
-                else:
-                    proj_color = (0, 0, 255)
-
-                cv2.polylines(disp, [proj], True, proj_color, 2, cv2.LINE_AA)
-
-                # 逐角点残差箭头 (放大 15 倍)
-                scale = 15.0
-                for i in range(4):
-                    p_obs = r["obs_corners"][i]
-                    p_proj = r["proj_corners"][i]
-                    dx = (p_proj[0] - p_obs[0]) * scale
-                    dy = (p_proj[1] - p_obs[1]) * scale
-                    pt_s = (int(p_obs[0]), int(p_obs[1]))
-                    pt_e = (int(p_obs[0] + dx), int(p_obs[1] + dy))
-                    cv2.circle(disp, pt_s, 4, dot_colors[i], -1)
-                    cv2.arrowedLine(disp, pt_s, pt_e, proj_color, 2, tipLength=0.25)
-
-                # 误差标牌 (好样本赋予高对比度绿底白字)
-                cx = int(np.mean(obs[:, 0]))
-                min_y = int(np.min(obs[:, 1]))
-                badge_y = max(75, min_y - 14)
-                badge_x = max(10, cx - 85)
-
-                status_text = "[PASS]" if is_good else ("[WARN]" if is_moderate else "[FAIL]")
-                label = f"Tag#{tid} {status_text} {err_px:.2f}px / {err_mm:.2f}mm"
-                badge_bg = (12, 42, 16) if is_good else ((15, 35, 75) if is_moderate else (15, 15, 75))
-                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                cv2.rectangle(disp, (badge_x - 6, badge_y - 18), (badge_x + tw + 8, badge_y + 4), badge_bg, -1)
-                cv2.rectangle(disp, (badge_x - 6, badge_y - 18), (badge_x + tw + 8, badge_y + 4), proj_color, 1 if is_good else 2)
-                cv2.putText(disp, label, (badge_x, badge_y - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-
-            # 左下方悬浮模式胶囊提示条
-            mode_badge = "[ 视图: 2D角点残差矢量模式 (按 T 键切换 3D 双棱柱) ]"
-            (mw, mh), _ = cv2.getTextSize(mode_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
-            cv2.rectangle(disp, (14, h - 35), (14 + mw + 16, h - 8), (18, 22, 30), -1)
-            cv2.rectangle(disp, (14, h - 35), (14 + mw + 16, h - 8), (0, 200, 255), 1)
-            cv2.putText(disp, mode_badge, (22, h - 17), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 230, 255), 1, cv2.LINE_AA)
-
-        if out_path is not None:
-            cv2.imwrite(out_path, disp)
-
-        return disp
+        """渲染单帧 LOO 盲测可视化图 (委托给 VerificationVisualizer)"""
+        return self.visualizer.render_verification_frame(
+            img_path=img_path,
+            frame_results=frame_results,
+            view_mode_3d=self.view_mode_3d,
+            manifest_data=self.manifest_data,
+            solve_single_tag_pnp_func=self._solve_single_tag_pnp,
+            out_path=out_path
+        )
 
     def _aggregate_statistics(self, all_results: List[Dict]) -> Dict:
-        """汇总 Per-Tag / Per-Frame 统计，识别系统性偏差与建议回审帧"""
-        if not all_results:
-            return {"pass": False, "message": "无有效盲测结果", "per_tag": {}, "per_frame": {}, "flagged_frames": [], "flagged_tags": []}
-
-        # Per-Tag 统计
-        tag_errors = {}
-        for r in all_results:
-            tid = r["blind_tag_id"]
-            if tid not in tag_errors:
-                tag_errors[tid] = {"err_px": [], "err_mm": []}
-            tag_errors[tid]["err_px"].append(r["err_px"])
-            tag_errors[tid]["err_mm"].append(r["err_mm"])
-
-        per_tag = {}
-        for tid, data in sorted(tag_errors.items()):
-            arr_px = np.array(data["err_px"])
-            arr_mm = np.array(data["err_mm"])
-            per_tag[tid] = {
-                "count": len(arr_px),
-                "median_px": float(np.median(arr_px)),
-                "mean_px": float(np.mean(arr_px)),
-                "max_px": float(np.max(arr_px)),
-                "std_px": float(np.std(arr_px)),
-                "median_mm": float(np.median(arr_mm)),
-                "mean_mm": float(np.mean(arr_mm)),
-                "max_mm": float(np.max(arr_mm)),
-            }
-
-        # Per-Frame 统计
-        frame_errors = {}
-        for r in all_results:
-            fname = r["image"]
-            if fname not in frame_errors:
-                frame_errors[fname] = {"err_px": [], "tags": []}
-            frame_errors[fname]["err_px"].append(r["err_px"])
-            frame_errors[fname]["tags"].append(r["blind_tag_id"])
-
-        per_frame = {}
-        for fname, data in sorted(frame_errors.items()):
-            arr = np.array(data["err_px"])
-            per_frame[fname] = {
-                "tag_count": len(arr),
-                "mean_px": float(np.mean(arr)),
-                "max_px": float(np.max(arr)),
-                "tags_tested": sorted(data["tags"])
-            }
-
-        # 全局统计
-        all_px = np.array([r["err_px"] for r in all_results])
-        all_mm = np.array([r["err_mm"] for r in all_results])
-        global_median_px = float(np.median(all_px))
-        global_median_mm = float(np.median(all_mm))
-        global_mean_px = float(np.mean(all_px))
-        global_std_px = float(np.std(all_px))
-
-        # 系统性偏差检测: Tag 中位误差 > 全局中位数 × 2
-        flagged_tags = []
-        for tid, stats in per_tag.items():
-            if stats["median_px"] > max(2.5, global_median_px * 2.0):
-                flagged_tags.append(tid)
-
-        # 坏帧检测 (基于稳健统计门限)
-        mad_px = float(np.median(np.abs(all_px - global_median_px)))
-        outlier_thresh = max(5.0, min(15.0, global_median_px + 3.0 * (1.4826 * mad_px if mad_px > 0.1 else 1.0)))
-        flagged_frames = []
-        for fname, stats in per_frame.items():
-            if stats["mean_px"] > outlier_thresh or stats["max_px"] > 25.0:
-                flagged_frames.append(fname)
-
-        # 综合放行评级 (Pass / Acceptable / Fail)
-        if global_median_px <= 1.5 and global_median_mm <= 1.0 and len(flagged_tags) == 0 and len(flagged_frames) == 0:
-            grade = "PASS"
-            grade_label = "合格 (PASS) — 精度极佳，允许直接上线"
-        elif global_median_px <= 3.0 and global_median_mm <= 2.5 and len(flagged_tags) <= 1:
-            grade = "ACCEPTABLE"
-            grade_label = "基本合格 (ACCEPTABLE) — 可准入 AR 验证"
-        else:
-            grade = "FAIL"
-            grade_label = "不合格 (FAIL) — 建议回审后重新 BA 求解"
-
-        return {
-            "pass": grade in ("PASS", "ACCEPTABLE"),
-            "grade": grade,
-            "grade_label": grade_label,
-            "total_tests": len(all_results),
-            "global_median_px": global_median_px,
-            "global_mean_px": global_mean_px,
-            "global_std_px": global_std_px,
-            "global_median_mm": global_median_mm,
-            "global_mean_mm": float(np.mean(all_mm)),
-            "outlier_threshold_px": outlier_thresh,
-            "per_tag": per_tag,
-            "per_frame": per_frame,
-            "flagged_tags": flagged_tags,
-            "flagged_frames": flagged_frames,
-        }
+        """汇总 Per-Tag / Per-Frame 统计 (委托给 VerificationReporter)"""
+        return VerificationReporter.aggregate_statistics(all_results)
 
     def _export_markdown_report(self, stats: Dict, all_results: List[Dict]) -> str:
-        """输出完整 Markdown 精度体检报告"""
-        report_path = os.path.join(VERIFICATION_DIR, "offline_verification_report.md")
-        grade = stats.get("grade", "N/A")
-        grade_label = stats.get("grade_label", "N/A")
-        grade_emoji = "[PASS]" if grade == "PASS" else ("[WARN]" if grade == "ACCEPTABLE" else "[FAIL]")
-
-        status_median_px = "[PASS]" if stats['global_median_px'] <= 1.5 else ("[WARN]" if stats['global_median_px'] <= 3.0 else "[FAIL]")
-        status_median_mm = "[PASS]" if stats['global_median_mm'] <= 1.0 else ("[WARN]" if stats['global_median_mm'] <= 2.5 else "[FAIL]")
-        status_flagged_tags = "[PASS]" if len(stats['flagged_tags']) == 0 else ("[WARN]" if len(stats['flagged_tags']) <= 2 else "[FAIL]")
-        status_flagged_frames = "[PASS]" if len(stats['flagged_frames']) == 0 else "[WARN]"
-
-        source_label = "已审核观测清单 (tag_observations.yaml)" if self.actual_source == "manifest" else "原始采图重新检测 (端到端独立复检)"
-
-        lines = [
-            "# 离线标定精度体检与 Leave-One-Out 盲测批量验证报告",
-            "",
-            f"> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
-            f"> 地图文件: `{self.map_path}`  ",
-            f"> 采图目录: `{self.image_dir}`  ",
-            f"> 验证数据源: **{source_label}**  ",
-            f"> 评审结论: **{grade_emoji} {grade_label}**",
-            "",
-            "---",
-            "",
-            "## 1. 全局核心指标",
-            "",
-            "| 指标 | 测量值 | PASS 门限 | ACCEPTABLE 门限 | 状态 |",
-            "| :--- | :--- | :--- | :--- | :---: |",
-            f"| **LOO 盲测中位像元误差** | **{stats['global_median_px']:.3f} px** | ≤ 1.50 px | ≤ 3.00 px | {status_median_px} |",
-            f"| **LOO 盲测中位空间偏差** | **{stats['global_median_mm']:.3f} mm** | ≤ 1.00 mm | ≤ 2.50 mm | {status_median_mm} |",
-            f"| **LOO 盲测均值像元误差** | {stats['global_mean_px']:.3f} px | — | — | — |",
-            f"| **系统性偏差嫌疑 Tag 数** | {len(stats['flagged_tags'])} 个 | 0 个 | ≤ 2 个 | {status_flagged_tags} |",
-            f"| **建议回审帧数** | {len(stats['flagged_frames'])} 帧 | 0 帧 | — | {status_flagged_frames} |",
-            f"| **盲测执行总数** | {stats['total_tests']} 次 | — | — | — |",
-            "",
-            "## 2. Per-Tag 盲测精度统计",
-            "",
-            "| Tag ID | 盲测次数 | 中位误差 (px) | 均值 (px) | 最大 (px) | 标准差 (px) | 中位空间 (mm) | 状态 |",
-            "| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
-        ]
-        for tid, s in sorted(stats["per_tag"].items()):
-            is_flagged = tid in stats["flagged_tags"]
-            status = "[FAIL] 偏差嫌疑" if is_flagged else ("[PASS]" if s["median_px"] <= 1.5 else "[WARN]")
-            lines.append(
-                f"| Tag #{tid:2d} | {s['count']:3d} | {s['median_px']:6.2f} | {s['mean_px']:6.2f} | "
-                f"{s['max_px']:6.2f} | {s['std_px']:5.2f} | {s['median_mm']:6.2f} | {status} |"
-            )
-
-        # Per-Frame 统计
-        lines.extend([
-            "",
-            "## 3. Per-Frame 盲测精度统计",
-            "",
-            "| 图像文件 | 盲测 Tag 数 | 帧均误差 (px) | 帧最大误差 (px) | 状态 |",
-            "| :--- | :---: | :---: | :---: | :---: |",
-        ])
-        for fname, s in sorted(stats["per_frame"].items()):
-            is_flagged = fname in stats["flagged_frames"]
-            status = "[FAIL] 建议回审" if is_flagged else ("[PASS]" if s["mean_px"] <= 1.5 else "[WARN]")
-            lines.append(
-                f"| {fname} | {s['tag_count']:2d} | {s['mean_px']:6.2f} | {s['max_px']:6.2f} | {status} |"
-            )
-
-        # 系统性偏差 Tag 详情
-        if stats["flagged_tags"]:
-            lines.extend([
-                "",
-                "## 4. 系统性偏差嫌疑标靶",
-                "",
-                "> [!WARNING]",
-                f"> 以下 {len(stats['flagged_tags'])} 个标靶的盲测中位误差显著高于全局中位数的 2 倍 ({stats['global_median_px']:.2f} px × 2)，",
-                "> 可能是 BA 地图中该 Tag 的空间坐标不够准确，建议检查相关观测样本并回审。",
-                "",
-            ])
-            for tid in stats["flagged_tags"]:
-                s = stats["per_tag"][tid]
-                lines.append(f"- **Tag #{tid}**: 中位 {s['median_px']:.2f} px / {s['median_mm']:.2f} mm (测试 {s['count']} 次)")
-
-        # 建议回审帧
-        if stats["flagged_frames"]:
-            lines.extend([
-                "",
-                "## 5. 建议回审帧",
-                "",
-                "> [!WARNING]",
-                f"> 以下帧的平均盲测误差超过异常阈值 ({stats['outlier_threshold_px']:.2f} px)，建议在审核画板中检查并考虑剔除。",
-                "",
-            ])
-            for fname in stats["flagged_frames"]:
-                s = stats["per_frame"][fname]
-                lines.append(f"- **{fname}**: 帧均 {s['mean_px']:.2f} px (最大: {s['max_px']:.2f} px)")
-
-        # 可视化指引
-        lines.extend([
-            "",
-            "## 6. 逐帧 LOO 盲测可视化图",
-            "",
-            f"分析图像已输出至: `{self.vis_dir}`",
-            "",
-            "- 浅灰虚线轮廓 = 物理实测角点位置",
-            "- 彩色实线轮廓 = LOO 盲测反推投影位置 (绿色=误差达标, 橙色=误差偏高)",
-            "- 彩色箭头 = 逐角点残差矢量 (已放大 15 倍)",
-            "",
-            "---",
-            f"*报告由 `tag_offline_verifier.py` 自动生成*",
-        ])
-
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-
-        print(f"[OK] 离线精度体检报告已生成: {report_path}")
-        return report_path
+        """输出完整 Markdown 精度体检报告 (委托给 VerificationReporter)"""
+        return VerificationReporter.export_markdown_report(
+            stats=stats,
+            all_results=all_results,
+            map_path=self.map_path,
+            image_dir=self.image_dir,
+            actual_source=self.actual_source,
+            vis_dir=self.vis_dir
+        )
 
     def recompute_all(self):
         """重新扫描全部图像并重新计算全部盲测指标与统计"""

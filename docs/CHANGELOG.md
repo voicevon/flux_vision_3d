@@ -4,6 +4,54 @@
 
 ---
 
+## [2026-09-13] - AprilTag 建图与平差求解系统面向对象单一职责重构 (TagMapBuilder 解耦)
+
+### 1. 重构背景与执行铁律
+- **痛点**：原 `TagMapBuilder` 为 1730 行的巨型“上帝类”，杂糅了数据清单序列化/反序列化、图论共视拓扑分析、Ceres/SciPy 非线性平差优化、几何尺度对齐与交互控制台；
+- **重构铁律（严格恪守）**：
+  1. 绝对禁止一次性推倒重写，坚持“函数级微步推进”；
+  2. 高频编译与持续回归验证（每抽离一个类/函数立刻执行单元测试验证）；
+  3. 委托模式（Delegation Pattern）确保 100% 向前兼容。
+
+### 2. 领域模型沉淀与模块解耦
+- **共视拓扑分析器 (`src/calibration/covisibility_graph.py`)**：
+  - 独立承接多视角标靶共视网络建模、BFS 连通分量分析、孤岛/割点断网拦截与单图支撑关键桥梁 (Critical Bridges) 深度诊断；
+- **清单与地图数据仓储 (`src/calibration/manifest_repository.py`)**：
+  - 仓储模式管理 `tag_observations.yaml` 与 `tags_map.yaml`，承接历史人工审核决策继承、磁盘图像增量同步自愈与物理异常前置拦截；
+- **BA 平差优化求解器 (`src/calibration/ba_optimizer.py`)**：
+  - 承接两阶段非线性最小二乘平差 (Cauchy 鲁棒核 + MAD 粗差清洗 + 微步精细收敛)、双标靶物理基线尺度对齐 (Metric Baseline Gauge)、SCARA 世界系锚定对齐与雅可比协方差不确定度估计；
+- **轻量装配控制器 (`tools/calibration/tag_map_builder.py`)**：
+  - 代码量从 **1730 行剧烈瘦身至 730 行（瘦身达 58%）**，蜕变为干净优雅的流水线装配调度器。
+
+### 3. 测试覆盖与质量保障
+- 新增三套完整专业单元测试：
+  - `tests/test_covisibility_graph.py` (连通性、孤岛断网、关键桥梁)；
+  - `tests/test_manifest_repository.py` (地图持久化、多维度规则过滤)；
+  - `tests/test_ba_optimizer.py` (可逆矩阵变换、尺度基线对齐、SCARA 坐标系对齐)；
+- 全量 39 项单元测试与端到端测试 100% 绿灯全部通过。
+
+---
+
+## [2026-09-13] - 离线精度体检系统面向对象单一职责架构重构 (God Class 解耦)
+
+### 1. 重构背景与核心原则
+- **痛点**：原 `TagOfflineVerifier` 膨胀为 1636 行的大型“上帝类”，混杂了数据加载、三维视觉 PnP 算法、3D/2D 渲染、Markdown 报告生成与 GUI 消息循环；
+- **重构铁律（严格恪守）**：
+  1. 严禁大段推倒重写，采取“函数级微步推进”；
+  2. 高频持续编译与自动化测试（每抽离一个类/函数立即跑通全量测试）；
+  3. 接口 100% 向前兼容（委托模式保持签名无缝衔接）。
+
+### 2. 重构成果与领域模型拆解
+- **报告分析器 (`src/calibration/verification_reporter.py`)**：
+  - 独立承接 Per-Tag/Per-Frame 稳健统计、MAD 异常识别与 Markdown 报告持久化；
+- **纯三维视觉计算引擎 (`src/calibration/offline_engine.py`)**：
+  - 纯几何算法内核，承接超定 PnP 位姿解算、正深度校验、IPPE_SQUARE 单靶外参求解与 LOO 盲测循环，彻底断开 GUI 依赖；
+- **视觉呈现管线 (`src/calibration/verification_visualizer.py`)**：
+  - 承接 3D 双四棱柱虚实位姿对比立体渲染与 2D 角点残差矢量放大渲染；
+- **装配工作台 (`tools/calibration/tag_offline_verifier.py`)**：
+  - 从 **1636 行缩减至 890 行（瘦身近 46%）**，蜕变为高内聚、易维护的轻量级装配控制器。
+- **质量保障**：新增 `test_verification_reporter.py`，全量 31 项单元测试与无头批处理端到端验证 100% 绿灯。
+
 ## [2026-09-13] - 终极根治体检台鼠标点击退出无响应缺陷与“顶部+底部双退出引擎”部署
 
 ### 1. 缺陷深层机理定位

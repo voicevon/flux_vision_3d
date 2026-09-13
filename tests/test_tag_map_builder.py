@@ -253,6 +253,7 @@ def test_tag_manifest_reviewer_logic():
         yaml.dump(manifest_data, f)
 
     reviewer = TagManifestReviewer(manifest_path=manifest_path)
+    reviewer.viewport = None
     assert len(reviewer.image_keys) == 1
     assert reviewer.raw_manifest["images"]["test_img_01.png"]["observations"][0]["keep"] is True
 
@@ -263,7 +264,7 @@ def test_tag_manifest_reviewer_logic():
     # 2. 模拟鼠标点击 Tag 1 内部 (150, 150) -> 命中，keep 翻转为 False
     reviewer.on_mouse_click(cv2.EVENT_LBUTTONDOWN, 150, 150, 0, None)
     assert reviewer.raw_manifest["images"]["test_img_01.png"]["observations"][0]["keep"] is False
-    assert reviewer.has_unsaved_changes is True
+    assert reviewer.has_modified_manifest is True
 
     # 3. 模拟再次点击 Tag 1 内部 (150, 150) -> 命中，keep 翻转回 True
     reviewer.on_mouse_click(cv2.EVENT_LBUTTONDOWN, 150, 150, 0, None)
@@ -284,7 +285,7 @@ def test_tag_manifest_reviewer_logic():
     # 6. 测试整帧一键剔除与启用 (FRAME_TOGGLE) 按钮与逻辑
     reviewer.toggle_current_frame_enabled()
     assert reviewer.frame_enabled_map["test_img_01.png"] is False
-    assert reviewer.has_unsaved_changes is True
+    assert reviewer.has_modified_manifest is True
     reviewer.save_changes()
 
     # 验证保存到文件的 enabled 字段
