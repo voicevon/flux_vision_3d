@@ -174,10 +174,12 @@ def print_calibration_banner(status):
     print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (1080P @ 8fps 丝滑轻量采图，空格一键连拍)")
     print("")
     print(f"{C_BOLD} [ 三、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
+    print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 旗舰一站式集成工作台{C_RESET}")
     print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (16级阈值网格+双尺度CLAHE+0.01px亚像素精修)")
     print(f"   {C_GREEN}[4]{C_RESET} 标靶观测样本交互审核画板              (单靶/整帧剔除，拓扑连通把关) {C_GRAY}[快捷键: O]{C_RESET}")
     print(f"   {C_GREEN}[5]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，全局误差优化) {C_GRAY}[快捷键: M]{C_RESET}")
     print(f"   {C_GREEN}[6]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (全量留一盲测批处理，残差矢量，门限放行) {C_GRAY}[快捷键: P]{C_RESET}")
+
     print("")
     print(f"{C_BOLD} [ 四、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
     print(f"   {C_GREEN}[7]{C_RESET} 标定精度在线 AR 综合实时验证系统      (相机实时取流，3D轴/棱柱虚实融合，静态位姿锁定)")
@@ -568,15 +570,27 @@ def run_offline_verifier():
     pause_prompt()
 
 
+def run_offline_studio():
+    """启动 AprilTag 离线标定综合工作站 (Tag Offline Studio)"""
+    print(f"\n{C_CYAN}[旗舰工作站]{C_RESET} 正在启动 AprilTag 离线标定综合工作站 (tag_offline_studio.py)...")
+    res = subprocess.run([sys.executable, "tools/calibration/tag_offline_studio.py"])
+    if res.returncode != 0:
+        print(f"\n{C_RED}[异常退出] 离线综合工作站异常退出 (退出码: {res.returncode}){C_RESET}")
+        pause_prompt()
+
+
 def submenu_calibration_suite():
     """二级子菜单：手眼标定与 AprilTag 空间建图专区"""
     while True:
         status = check_env_status()
         print_calibration_banner(status)
-        choice = input(f"请输入工序编号 [1-8, W, V, D, C, M, O, P, B]: ").strip().upper()
+        choice = input(f"请输入工序编号 [S, 1-8, W, V, D, C, M, O, P, B]: ").strip().upper()
         
-        if choice == '1':
+        if choice in ('S', 'STUDIO'):
+            run_offline_studio()
+        elif choice == '1':
             run_generate_tags()
+
         elif choice == '2':
             run_tag_capture_wizard()
         elif choice == '3':

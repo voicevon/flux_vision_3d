@@ -262,7 +262,18 @@ class OfflineVerificationEngine:
 
         return {"rvec": best_rvec, "tvec": best_tvec, "rmse": best_rmse}
 
+    def solve_pnp(self, obj_flat: np.ndarray, img_flat: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], bool]:
+        """标准两阶段 SQPNP -> ITERATIVE 稳健 PnP 求解"""
+        try:
+            succ, rvec, tvec = cv2.solvePnP(obj_flat, img_flat, self.camera_matrix, self.dist_coeffs, flags=cv2.SOLVEPNP_SQPNP)
+            if succ:
+                succ, rvec, tvec = cv2.solvePnP(obj_flat, img_flat, self.camera_matrix, self.dist_coeffs, rvec=rvec, tvec=tvec, useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
+            return rvec, tvec, succ
+        except Exception:
+            return None, None, False
+
     def solve_single_tag_pnp(self, corners_2d: np.ndarray) -> Tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
+
         """根据单帧检出的 4 个 2D 角点解算单标靶实测相机外参位姿 (优先 IPPE_SQUARE，兜底 ITERATIVE)"""
         try:
             c = corners_2d.reshape((4, 2)).astype(np.float64)
@@ -403,3 +414,7 @@ class OfflineVerificationEngine:
             })
 
         return results
+
+
+# 别名导出 (向前向后兼容)
+OfflineEngine = OfflineVerificationEngine
