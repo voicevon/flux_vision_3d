@@ -5,10 +5,10 @@ AprilTag 标定精度与 3D 坐标系在线 AR 综合验证系统 (Integrated AR
 ======================================================================================
 核心职责与专业特性：
   1. 实时动态 (LIVE) 与 静态滤波锁定 (STATIC LOCKED) 一键乒乓切换：
-     - 模式 A【⚡ 实时动态 (LIVE)】：
+     - 模式 A【实时动态 (LIVE)】：
        * 强调即时巡检、高帧率动态响应、零延迟所见即所得；
        * 单帧亚像素即时 PnP 求解，直观展现真实传感器与环境动态。
-     - 模式 B【🎯 静态滤波锁定 (STATIC LOCKED)】：
+     - 模式 B【静态滤波锁定 (STATIC LOCKED)】：
        * 针对工业现场“相机与标靶短时间内相对静止”的客观物理先验；
        * 【两阶段批处理基准凝固】：在静止状态下采足固定批次帧数（默认 30 帧或 60 帧）；
        * 采足后对视野内每个 Tag 的 4 角点集中进行【去极值均值滤波】，消除 CMOS 散粒噪声；
@@ -62,6 +62,17 @@ except ImportError:
     force_window_focus = None
 
 try:
+    from src.utils.viewport_manager import (
+        ViewportManager, get_safe_screen_size,
+        draw_styled_button, draw_segmented_toggle
+    )
+except ImportError:
+    ViewportManager = None
+    get_safe_screen_size = None
+    draw_styled_button = None
+    draw_segmented_toggle = None
+
+try:
     import pyrealsense2 as rs
     HAVE_REALSENSE = True
 except ImportError:
@@ -75,6 +86,17 @@ class TagCalibrationVerifier:
         self.report_path = report_path
         self.tags_map = None
         self.marker_size_mm = 50.0
+
+        # 自适应屏幕工作区与分层视口管理器 (彻底解决超屏与底部按钮被任务栏遮挡问题)
+        if get_safe_screen_size:
+            self.win_w, self.win_h = get_safe_screen_size(preferred_w=1280, preferred_h=720)
+        else:
+            self.win_w, self.win_h = 1280, 720
+
+        if ViewportManager:
+            self.viewport = ViewportManager(win_w=self.win_w, win_h=self.win_h, top_bar_h=44, bottom_bar_h=52)
+        else:
+            self.viewport = None
 
         # 确保专属验证输出目录存在
         os.makedirs(VERIFICATION_DIR, exist_ok=True)
@@ -250,7 +272,7 @@ class TagCalibrationVerifier:
                 "# AprilTag 全局 BA 平差精度诊断终端",
                 "--------------------------------------------------",
                 "尚未执行过 BA 全局平差求解，无历史报告。",
-                "提示: 请直接点击底部 [⚡ 求解BA (B)] 按钮一键启动求解！"
+                "提示: 请直接点击底部 [求解BA (B)] 按钮一键启动求解！"
             ]
 
     def toggle_hud_terminal(self):
@@ -265,13 +287,13 @@ class TagCalibrationVerifier:
     def start_async_bundle_adjustment(self):
         """启动后台线程异步求解全局 BA 平差优化，前台画面保持极速流畅"""
         if self.is_ba_running:
-            self.set_toast("⚡ BA 全局平差优化正在进行中，请稍候...")
+            self.set_toast("BA 全局平差优化正在进行中，请稍候...")
             return
 
         import threading
         self.is_ba_running = True
         self.ba_result_queue = None
-        self.set_toast("⚡ 正在执行 BA 平差优化计算 (请稍候)...")
+        self.set_toast("正在执行 BA 平差优化计算 (请稍候)...")
         print("\n" + "=" * 70)
         print("  [*] [ASYNC-BA] 收到平差求解指令，正在启动后台优化线程...")
         print("=" * 70)
@@ -325,7 +347,7 @@ class TagCalibrationVerifier:
         title_h = 34
         cv2.rectangle(disp_frame, (tx1, ty1), (tx2, ty1 + title_h), (25, 45, 75), -1)
         cv2.line(disp_frame, (tx1, ty1 + title_h), (tx2, ty1 + title_h), (0, 200, 240), 1)
-        cv2.putText(disp_frame, "【📋 BA 全局平差精度诊断与空间位姿终端】", 
+        cv2.putText(disp_frame, "【BA 全局平差精度诊断与空间位姿终端】", 
                     (tx1 + 12, ty1 + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
 
         # 标题栏右上角关闭按钮 [X]
@@ -464,13 +486,13 @@ class TagCalibrationVerifier:
         """核心乒乓开关切换：实时动态 (LIVE) ⇋ 静态滤波锁定 (STATIC LOCKED)"""
         self.live_mode = not self.live_mode
         if self.live_mode:
-            self.set_toast("已切换为: ⚡ 实时动态模式 (零延迟即时巡检)")
+            self.set_toast("已切换为: 实时动态模式 (零延迟即时巡检)")
         else:
             if self.locked_pose is None:
                 # 若尚未锁定，自动触发一次批次采样锁定
                 self.start_batch_collection()
             else:
-                self.set_toast("已切换为: 🎯 静态滤波锁定模式 (位姿已绝对锁定)")
+                self.set_toast("已切换为: 静态滤波锁定模式 (位姿已绝对锁定)")
 
     def cycle_batch_target(self):
         """切换批次采样帧数 (30F / 60F)"""
@@ -744,7 +766,7 @@ class TagCalibrationVerifier:
 
         cv2.putText(img, f"BLIND Tag #{tag_id}", (bx + 8, by + 14), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(img, f"Δ: {err_px:.2f}px ({err_mm:.2f}mm)", (bx + 8, by + 28), 
+        cv2.putText(img, f"Err: {err_px:.2f}px ({err_mm:.2f}mm)", (bx + 8, by + 28), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, border_color, 1, cv2.LINE_AA)
 
     def export_report(self):
@@ -800,6 +822,8 @@ class TagCalibrationVerifier:
                         self.export_report()
                     elif btn_id == "OPEN_REVIEWER":
                         self.open_reviewer()
+                    elif btn_id == "OPEN_OFFLINE_VERIFIER":
+                        self.open_offline_verifier()
                     elif btn_id == "CLEAR_BLIND":
                         self.blind_target_tag_id = None
                         self.set_toast("已清除盲测，恢复全量解算 (ALL)")
@@ -818,16 +842,22 @@ class TagCalibrationVerifier:
                                 self.set_toast(f"已锁定留一盲测目标: Tag #{btn_id} (由其余标靶反推)")
                     return
 
-            # 2. 检查是否直接点击了画面中的标靶轮廓
-            for tid, poly in self.current_frame_tags_polys.items():
-                if cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0:
-                    if self.blind_target_tag_id == tid:
-                        self.blind_target_tag_id = None
-                        self.set_toast(f"已取消 Tag #{tid} 盲测，恢复全量解算")
-                    else:
-                        self.blind_target_tag_id = tid
-                        self.set_toast(f"已选定 Tag #{tid} 为盲测验证目标 (PnP中已主动屏蔽)")
-                    return
+            # 2. 检查是否直接点击了画面中的标靶轮廓 (映射回原图坐标)
+            if self.viewport:
+                img_x, img_y = self.viewport.win_to_img_coords(x, y)
+            else:
+                img_x, img_y = x, y
+
+            if img_x is not None:
+                for tid, poly in self.current_frame_tags_polys.items():
+                    if cv2.pointPolygonTest(poly, (float(img_x), float(img_y)), False) >= 0:
+                        if self.blind_target_tag_id == tid:
+                            self.blind_target_tag_id = None
+                            self.set_toast(f"已取消 Tag #{tid} 盲测，恢复全量解算")
+                        else:
+                            self.blind_target_tag_id = tid
+                            self.set_toast(f"已选定 Tag #{tid} 为盲测验证目标 (PnP中已主动屏蔽)")
+                        return
 
     def open_reviewer(self):
         """唤起人工审核画板 (Reviewer)，支持带入当前盲测 Tag 靶向直达，关闭后自动触发 BA 求解与热重载"""
@@ -851,8 +881,8 @@ class TagCalibrationVerifier:
             if force_window_focus:
                 force_window_focus(window_name)
 
-            # 检查画板是否请求了自动重新平差验证
-            if reviewer.trigger_verify_and_ba or reviewer.has_unsaved_changes:
+            # 检查画板是否请求了自动重新平差验证或发生了任何修改
+            if reviewer.trigger_verify_and_ba or getattr(reviewer, "has_modified_manifest", False) or reviewer.has_unsaved_changes:
                 self.set_toast("已载入画板最新修改，正在自动启动 BA 全局平差优化...")
                 self.start_async_bundle_adjustment()
             else:
@@ -861,10 +891,47 @@ class TagCalibrationVerifier:
             self.set_toast(f"呼出审核画板失败: {e}")
             print(f"[ERROR] 唤起审核画板异常: {e}")
 
+    def open_offline_verifier(self):
+        """唤起离线标定精度体检工作台 (TagOfflineVerifier)，完成后热重载地图并恢复 AR 验证"""
+        from tools.calibration.tag_offline_verifier import TagOfflineVerifier
+        self.set_toast("正在进入离线标定体检工作台...")
+        print("\n[*] [HANDSHAKE] 正在呼出离线标定精度体检工作台...")
+
+        try:
+            # 临时销毁 AR 窗口，避免 OpenCV 全局按键广播冲突
+            cv2.destroyAllWindows()
+            verifier = TagOfflineVerifier(
+                map_path=self.map_path,
+                image_dir=CALIB_IMAGES_DIR,
+                marker_size_mm=self.marker_size_mm,
+                source="auto",
+                caller_ar_instance=self
+            )
+            verifier.run_gui()
+
+            # 从体检工作台返回后，地图可能在体检中执行了 BA 平差，执行热重载
+            self._load_tags_map()
+
+            # 重建 AR 验证器窗口并重夺焦点
+            window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(window_name, self.win_w, self.win_h)
+            cv2.setMouseCallback(window_name, self._on_mouse)
+            if force_window_focus:
+                force_window_focus(window_name)
+            self.set_toast("已从离线体检工作台返回 AR 验证器 (地图已热重载)")
+        except Exception as e:
+            self.set_toast(f"呼出离线体检失败: {e}")
+            print(f"[ERROR] 唤起离线体检工作台异常: {e}")
+            window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(window_name, self.win_w, self.win_h)
+            cv2.setMouseCallback(window_name, self._on_mouse)
+
     def run(self):
         window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 1280, 720)
+        cv2.resizeWindow(window_name, self.win_w, self.win_h)
         cv2.setMouseCallback(window_name, self._on_mouse)
 
         print("\n" + "=" * 80)
@@ -874,17 +941,18 @@ class TagCalibrationVerifier:
         print(f" [相机内参绑定] : fx={self.camera_matrix[0,0]:.1f}, fy={self.camera_matrix[1,1]:.1f}, cx={self.camera_matrix[0,2]:.1f}")
         print(f" [地图已知标靶] : {self.mapped_tag_ids}")
         print(" [核心功能特性] :")
-        print("   - 【乒乓开关】[Tab/M] 在【⚡ 实时动态 (LIVE)】与【🎯 静态滤波锁定 (STATIC LOCKED)】之间一键切换；")
+        print("   - 【乒乓开关】[Tab/M] 在【实时动态 (LIVE)】与【静态滤波锁定 (STATIC LOCKED)】之间一键切换；")
         print("   - 【基准凝固】在静态模式下采足 30/60 帧后一次性去噪并绝对锁死位姿，抖动严格 0.00mm；")
         print("   - 【留一盲测】在顶栏直接点击 Tag 编号，由其余标靶反推 3D 棱柱并评估残差；")
         print("   - 【一键平差】在 Verify 中直接按 [B] 键即可异步执行全局 BA 优化，地图自动热重载；")
         print("   - 【HUD 终端】按 [H] 键随时展开/折叠黑晶高科技诊断报告控制台，U/J 滚动翻页。")
         print(" [快捷键指南]   :")
-        print("   - [O]             : 【🎨 呼出人工审核画板，带入当前盲测 Tag 定向排查】；")
-        print("   - [B]             : 【⚡ 一键异步求解 BA 全局平差并热更新地图】；")
-        print("   - [H]             : 【📋 展开/折叠 HUD 诊断报告控制台终端】；")
+        print("   - [O]             : 【呼出人工审核画板，带入当前盲测 Tag 定向排查】；")
+        print("   - [P]             : 【呼出离线标定体检工作台，全局指标排查与闭环重算】；")
+        print("   - [B]             : 【一键异步求解 BA 全局平差并热更新地图】；")
+        print("   - [H]             : 【展开/折叠 HUD 诊断报告控制台终端】；")
         print("   - [U] / [J]       : HUD 终端向上 / 向下滚动翻页浏览；")
-        print("   - [Tab] / [M]     : 乒乓切换模式 (⚡ 实时动态 ⇋ 🎯 静态锁定)；")
+        print("   - [Tab] / [M]     : 乒乓切换模式 (实时动态 <-> 静态锁定)；")
         print("   - [Space] (空格键) : 静态模式下【重新采样并锁定位姿】；实时模式下抓拍单帧；")
         print("   - [W]             : 切换采样批次深度 (30F / 60F)；")
         print("   - [T]             : 顺序轮换留一盲测目标 (None -> 18 -> 19 -> 20...)；")
@@ -894,9 +962,13 @@ class TagCalibrationVerifier:
         print("=" * 80 + "\n")
 
         frame_idx = 0
-        self.is_running = True
         try:
             while self.is_running:
+                # 实时动态感知用户拖拽 Resize 或点击最大化窗口后的实际物理尺寸并自适应重排
+                if self.viewport and self.viewport.sync_window_size(window_name):
+                    self.win_w = self.viewport.win_w
+                    self.win_h = self.viewport.win_h
+
                 raw_frame = self.get_frame(frame_idx)
                 frame_idx += 1
                 disp_frame = raw_frame.copy()
@@ -1083,65 +1155,76 @@ class TagCalibrationVerifier:
                                 self.render_evasive_blind_badge(disp_frame, combined_obstacles, 
                                                                self.blind_target_tag_id, mean_err_px, err_mm)
 
+                # ===================== 视口分层渲染：底图等比贴入视口 =====================
+                canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
+                if self.viewport:
+                    self.viewport.render_viewport(canvas, disp_frame)
+                    top_bar_h = self.viewport.top_bar_h
+                    bottom_bar_h = self.viewport.bottom_bar_h
+                else:
+                    top_bar_h = 42
+                    bottom_bar_h = 52
+                    canvas = cv2.resize(disp_frame, (self.win_w, self.win_h))
+
+                w_img, h_img = self.win_w, self.win_h
+
                 # ===================== 屏幕中心采样进度条 (若正在批次采样) =====================
                 if self.is_collecting_batch:
-                    p_w, p_h = 500, 80
+                    p_w, p_h = min(480, w_img - 60), 75
                     px1, py1 = (w_img - p_w) // 2, (h_img - p_h) // 2
-                    overlay_bar = disp_frame.copy()
+                    overlay_bar = canvas.copy()
                     cv2.rectangle(overlay_bar, (px1, py1), (px1 + p_w, py1 + p_h), (20, 20, 20), -1)
-                    cv2.addWeighted(overlay_bar, 0.85, disp_frame, 0.15, 0, disp_frame)
-                    cv2.rectangle(disp_frame, (px1, py1), (px1 + p_w, py1 + p_h), (0, 215, 255), 2)
+                    cv2.addWeighted(overlay_bar, 0.85, canvas, 0.15, 0, canvas)
+                    cv2.rectangle(canvas, (px1, py1), (px1 + p_w, py1 + p_h), (0, 215, 255), 2)
 
-                    cv2.putText(disp_frame, f"正在静止采样标靶角点 (请保持相机完全不动)", (px1 + 25, py1 + 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+                    cv2.putText(canvas, f"正在静止采样标靶角点 (请保持相机完全不动)", (px1 + 20, py1 + 28),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
 
                     # 进度条
-                    bar_len = p_w - 50
+                    bar_len = p_w - 40
                     prog = min(1.0, self.collected_batch_frames / max(1, self.batch_target_frames))
                     fill_w = int(bar_len * prog)
-                    cv2.rectangle(disp_frame, (px1 + 25, py1 + 45), (px1 + 25 + bar_len, py1 + 62), (60, 60, 60), -1)
-                    cv2.rectangle(disp_frame, (px1 + 25, py1 + 45), (px1 + 25 + fill_w, py1 + 62), (0, 200, 100), -1)
-                    cv2.putText(disp_frame, f"{self.collected_batch_frames}/{self.batch_target_frames}", (px1 + p_w - 90, py1 + 60),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+                    cv2.rectangle(canvas, (px1 + 20, py1 + 42), (px1 + 20 + bar_len, py1 + 58), (60, 60, 60), -1)
+                    cv2.rectangle(canvas, (px1 + 20, py1 + 42), (px1 + 20 + fill_w, py1 + 58), (0, 200, 100), -1)
+                    cv2.putText(canvas, f"{self.collected_batch_frames}/{self.batch_target_frames}", (px1 + p_w - 80, py1 + 55),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1, cv2.LINE_AA)
 
                 # ===================== UI 装饰与仪表盘 =====================
                 self.gui_buttons.clear()
 
-                # 1. 顶栏：留一盲测标靶切换按钮组
-                top_bar_h = 42
-                cv2.rectangle(disp_frame, (0, 0), (w_img, top_bar_h), (25, 25, 25), -1)
-                cv2.line(disp_frame, (0, top_bar_h), (w_img, top_bar_h), (60, 60, 60), 1)
-                cv2.putText(disp_frame, "留一盲测目标:", (12, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1, cv2.LINE_AA)
+                # 1. 顶栏：留一盲测标靶切换按钮组 (直接以窗口物理像素绘制，清晰饱满)
+                cv2.rectangle(canvas, (0, 0), (w_img, top_bar_h), (25, 25, 25), -1)
+                cv2.line(canvas, (0, top_bar_h), (w_img, top_bar_h), (60, 60, 60), 1)
+                cv2.putText(canvas, "留一盲测目标:", (12, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1, cv2.LINE_AA)
 
-                btn_x = 135
-                btn_y1, btn_y2 = 6, 36
+                btn_x = 125
+                btn_y1, btn_y2 = 6, top_bar_h - 6
                 # [ALL] 按钮
                 is_all_active = (self.blind_target_tag_id is None)
                 all_bg = (40, 160, 40) if is_all_active else (50, 50, 50)
-                all_w = 58
-                cv2.rectangle(disp_frame, (btn_x, btn_y1), (btn_x + all_w, btn_y2), all_bg, -1)
-                cv2.rectangle(disp_frame, (btn_x, btn_y1), (btn_x + all_w, btn_y2), (90, 90, 90), 1)
-                cv2.putText(disp_frame, "ALL", (btn_x + 14, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1 if not is_all_active else 2, cv2.LINE_AA)
+                all_w = 54
+                cv2.rectangle(canvas, (btn_x, btn_y1), (btn_x + all_w, btn_y2), all_bg, -1)
+                cv2.rectangle(canvas, (btn_x, btn_y1), (btn_x + all_w, btn_y2), (90, 90, 90), 1)
+                cv2.putText(canvas, "ALL", (btn_x + 12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1 if not is_all_active else 2, cv2.LINE_AA)
                 self.gui_buttons.append((None, (btn_x, btn_y1, btn_x + all_w, btn_y2), "ALL"))
-                btn_x += all_w + 8
+                btn_x += all_w + 6
 
                 # 各 Tag 按钮
                 for tid in self.mapped_tag_ids:
                     is_active = (self.blind_target_tag_id == tid)
                     bg = (180, 40, 160) if is_active else (45, 45, 45)
-                    tw = 72
-                    cv2.rectangle(disp_frame, (btn_x, btn_y1), (btn_x + tw, btn_y2), bg, -1)
+                    tw = 68
+                    cv2.rectangle(canvas, (btn_x, btn_y1), (btn_x + tw, btn_y2), bg, -1)
                     border_c = (255, 120, 240) if is_active else (75, 75, 75)
-                    cv2.rectangle(disp_frame, (btn_x, btn_y1), (btn_x + tw, btn_y2), border_c, 1)
-                    cv2.putText(disp_frame, f"Tag {tid}", (btn_x + 8, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2 if is_active else 1, cv2.LINE_AA)
+                    cv2.rectangle(canvas, (btn_x, btn_y1), (btn_x + tw, btn_y2), border_c, 1)
+                    cv2.putText(canvas, f"Tag {tid}", (btn_x + 7, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 2 if is_active else 1, cv2.LINE_AA)
                     self.gui_buttons.append((tid, (btn_x, btn_y1, btn_x + tw, btn_y2), f"Tag {tid}"))
-                    btn_x += tw + 6
+                    btn_x += tw + 5
 
-                # 2. 底部工具栏
-                bottom_bar_h = 48
+                # 2. 底部工具栏 (1:1 独立物理像素绘制，常驻在屏幕最底端，绝不掉出屏幕)
                 by1 = h_img - bottom_bar_h
-                cv2.rectangle(disp_frame, (0, by1), (w_img, h_img), (20, 20, 20), -1)
-                cv2.line(disp_frame, (0, by1), (w_img, by1), (65, 65, 65), 1)
+                cv2.rectangle(canvas, (0, by1), (w_img, h_img), (20, 20, 20), -1)
+                cv2.line(canvas, (0, by1), (w_img, by1), (65, 65, 65), 1)
 
                 # 异步 BA 求解完成通知检查与内存地图热重载
                 if self.ba_result_queue is not None:
@@ -1155,158 +1238,167 @@ class TagCalibrationVerifier:
 
                 # 若正在异步求解 BA，显示居中科技感卡片
                 if self.is_ba_running:
-                    p_w, p_h = 520, 80
+                    p_w, p_h = 500, 75
                     px1, py1 = (w_img - p_w) // 2, (h_img - p_h) // 2
-                    overlay_ba = disp_frame.copy()
+                    overlay_ba = canvas.copy()
                     cv2.rectangle(overlay_ba, (px1, py1), (px1 + p_w, py1 + p_h), (25, 20, 15), -1)
-                    cv2.addWeighted(overlay_ba, 0.88, disp_frame, 0.12, 0, disp_frame)
-                    cv2.rectangle(disp_frame, (px1, py1), (px1 + p_w, py1 + p_h), (0, 215, 255), 2)
-                    cv2.putText(disp_frame, "⚡ 正在执行 BA 全局平差优化计算...", (px1 + 25, py1 + 32),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 1, cv2.LINE_AA)
-                    cv2.putText(disp_frame, "两阶段稳健优化中，前台画面保持实时响应，请稍候...", (px1 + 25, py1 + 58),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 220, 255), 1, cv2.LINE_AA)
+                    cv2.addWeighted(overlay_ba, 0.88, canvas, 0.12, 0, canvas)
+                    cv2.rectangle(canvas, (px1, py1), (px1 + p_w, py1 + p_h), (0, 215, 255), 2)
+                    cv2.putText(canvas, "[BA] 正在执行 BA 全局平差优化计算...", (px1 + 20, py1 + 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+                    cv2.putText(canvas, "两阶段稳健优化中，前台画面保持实时响应，请稍候...", (px1 + 20, py1 + 54),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
 
-                bx = 12
-                # 按钮 1：【⚡ 一键重新求解 BA 平差】
-                ba_btn_w = 135
+                mx, my = self.mouse_pos
+                bx = 10
+                btn_y_top = by1 + 6
+                btn_y_bot = h_img - 6
+
+                # 按钮 1：【求解 BA】
+                ba_btn_w = 110
                 if self.is_ba_running:
-                    ba_bg = (0, 140, 240)
-                    ba_txt = "⚡ 求解中..."
+                    ba_style = "warning"
+                    ba_txt = "求解中..."
                 else:
-                    ba_bg = (40, 80, 145)
-                    ba_txt = "⚡ 求解BA (B)"
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + ba_btn_w, h_img - 6), ba_bg, -1)
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + ba_btn_w, h_img - 6), (0, 215, 255), 1)
-                cv2.putText(disp_frame, ba_txt, (bx + 12, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-                self.gui_buttons.append(("RUN_BA", (bx, by1 + 6, bx + ba_btn_w, h_img - 6), "RUN_BA"))
-                bx += ba_btn_w + 8
+                    ba_style = "primary"
+                    ba_txt = "求解BA (B)"
+                draw_styled_button(canvas, (bx, btn_y_top, bx + ba_btn_w, btn_y_bot), ba_txt,
+                                   style=ba_style, hover=(bx <= mx <= bx + ba_btn_w and btn_y_top <= my <= btn_y_bot))
+                self.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_btn_w, btn_y_bot), "RUN_BA"))
+                bx += ba_btn_w + 6
 
-                # 按钮 2：【📋 诊断报告控制台终端 (方案 B)】
-                hud_btn_w = 140
-                hud_bg = (135, 80, 20) if self.show_hud_terminal else (50, 50, 60)
-                hud_border = (255, 180, 50) if self.show_hud_terminal else (80, 80, 90)
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + hud_btn_w, h_img - 6), hud_bg, -1)
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + hud_btn_w, h_img - 6), hud_border, 1)
-                hud_btn_txt = "📋 折叠终端 (H)" if self.show_hud_terminal else "📋 诊断终端 (H)"
-                cv2.putText(disp_frame, hud_btn_txt, (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-                self.gui_buttons.append(("TOGGLE_HUD", (bx, by1 + 6, bx + hud_btn_w, h_img - 6), "TOGGLE_HUD"))
-                bx += hud_btn_w + 8
+                # 按钮 2：【诊断报告控制台终端】
+                hud_btn_w = 110
+                hud_style = "info" if self.show_hud_terminal else "normal"
+                hud_btn_txt = "折叠终端 (H)" if self.show_hud_terminal else "诊断终端 (H)"
+                draw_styled_button(canvas, (bx, btn_y_top, bx + hud_btn_w, btn_y_bot), hud_btn_txt,
+                                   style=hud_style, hover=(bx <= mx <= bx + hud_btn_w and btn_y_top <= my <= btn_y_bot))
+                self.gui_buttons.append(("TOGGLE_HUD", (bx, btn_y_top, bx + hud_btn_w, btn_y_bot), "TOGGLE_HUD"))
+                bx += hud_btn_w + 6
 
-                # 按钮 3：【核心乒乓开关按钮】
-                if self.live_mode:
-                    mode_btn_w = 200
-                    cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + mode_btn_w, h_img - 6), (160, 110, 20), -1)
-                    cv2.putText(disp_frame, "模式: [⚡ 实时动态 | 锁定]", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+                # 按钮 3：【核心乒乓开关：实时动态 vs 静态锁定】(分段胶囊控件)
+                mode_btn_w = 175
+                cur_mode_key = "live" if self.live_mode else "locked"
+                mode_options = [("live", "实时动态"), ("locked", "静态锁定")]
+                draw_segmented_toggle(canvas, (bx, btn_y_top, bx + mode_btn_w, btn_y_bot),
+                                      mode_options, active_key=cur_mode_key, shortcut="Tab")
+                self.gui_buttons.append(("TOGGLE_MODE", (bx, btn_y_top, bx + mode_btn_w, btn_y_bot), "TOGGLE_MODE"))
+                bx += mode_btn_w + 6
+
+                # 按钮 4：【采样批次深度切换】(分段胶囊控件)
+                batch_btn_w = 110
+                cur_batch_key = str(self.batch_target_frames)
+                batch_options = [("30", "30F"), ("60", "60F")]
+                draw_segmented_toggle(canvas, (bx, btn_y_top, bx + batch_btn_w, btn_y_bot),
+                                      batch_options, active_key=cur_batch_key, shortcut="W")
+                self.gui_buttons.append(("CYCLE_BATCH", (bx, btn_y_top, bx + batch_btn_w, btn_y_bot), "CYCLE_BATCH"))
+                bx += batch_btn_w + 6
+
+                # 按钮 5：【采样并锁定位姿】
+                sample_btn_w = 145
+                if self.is_collecting_batch:
+                    sample_style = "warning"
+                    sample_text = f"采样中 ({self.collected_batch_frames}/{self.batch_target_frames})"
                 else:
-                    mode_btn_w = 200
-                    cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + mode_btn_w, h_img - 6), (30, 140, 220), -1)
-                    cv2.putText(disp_frame, "模式: [实时 | 🎯 静态锁定]", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
-                self.gui_buttons.append(("TOGGLE_MODE", (bx, by1 + 6, bx + mode_btn_w, h_img - 6), "TOGGLE_MODE"))
-                bx += mode_btn_w + 8
+                    sample_style = "success" if not self.live_mode else "normal"
+                    sample_text = "采样锁定 (Space)"
+                draw_styled_button(canvas, (bx, btn_y_top, bx + sample_btn_w, btn_y_bot), sample_text,
+                                   style=sample_style, hover=(bx <= mx <= bx + sample_btn_w and btn_y_top <= my <= btn_y_bot))
+                self.gui_buttons.append(("RESAMPLE_LOCK", (bx, btn_y_top, bx + sample_btn_w, btn_y_bot), "RESAMPLE_LOCK"))
+                bx += sample_btn_w + 6
 
-                # 按钮 4：采样批次大小切换
-                batch_btn_w = 120
-                b_bg = (60, 60, 60) if self.live_mode else (80, 80, 30)
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + batch_btn_w, h_img - 6), b_bg, -1)
-                cv2.putText(disp_frame, f"批次: {self.batch_target_frames}F (W)", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (230, 230, 230), 1, cv2.LINE_AA)
-                self.gui_buttons.append(("CYCLE_BATCH", (bx, by1 + 6, bx + batch_btn_w, h_img - 6), "CYCLE_BATCH"))
-                bx += batch_btn_w + 8
+                # 按钮 6：【导出质检单】
+                exp_btn_w = 80
+                draw_styled_button(canvas, (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "报告导出",
+                                   style="normal", hover=(bx <= mx <= bx + exp_btn_w and btn_y_top <= my <= btn_y_bot))
+                self.gui_buttons.append(("EXPORT", (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "EXPORT"))
+                bx += exp_btn_w + 6
 
-                # 按钮 5：重新采样并锁定位姿
-                sample_btn_w = 190
-                s_bg = (40, 90, 160) if not self.is_collecting_batch else (0, 180, 255)
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + sample_btn_w, h_img - 6), s_bg, -1)
-                sample_text = f"🎯 采样中 ({self.collected_batch_frames}/{self.batch_target_frames})" if self.is_collecting_batch else "🎯 采样并锁定 (Space)"
-                cv2.putText(disp_frame, sample_text, (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-                self.gui_buttons.append(("RESAMPLE_LOCK", (bx, by1 + 6, bx + sample_btn_w, h_img - 6), "RESAMPLE_LOCK"))
-                bx += sample_btn_w + 8
+                # 按钮 7：【呼出人工审核画板】
+                rev_btn_w = 110
+                draw_styled_button(canvas, (bx, btn_y_top, bx + rev_btn_w, btn_y_bot), "审核画板 (O)",
+                                   style="purple", hover=(bx <= mx <= bx + rev_btn_w and btn_y_top <= my <= btn_y_bot))
+                self.gui_buttons.append(("OPEN_REVIEWER", (bx, btn_y_top, bx + rev_btn_w, btn_y_bot), "OPEN_REVIEWER"))
+                bx += rev_btn_w + 6
 
-                # 按钮 6：导出质检单
-                exp_btn_w = 100
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + exp_btn_w, h_img - 6), (55, 55, 55), -1)
-                cv2.putText(disp_frame, "💾 导出报告", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (230, 230, 230), 1, cv2.LINE_AA)
-                self.gui_buttons.append(("EXPORT", (bx, by1 + 6, bx + exp_btn_w, h_img - 6), "EXPORT"))
-                bx += exp_btn_w + 8
+                # 按钮 8：【呼出离线标定体检工作台】
+                off_btn_w = 110
+                draw_styled_button(canvas, (bx, btn_y_top, bx + off_btn_w, btn_y_bot), "体检台 (P)",
+                                   style="info", hover=(bx <= mx <= bx + off_btn_w and btn_y_top <= my <= btn_y_bot))
+                self.gui_buttons.append(("OPEN_OFFLINE_VERIFIER", (bx, btn_y_top, bx + off_btn_w, btn_y_bot), "OPEN_OFFLINE_VERIFIER"))
+                bx += off_btn_w + 6
 
-                # 按钮 7：呼出人工审核画板 (主从握手通道)
-                rev_btn_w = 145
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + rev_btn_w, h_img - 6), (65, 30, 85), -1)
-                cv2.rectangle(disp_frame, (bx, by1 + 6), (bx + rev_btn_w, h_img - 6), (220, 90, 255), 1)
-                cv2.putText(disp_frame, "🎨 审核画板 (O)", (bx + 10, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-                self.gui_buttons.append(("OPEN_REVIEWER", (bx, by1 + 6, bx + rev_btn_w, h_img - 6), "OPEN_REVIEWER"))
-                bx += rev_btn_w + 8
-
-                # 按钮 8：退出
-                exit_btn_w = 80
-                cv2.rectangle(disp_frame, (w_img - exit_btn_w - 12, by1 + 6), (w_img - 12, h_img - 6), (45, 45, 120), -1)
-                cv2.putText(disp_frame, "🚪 退出", (w_img - exit_btn_w + 6, h_img - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-                self.gui_buttons.append(("EXIT", (w_img - exit_btn_w - 12, by1 + 6, w_img - 12, h_img - 6), "EXIT"))
+                # 按钮 9：【退出】
+                exit_btn_w = 75
+                draw_styled_button(canvas, (w_img - exit_btn_w - 10, btn_y_top, w_img - 10, btn_y_bot), "退出 (Q)",
+                                   style="danger", hover=((w_img - exit_btn_w - 10) <= mx <= (w_img - 10) and btn_y_top <= my <= btn_y_bot))
+                self.gui_buttons.append(("EXIT", (w_img - exit_btn_w - 10, btn_y_top, w_img - 10, btn_y_bot), "EXIT"))
 
                 # 3. 左下角仪表盘 (HUD)
-                hud_x, hud_y = 15, h_img - bottom_bar_h - 135
-                hud_w, hud_h = 360, 125
-                hud_overlay = disp_frame.copy()
+                hud_x, hud_y = 12, h_img - bottom_bar_h - 128
+                hud_w, hud_h = 340, 120
+                hud_overlay = canvas.copy()
                 cv2.rectangle(hud_overlay, (hud_x, hud_y), (hud_x + hud_w, hud_y + hud_h), (15, 15, 15), -1)
-                cv2.addWeighted(hud_overlay, 0.75, disp_frame, 0.25, 0, disp_frame)
-                cv2.rectangle(disp_frame, (hud_x, hud_y), (hud_x + hud_w, hud_y + hud_h), (75, 75, 75), 1)
+                cv2.addWeighted(hud_overlay, 0.75, canvas, 0.25, 0, canvas)
+                cv2.rectangle(canvas, (hud_x, hud_y), (hud_x + hud_w, hud_y + hud_h), (75, 75, 75), 1)
 
                 if self.live_mode:
-                    mode_title = "MODE: ⚡ LIVE DYNAMIC (实时动态)"
+                    mode_title = "MODE: LIVE DYNAMIC (实时动态)"
                     mode_color = (0, 230, 255)
                     stability_label = "DYNAMIC (实时追踪)"
                 else:
                     if self.locked_pose is not None:
-                        mode_title = f"MODE: 🎯 STATIC LOCKED (基准绝对锁定)"
+                        mode_title = "MODE: STATIC LOCKED (基准绝对锁定)"
                         mode_color = (80, 220, 100)
                         stability_label = "ROCK-SOLID (抖动绝对为 0)"
                     else:
-                        mode_title = "MODE: 🎯 STATIC (待采样锁定)"
+                        mode_title = "MODE: STATIC (待采样锁定)"
                         mode_color = (0, 160, 255)
                         stability_label = "WAITING SAMPLE"
 
-                cv2.putText(disp_frame, mode_title, (hud_x + 12, hud_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, mode_color, 2, cv2.LINE_AA)
-                cv2.putText(disp_frame, f"Cam Pose: {cam_pose_str}", (hud_x + 12, hud_y + 46), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (220, 220, 220), 1, cv2.LINE_AA)
-                cv2.putText(disp_frame, f"Reproj RMSE : {rmse_str}", (hud_x + 12, hud_y + 68), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (220, 220, 220), 1, cv2.LINE_AA)
-                cv2.putText(disp_frame, f"3D Jitter: {jitter_str} [{stability_label}]", (hud_x + 12, hud_y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 200), 1, cv2.LINE_AA)
+                cv2.putText(canvas, mode_title, (hud_x + 10, hud_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.50, mode_color, 2, cv2.LINE_AA)
+                cv2.putText(canvas, f"Cam Pose: {cam_pose_str}", (hud_x + 10, hud_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 220), 1, cv2.LINE_AA)
+                cv2.putText(canvas, f"Reproj RMSE : {rmse_str}", (hud_x + 10, hud_y + 66), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 220), 1, cv2.LINE_AA)
+                cv2.putText(canvas, f"3D Jitter: {jitter_str} [{stability_label}]", (hud_x + 10, hud_y + 88), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 200), 1, cv2.LINE_AA)
 
                 source_str = "硬件 RealSense 1080P" if not self.mock_mode else f"采图回放 ({self.mock_img_idx+1}/{len(self.mock_image_files)})"
-                cv2.putText(disp_frame, f"输入源: {source_str}", (hud_x + 12, hud_y + 112), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (170, 170, 170), 1, cv2.LINE_AA)
+                cv2.putText(canvas, f"输入源: {source_str}", (hud_x + 10, hud_y + 110), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (170, 170, 170), 1, cv2.LINE_AA)
 
                 # 4. 右上角常驻【留一盲测定量质检卡片 (HUD)】
                 if blind_summary is not None:
-                    hud_rx = w_img - 325
-                    hud_ry = top_bar_h + 12
-                    hud_rw = 310
-                    hud_rh = 98
-                    hud_r_overlay = disp_frame.copy()
+                    hud_rx = w_img - 305
+                    hud_ry = top_bar_h + 10
+                    hud_rw = 295
+                    hud_rh = 95
+                    hud_r_overlay = canvas.copy()
                     cv2.rectangle(hud_r_overlay, (hud_rx, hud_ry), (hud_rx + hud_rw, hud_ry + hud_rh), (16, 16, 16), -1)
-                    cv2.addWeighted(hud_r_overlay, 0.82, disp_frame, 0.18, 0, disp_frame)
+                    cv2.addWeighted(hud_r_overlay, 0.82, canvas, 0.18, 0, canvas)
                     
                     b_eval_c = (0, 230, 100) if blind_summary['err_px'] < 1.0 else (0, 180, 255)
-                    cv2.rectangle(disp_frame, (hud_rx, hud_ry), (hud_rx + hud_rw, hud_ry + hud_rh), b_eval_c, 1, cv2.LINE_AA)
+                    cv2.rectangle(canvas, (hud_rx, hud_ry), (hud_rx + hud_rw, hud_ry + hud_rh), b_eval_c, 1, cv2.LINE_AA)
 
-                    cv2.putText(disp_frame, f"🎯 留一盲测反推评估 (Tag #{blind_summary['tag_id']})", 
-                                (hud_rx + 12, hud_ry + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 120, 240), 1, cv2.LINE_AA)
+                    cv2.putText(canvas, f"[盲测] 留一盲测反推评估 (Tag #{blind_summary['tag_id']})", 
+                                (hud_rx + 10, hud_ry + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 120, 240), 1, cv2.LINE_AA)
                     
                     p_txt = "[PERFECT]" if blind_summary['err_px'] < 1.0 else "[ACCEPTABLE]"
-                    cv2.putText(disp_frame, f"重投影残差 : {blind_summary['err_px']:.2f} px {p_txt}", 
-                                (hud_rx + 12, hud_ry + 45), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (240, 240, 240), 1, cv2.LINE_AA)
-                    cv2.putText(disp_frame, f"空间绝对偏差: {blind_summary['err_mm']:.2f} mm", 
-                                (hud_rx + 12, hud_ry + 66), cv2.FONT_HERSHEY_SIMPLEX, 0.43, b_eval_c, 1, cv2.LINE_AA)
-                    cv2.putText(disp_frame, f"目标测距深度: {blind_summary['depth_mm']:.1f} mm", 
-                                (hud_rx + 12, hud_ry + 86), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 180, 180), 1, cv2.LINE_AA)
+                    cv2.putText(canvas, f"重投影残差 : {blind_summary['err_px']:.2f} px {p_txt}", 
+                                (hud_rx + 10, hud_ry + 42), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (240, 240, 240), 1, cv2.LINE_AA)
+                    cv2.putText(canvas, f"空间绝对偏差: {blind_summary['err_mm']:.2f} mm", 
+                                (hud_rx + 10, hud_ry + 63), cv2.FONT_HERSHEY_SIMPLEX, 0.40, b_eval_c, 1, cv2.LINE_AA)
+                    cv2.putText(canvas, f"目标测距深度: {blind_summary['depth_mm']:.1f} mm", 
+                                (hud_rx + 10, hud_ry + 83), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1, cv2.LINE_AA)
 
                 # 5. 浮层 Toast 通知
                 if time.time() - self.status_toast_time < 2.5 and self.status_toast:
-                    (tw, th), _ = cv2.getTextSize(self.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+                    (tw, th), _ = cv2.getTextSize(self.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
                     toast_x = (w_img - tw) // 2
-                    cv2.rectangle(disp_frame, (toast_x - 14, h_img - 95), (toast_x + tw + 14, h_img - 58), (140, 0, 120), -1)
-                    cv2.putText(disp_frame, self.status_toast, (toast_x, h_img - 71), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+                    cv2.rectangle(canvas, (toast_x - 14, h_img - bottom_bar_h - 48), (toast_x + tw + 14, h_img - bottom_bar_h - 16), (140, 0, 120), -1)
+                    cv2.putText(canvas, self.status_toast, (toast_x, h_img - bottom_bar_h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2, cv2.LINE_AA)
 
                 # 6. 渲染可折叠 HUD 诊断文本终端浮层 (方案 B)
-                self.render_hud_terminal(disp_frame)
+                self.render_hud_terminal(canvas)
 
-                cv2.imshow(window_name, disp_frame)
+                cv2.imshow(window_name, canvas)
                 if frame_idx <= 3 and force_window_focus:
                     force_window_focus(window_name)
 
@@ -1349,6 +1441,9 @@ class TagCalibrationVerifier:
                 elif key in (ord('o'), ord('O')):     # O 键 -> 呼出人工审核画板并定向排查当前盲测 Tag
                     self.open_reviewer()
 
+                elif key in (ord('p'), ord('P')):     # P 键 -> 呼出离线标定体检工作台
+                    self.open_offline_verifier()
+
                 elif key in (ord('a'), ord('A'), 81):  # A 键或左方向键
                     if self.mock_mode and self.mock_image_files:
                         self.mock_img_idx = (self.mock_img_idx - 1) % len(self.mock_image_files)
@@ -1376,7 +1471,7 @@ class TagCalibrationVerifier:
                         with open(report_path, "w", encoding="utf-8") as rf:
                             rf.write(f"# AprilTag 在线 AR 标定验证质检单\n\n")
                             rf.write(f"- **质检抓拍时间**: `{time.strftime('%Y-%m-%d %H:%M:%S')}`\n")
-                            rf.write(f"- **运行模式**: `⚡ 实时动态模式 (LIVE)`\n")
+                            rf.write(f"- **运行模式**: `实时动态模式 (LIVE)`\n")
                             rf.write(f"- **存储目录**: `data/tag_calibration_verification/`\n")
                             rf.write(f"- **抓拍图像文件**: [{snap_name}]({snap_name})\n")
                             rf.write(f"- **相机位姿状态**: `{cam_pose_str}`\n")

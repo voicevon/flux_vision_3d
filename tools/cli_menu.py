@@ -152,8 +152,8 @@ def print_calibration_banner(status):
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
     print(f"{C_CYAN}{C_BOLD}       【手眼标定与 AprilTag 空间建图专区】(Calibration & Tag Mapping)         {C_RESET}")
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
-    print(f" 标准工序: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 超精重提取]{C_RESET} -> {C_YELLOW}[4 交互审核]{C_RESET} -> {C_YELLOW}[P 离线体检]{C_RESET} -> {C_YELLOW}[5 AR验证/BA平差]{C_RESET}")
-    map_status_str = f"{C_GREEN}已生成 (config/tags_map.yaml){C_RESET}" if status['has_tag_map'] else f"{C_YELLOW}未生成 (请按 1->2->3 依次执行){C_RESET}"
+    print(f" 标准工序: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[4 交互审核]{C_RESET} -> {C_YELLOW}[5 BA平差]{C_RESET} -> {C_YELLOW}[6 离线体检]{C_RESET} -> {C_YELLOW}[7 在线AR验证]{C_RESET}")
+    map_status_str = f"{C_GREEN}已生成 (config/tags_map.yaml){C_RESET}" if status['has_tag_map'] else f"{C_YELLOW}未生成 (请执行 1~5 依次解算){C_RESET}"
     if not status.get('valid_tag_ids'):
         wl_status_str = f"{C_CYAN}全量探索 (放行所有标靶 0~29){C_RESET}"
     else:
@@ -167,19 +167,27 @@ def print_calibration_banner(status):
 
     print(f" 状态一览: 采图集: {C_GREEN}{status['calib_image_count']}{C_RESET} 帧 | 审核清单: {obs_str} | 空间地图: {map_status_str}")
     print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
-    print(f"   {C_GREEN}[1]{C_RESET} 标靶图纸生成                           (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
+    print(f"{C_BOLD} [ 一、 标靶准备 (Target Preparation) ]{C_RESET}")
+    print(f"   {C_GREEN}[1]{C_RESET} AprilTag 标靶图纸生成                  (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
+    print("")
+    print(f"{C_BOLD} [ 二、 图像采集 (Image Acquisition) ]{C_RESET}")
     print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (1080P @ 8fps 丝滑轻量采图，空格一键连拍)")
+    print("")
+    print(f"{C_BOLD} [ 三、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
     print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (16级阈值网格+双尺度CLAHE+0.01px亚像素精修)")
-    print(f"   {C_GREEN}[4]{C_RESET} 标靶观测样本交互审核画板              (单靶/整帧剔除，靶向排查直达，一键验证握手)")
-    print(f"   {C_GREEN}[5]{C_RESET} 标定精度在线 AR 综合验证与 BA 平差     (HUD残差浮窗，留一盲测，一键求解与热重载)")
-    print(f"   {C_GREEN}[6]{C_RESET} 备用通道: SCARA 经典接触式物理标定    (SVD 点对刚体配准，极端无Tag场景备用)")
-    print(f"   {C_GREEN}[M]{C_RESET} 纯计算运行空间立体建图与平差           (tag_map_builder.py，后台静默重算)")
-    print(f"   {C_GREEN}[O]{C_RESET} 启动标靶交互审核画板                  (同工序4)")
-    print(f"   {C_GREEN}[W]{C_RESET} AprilTag 标靶白名单查看与管理          (查看当前/一键放行探索/自定义ID)")
+    print(f"   {C_GREEN}[4]{C_RESET} 标靶观测样本交互审核画板              (单靶/整帧剔除，拓扑连通把关) {C_GRAY}[快捷键: O]{C_RESET}")
+    print(f"   {C_GREEN}[5]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，全局误差优化) {C_GRAY}[快捷键: M]{C_RESET}")
+    print(f"   {C_GREEN}[6]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (全量留一盲测批处理，残差矢量，门限放行) {C_GRAY}[快捷键: P]{C_RESET}")
+    print("")
+    print(f"{C_BOLD} [ 四、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
+    print(f"   {C_GREEN}[7]{C_RESET} 标定精度在线 AR 综合实时验证系统      (相机实时取流，3D轴/棱柱虚实融合，静态位姿锁定)")
+    print("")
+    print(f"{C_BOLD} [ 五、 辅助工具与维护通道 (Auxiliary Tools & Maintenance) ]{C_RESET}")
+    print(f"   {C_GREEN}[W]{C_RESET} AprilTag 标靶 ID 白名单管理            (查看当前/一键放行探索/指定有效 ID 列表)")
     print(f"   {C_GREEN}[V]{C_RESET} 浏览图示化分析与检测标注目录          (在系统资源管理器中打开 visualized/)")
-    print(f"   {C_GREEN}[D]{C_RESET} 单帧标靶漏检病因深度诊断与切片分析    (分析真图淘汰候选框/尺寸/反差/模糊)")
-    print(f"   {C_GREEN}[P]{C_RESET} 离线精度体检 (LOO盲测批量验证)       (对原图重检测+逐Tag留一盲测+Markdown报告)")
-    print(f"   {C_GREEN}[C]{C_RESET} 一键清空标定采图数据集                (重置采图集从 0 开始)")
+    print(f"   {C_GREEN}[D]{C_RESET} 单帧标靶漏检病因深度诊断与切片分析    (分析真图淘汰候选框/尺寸/反差/模糊原因)")
+    print(f"   {C_GREEN}[C]{C_RESET} 一键清空标定采图数据集                (重置采图集从 0 开始重新编号)")
+    print(f"   {C_GREEN}[8]{C_RESET} 备用通道: SCARA 经典接触式物理标定    (SVD 点对刚体配准，极端无Tag场景备用)")
     print("")
     print(f"   {C_YELLOW}[B]{C_RESET} 返回主菜单")
     print(f"{C_CYAN}==============================================================================={C_RESET}")
@@ -347,7 +355,7 @@ def run_tag_super_extractor():
 
 
 def run_build_tag_map():
-    print(f"\n{C_CYAN}[建图]{C_RESET} 正在启动 AprilTag 3D 空间立体地图建图与 BA 平差 (tag_map_builder.py)...")
+    print(f"\n{C_CYAN}[工序 5: BA平差建图]{C_RESET} 正在启动 AprilTag 3D 空间立体地图建图与两阶段 BA 平差求解 (tag_map_builder.py)...")
     images = glob.glob("data/tag_calibration_images/*.png")
     if not images:
         print(f"{C_YELLOW}[提示]{C_RESET} 当前 data/tag_calibration_images/ 目录下没有图像！")
@@ -360,11 +368,11 @@ def run_build_tag_map():
 
 
 def run_tag_calibration_verifier():
-    print(f"\n{C_CYAN}[验证]{C_RESET} 正在启动标定精度与 3D 坐标系在线 AR 综合验证系统 (tag_calibration_verifier.py)...")
+    print(f"\n{C_CYAN}[工序 7: 在线AR验证]{C_RESET} 正在启动标定精度与 3D 坐标系在线 AR 综合验证系统 (tag_calibration_verifier.py)...")
     map_path = "config/tags_map.yaml"
     if not os.path.exists(map_path):
         print(f"{C_YELLOW}[提示]{C_RESET} 尚未检测到标靶地图文件: {map_path}！")
-        print(f"请先在审核画板 {C_GREEN}[4]{C_RESET} 按 [V] 键求解，或执行建图平差 {C_GREEN}[M]{C_RESET}。")
+        print(f"请先执行工序 {C_GREEN}[5]{C_RESET} 空间建图与 BA 平差求解，或在审核画板 {C_GREEN}[4]{C_RESET} 按 [V] 键一键求解。")
         pause_prompt()
         return
 
@@ -547,11 +555,11 @@ def run_offline_verifier():
     map_path = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
     if not os.path.exists(map_path):
         print(f"\n{C_YELLOW}[提示]{C_RESET} 尚未检测到标靶地图文件: {map_path}！")
-        print(f"请先执行 BA 求解生成地图后再进行精度体检。")
+        print(f"请先执行工序 {C_GREEN}[5]{C_RESET} 空间建图与 BA 平差求解生成地图后再进行精度体检。")
         pause_prompt()
         return
 
-    print(f"\n{C_CYAN}[体检]{C_RESET} 正在启动离线标定精度体检与 Leave-One-Out 盲测批量验证...")
+    print(f"\n{C_CYAN}[工序 6: 离线体检]{C_RESET} 正在启动离线标定精度体检与 Leave-One-Out 盲测批量验证...")
     subprocess.run([sys.executable, "tools/calibration/tag_offline_verifier.py"])
     pause_prompt()
 
@@ -561,7 +569,7 @@ def submenu_calibration_suite():
     while True:
         status = check_env_status()
         print_calibration_banner(status)
-        choice = input(f"请输入标定工序编号 [1-6, M, O, W, V, D, P, C, B]: ").strip().upper()
+        choice = input(f"请输入工序编号 [1-8, W, V, D, C, M, O, P, B]: ").strip().upper()
         
         if choice == '1':
             run_generate_tags()
@@ -571,20 +579,20 @@ def submenu_calibration_suite():
             run_tag_super_extractor()
         elif choice in ('4', 'O'):
             run_open_observations_manifest()
-        elif choice == '5':
-            run_tag_calibration_verifier()
-        elif choice == '6':
-            run_hand_eye_calibration()
-        elif choice == 'M':
+        elif choice in ('5', 'M'):
             run_build_tag_map()
+        elif choice in ('6', 'P'):
+            run_offline_verifier()
+        elif choice == '7':
+            run_tag_calibration_verifier()
+        elif choice == '8':
+            run_hand_eye_calibration()
         elif choice == 'W':
             run_tag_whitelist_manager()
         elif choice == 'V':
             run_open_visualized_dir()
         elif choice == 'D':
             run_diagnose_tag_frame()
-        elif choice == 'P':
-            run_offline_verifier()
         elif choice == 'C':
             run_clear_calib_dataset()
         elif choice in ('B', '0'):

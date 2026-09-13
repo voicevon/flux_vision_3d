@@ -91,6 +91,38 @@ class TestTagOfflineVerifier(unittest.TestCase):
         self.assertEqual(len(stats["flagged_tags"]), 0, "不应有偏差嫌疑标靶")
         self.assertEqual(len(stats["flagged_frames"]), 0, "不应有建议回审帧")
 
+    def test_render_tag_dual_prisms_and_view_mode(self):
+        """测试 3D 双棱柱渲染管线及视图模式切换"""
+        # 测试视图切换
+        self.assertTrue(self.verifier.view_mode_3d)
+        self.verifier.toggle_view_mode()
+        self.assertFalse(self.verifier.view_mode_3d)
+        self.verifier.toggle_view_mode()
+        self.assertTrue(self.verifier.view_mode_3d)
+
+        # 创建测试画布
+        canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        rvec = np.zeros((3, 1), dtype=np.float64)
+        tvec = np.array([[0.0], [0.0], [800.0]], dtype=np.float64)
+
+        # 1. 绘制良好样本 (翠绿色棱柱)
+        self.verifier.render_tag_dual_prisms(
+            canvas, ba_rvec=rvec, ba_tvec=tvec,
+            obs_rvec=rvec, obs_tvec=tvec,
+            tag_id=18, err_px=0.5, err_mm=0.2
+        )
+        self.assertTrue(np.any(canvas > 0), "良好样本渲染后画布应包含非零像素")
+
+        # 2. 绘制偏差样本 (BA 与实测错位)
+        tvec_deviated = np.array([[30.0], [20.0], [810.0]], dtype=np.float64)
+        canvas_dev = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        self.verifier.render_tag_dual_prisms(
+            canvas_dev, ba_rvec=rvec, ba_tvec=tvec,
+            obs_rvec=rvec, obs_tvec=tvec_deviated,
+            tag_id=19, err_px=3.5, err_mm=2.5
+        )
+        self.assertTrue(np.any(canvas_dev > 0), "偏差样本双棱柱错位渲染后画布应包含非零像素")
+
 
 if __name__ == "__main__":
     unittest.main()
