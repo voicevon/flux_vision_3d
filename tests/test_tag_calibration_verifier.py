@@ -127,6 +127,40 @@ class TestTagCalibrationVerifier(unittest.TestCase):
         self.verifier._on_mouse(cv2.EVENT_LBUTTONDOWN, 100, 20, 0, None)
         self.assertIsNone(self.verifier.blind_target_tag_id)
 
+    def test_full_render_loop_robustness(self):
+        """测试完整 GUI 帧渲染、视口自适应、HUD折叠、工具栏各按钮绘制无异常"""
+        # 1. 测试空白灰色网格帧下的全套 UI 渲染
+        frame = self.verifier.get_frame(0)
+        self.assertEqual(frame.shape, (1080, 1920, 3))
+
+        canvas = np.zeros((self.verifier.win_h, self.verifier.win_w, 3), dtype=np.uint8)
+        self.verifier.viewport.render_viewport(canvas, frame)
+
+        # 2. 模拟触发 Toast 与 HUD 展开
+        self.verifier.set_toast("单元测试浮层通知提示")
+        self.verifier.show_hud_terminal = True
+        self.verifier.hud_terminal_lines = ["[INFO] 测试终端行 1", "[WARN] 测试终端行 2"]
+        self.verifier.render_hud_terminal(canvas)
+
+        # 3. 模拟工具栏与顶栏各按钮渲染 (包含鼠标坐标悬停)
+        w_img, h_img = self.verifier.win_w, self.verifier.win_h
+        top_bar_h = self.verifier.viewport.top_bar_h
+        bottom_bar_h = self.verifier.viewport.bottom_bar_h
+        btn_y_top = h_img - bottom_bar_h + 8
+        btn_y_bot = h_img - 8
+        mx, my = 150, btn_y_top + 10
+
+        from src.utils.viewport_manager import draw_styled_button, draw_segmented_toggle
+        draw_styled_button(canvas, (10, btn_y_top, 100, btn_y_bot), "测试按钮",
+                           mouse_pos=(mx, my), btn_type="primary")
+        draw_segmented_toggle(canvas, (110, btn_y_top, 250, btn_y_bot),
+                              [("live", "实时"), ("locked", "锁定")],
+                              mouse_pos=(mx, my), active_key="live")
+
+        self.assertGreater(canvas.shape[0], 0)
+        self.assertGreater(canvas.shape[1], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

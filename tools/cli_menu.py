@@ -335,8 +335,10 @@ def run_tag_capture_wizard():
         print(f"{C_YELLOW}[提示]{C_RESET} 正在以 --mock 仿真模式启动采图向导...")
         cmd.append("--mock")
     
-    subprocess.run(cmd)
-    # 图形窗口退出后直接返回菜单，无需再次按回车确认
+    res = subprocess.run(cmd)
+    if res.returncode != 0:
+        print(f"\n{C_RED}[异常退出] 采图向导异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
+        pause_prompt()
 
 
 def run_tag_super_extractor():
@@ -382,8 +384,10 @@ def run_tag_calibration_verifier():
         print(f"{C_YELLOW}[提示]{C_RESET} 正在以 --mock 仿真模式启动 AR 综合验证...")
         cmd.append("--mock")
 
-    subprocess.run(cmd)
-    # 图形窗口退出后直接返回菜单，无需再次按回车确认
+    res = subprocess.run(cmd)
+    if res.returncode != 0:
+        print(f"\n{C_RED}[异常退出] 在线 AR 验证系统异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
+        pause_prompt()
 
 
 def run_hand_eye_calibration():

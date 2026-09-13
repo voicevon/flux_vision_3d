@@ -1263,16 +1263,16 @@ class TagCalibrationVerifier:
                     ba_style = "primary"
                     ba_txt = "求解BA (B)"
                 draw_styled_button(canvas, (bx, btn_y_top, bx + ba_btn_w, btn_y_bot), ba_txt,
-                                   style=ba_style, hover=(bx <= mx <= bx + ba_btn_w and btn_y_top <= my <= btn_y_bot))
+                                   mouse_pos=(mx, my), btn_type=ba_style)
                 self.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_btn_w, btn_y_bot), "RUN_BA"))
                 bx += ba_btn_w + 6
 
                 # 按钮 2：【诊断报告控制台终端】
                 hud_btn_w = 110
-                hud_style = "info" if self.show_hud_terminal else "normal"
+                hud_style = "primary" if self.show_hud_terminal else "normal"
                 hud_btn_txt = "折叠终端 (H)" if self.show_hud_terminal else "诊断终端 (H)"
                 draw_styled_button(canvas, (bx, btn_y_top, bx + hud_btn_w, btn_y_bot), hud_btn_txt,
-                                   style=hud_style, hover=(bx <= mx <= bx + hud_btn_w and btn_y_top <= my <= btn_y_bot))
+                                   mouse_pos=(mx, my), btn_type=hud_style)
                 self.gui_buttons.append(("TOGGLE_HUD", (bx, btn_y_top, bx + hud_btn_w, btn_y_bot), "TOGGLE_HUD"))
                 bx += hud_btn_w + 6
 
@@ -1281,7 +1281,7 @@ class TagCalibrationVerifier:
                 cur_mode_key = "live" if self.live_mode else "locked"
                 mode_options = [("live", "实时动态"), ("locked", "静态锁定")]
                 draw_segmented_toggle(canvas, (bx, btn_y_top, bx + mode_btn_w, btn_y_bot),
-                                      mode_options, active_key=cur_mode_key, shortcut="Tab")
+                                      mode_options, mouse_pos=(mx, my), active_key=cur_mode_key, shortcut="Tab")
                 self.gui_buttons.append(("TOGGLE_MODE", (bx, btn_y_top, bx + mode_btn_w, btn_y_bot), "TOGGLE_MODE"))
                 bx += mode_btn_w + 6
 
@@ -1290,7 +1290,7 @@ class TagCalibrationVerifier:
                 cur_batch_key = str(self.batch_target_frames)
                 batch_options = [("30", "30F"), ("60", "60F")]
                 draw_segmented_toggle(canvas, (bx, btn_y_top, bx + batch_btn_w, btn_y_bot),
-                                      batch_options, active_key=cur_batch_key, shortcut="W")
+                                      batch_options, mouse_pos=(mx, my), active_key=cur_batch_key, shortcut="W")
                 self.gui_buttons.append(("CYCLE_BATCH", (bx, btn_y_top, bx + batch_btn_w, btn_y_bot), "CYCLE_BATCH"))
                 bx += batch_btn_w + 6
 
@@ -1303,35 +1303,35 @@ class TagCalibrationVerifier:
                     sample_style = "success" if not self.live_mode else "normal"
                     sample_text = "采样锁定 (Space)"
                 draw_styled_button(canvas, (bx, btn_y_top, bx + sample_btn_w, btn_y_bot), sample_text,
-                                   style=sample_style, hover=(bx <= mx <= bx + sample_btn_w and btn_y_top <= my <= btn_y_bot))
+                                   mouse_pos=(mx, my), btn_type=sample_style)
                 self.gui_buttons.append(("RESAMPLE_LOCK", (bx, btn_y_top, bx + sample_btn_w, btn_y_bot), "RESAMPLE_LOCK"))
                 bx += sample_btn_w + 6
 
                 # 按钮 6：【导出质检单】
                 exp_btn_w = 80
                 draw_styled_button(canvas, (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "报告导出",
-                                   style="normal", hover=(bx <= mx <= bx + exp_btn_w and btn_y_top <= my <= btn_y_bot))
+                                   mouse_pos=(mx, my), btn_type="normal")
                 self.gui_buttons.append(("EXPORT", (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "EXPORT"))
                 bx += exp_btn_w + 6
 
                 # 按钮 7：【呼出人工审核画板】
                 rev_btn_w = 110
                 draw_styled_button(canvas, (bx, btn_y_top, bx + rev_btn_w, btn_y_bot), "审核画板 (O)",
-                                   style="purple", hover=(bx <= mx <= bx + rev_btn_w and btn_y_top <= my <= btn_y_bot))
+                                   mouse_pos=(mx, my), btn_type="purple")
                 self.gui_buttons.append(("OPEN_REVIEWER", (bx, btn_y_top, bx + rev_btn_w, btn_y_bot), "OPEN_REVIEWER"))
                 bx += rev_btn_w + 6
 
                 # 按钮 8：【呼出离线标定体检工作台】
                 off_btn_w = 110
                 draw_styled_button(canvas, (bx, btn_y_top, bx + off_btn_w, btn_y_bot), "体检台 (P)",
-                                   style="info", hover=(bx <= mx <= bx + off_btn_w and btn_y_top <= my <= btn_y_bot))
+                                   mouse_pos=(mx, my), btn_type="primary")
                 self.gui_buttons.append(("OPEN_OFFLINE_VERIFIER", (bx, btn_y_top, bx + off_btn_w, btn_y_bot), "OPEN_OFFLINE_VERIFIER"))
                 bx += off_btn_w + 6
 
                 # 按钮 9：【退出】
                 exit_btn_w = 75
                 draw_styled_button(canvas, (w_img - exit_btn_w - 10, btn_y_top, w_img - 10, btn_y_bot), "退出 (Q)",
-                                   style="danger", hover=((w_img - exit_btn_w - 10) <= mx <= (w_img - 10) and btn_y_top <= my <= btn_y_bot))
+                                   mouse_pos=(mx, my), btn_type="danger")
                 self.gui_buttons.append(("EXIT", (w_img - exit_btn_w - 10, btn_y_top, w_img - 10, btn_y_bot), "EXIT"))
 
                 # 3. 左下角仪表盘 (HUD)

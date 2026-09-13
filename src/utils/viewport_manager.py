@@ -415,10 +415,13 @@ def draw_styled_button(
     rect: Tuple[int, int, int, int],
     label: str,
     mouse_pos: Tuple[int, int] = (-1, -1),
-    btn_type: str = "normal",  # normal, primary, success, danger, warning, purple
+    btn_type: str = "normal",  # normal, primary, success, danger, warning, purple, info
     is_active: bool = False,
     is_enabled: bool = True,
-    font_scale: float = 0.42
+    font_scale: float = 0.42,
+    style: Optional[str] = None,
+    hover: Optional[bool] = None,
+    **kwargs
 ) -> bool:
     """
     绘制符合统一工业设计规范的现代化按钮（纯 ASCII/标准中文，严禁 Emoji，杜绝乱码）
@@ -426,19 +429,28 @@ def draw_styled_button(
     :param rect: (x1, y1, x2, y2)
     :param label: 纯文本标签 (严禁包含 Emoji)
     :param mouse_pos: 当前鼠标像素坐标
-    :param btn_type: 按钮语义类型 (normal/primary/success/danger/warning/purple)
+    :param btn_type: 按钮语义类型 (normal/primary/success/danger/warning/purple/info)
     :param is_active: 是否处于激活/按下状态
     :param is_enabled: 是否可用
     :param font_scale: 字号缩放
+    :param style: 语义类型别名兼容参数 (若传入则覆盖 btn_type)
+    :param hover: 悬停态显式布尔值兼容参数 (若传入则覆盖坐标判定)
     :return: is_hovered
     """
+    if style is not None:
+        btn_type = style
+
     x1, y1, x2, y2 = rect
     mx, my = mouse_pos
-    is_hover = is_enabled and (x1 <= mx <= x2 and y1 <= my <= y2)
+    if hover is not None:
+        is_hover = is_enabled and bool(hover)
+    else:
+        is_hover = is_enabled and (x1 <= mx <= x2 and y1 <= my <= y2)
 
     PALETTE = {
         "normal":  {"bg": (38, 40, 48),  "border": (70, 75, 90),   "text": (220, 225, 230)},
         "primary": {"bg": (70, 48, 22),  "border": (220, 140, 0),  "text": (255, 255, 255)}, # 科技蓝
+        "info":    {"bg": (65, 50, 25),  "border": (230, 160, 40),  "text": (255, 255, 255)}, # 靛蓝/青蓝
         "success": {"bg": (25, 65, 35),  "border": (0, 215, 90),   "text": (255, 255, 255)}, # 成功绿
         "danger":  {"bg": (35, 30, 75),  "border": (70, 60, 210),  "text": (255, 255, 255)}, # 警示红
         "warning": {"bg": (25, 60, 90),  "border": (0, 180, 240),  "text": (255, 255, 255)}, # 琥珀黄
@@ -476,10 +488,12 @@ def draw_segmented_toggle(
     canvas: np.ndarray,
     rect: Tuple[int, int, int, int],
     options: list,
-    active_idx: int,
+    active_idx: int = 0,
     mouse_pos: Tuple[int, int] = (-1, -1),
     shortcut: str = "",
-    active_color: Tuple[int, int, int] = (150, 95, 20)
+    active_color: Tuple[int, int, int] = (150, 95, 20),
+    active_key: Optional[str] = None,
+    **kwargs
 ) -> list:
     """
     绘制现代工业级分段胶囊乒乓开关 (Segmented Control，状态一目了然，绝不混淆)
@@ -490,8 +504,14 @@ def draw_segmented_toggle(
     :param mouse_pos: (mx, my)
     :param shortcut: 快捷键提示 (如 "Tab")
     :param active_color: 激活状态块的高亮底色 (BGR)
+    :param active_key: 当前激活选项的 key (若传入则覆盖 active_idx)
     :return: 各选项点击区域 [(key, (sx1, sy1, sx2, sy2))]
     """
+    if active_key is not None:
+        for i, opt in enumerate(options):
+            if isinstance(opt, (list, tuple)) and str(opt[0]) == str(active_key):
+                active_idx = i
+                break
     x1, y1, x2, y2 = rect
     mx, my = mouse_pos
     total_w = x2 - x1
@@ -541,3 +561,115 @@ def draw_segmented_toggle(
         result_sub_rects.append((opt_key, (sx1, y1, sx2, y2)))
 
     return result_sub_rects
+
+
+def draw_dropdown_box(
+    canvas: np.ndarray,
+    rect: Tuple[int, int, int, int],
+    options: list,  # [ (key, "显示文字"), ... ]
+    active_key: str,
+    is_open: bool,
+    mouse_pos: Tuple[int, int] = (-1, -1),
+    shortcut: str = "F",
+    active_color: Tuple[int, int, int] = (150, 95, 20)
+) -> Tuple[list, Optional[Tuple[int, int, int, int]]]:
+    """
+    绘制现代工业级下拉选择框 (Drop-down ComboBox / Popover Menu)
+    :param canvas: 目标画布
+    :param rect: (x1, y1, x2, y2) 主选择框区域
+    :param options: [ (key, "选项显示文字"), ... ]
+    :param active_key: 当前激活选项的 key
+    :param is_open: 下拉菜单是否展开
+    :param mouse_pos: (mx, my) 当前鼠标像素坐标
+    :param shortcut: 快捷键提示 (如 "F")
+    :param active_color: 展开或激活高亮色 (BGR)
+    :return: (item_rects, menu_bounding_rect)
+             item_rects: [ (key, (ix1, iy1, ix2, iy2)), ... ]
+             menu_bounding_rect: 菜单整体覆盖外接矩形 (mx1, my1, mx2, my2) 用于点击外部检测
+    """
+    x1, y1, x2, y2 = rect
+    mx, my = mouse_pos
+    is_hover_main = (x1 <= mx <= x2 and y1 <= my <= y2)
+
+    # 找到当前激活选项的显示文字
+    current_label = "请选择"
+    for k, lbl in options:
+        if k == active_key:
+            current_label = lbl
+            break
+
+    # 1. 绘制主选择框
+    bg_main = (45, 48, 58) if (is_hover_main or is_open) else (28, 30, 36)
+    border_color = (255, 255, 255) if is_open else ((180, 190, 210) if is_hover_main else (65, 70, 82))
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), bg_main, -1)
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), border_color, 2 if (is_open or is_hover_main) else 1)
+
+    # 主框文本与箭头
+    arrow_char = "^" if is_open else "v"
+    display_text = f"{current_label}"
+    if shortcut:
+        display_text += f" ({shortcut})"
+    display_text += f"  {arrow_char}"
+
+    (tw, th), _ = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+    tx = x1 + max(6, (x2 - x1 - tw) // 2)
+    ty = y1 + (y2 - y1 + th) // 2
+    txt_color = (255, 255, 255) if (is_open or is_hover_main) else (210, 215, 225)
+    cv2.putText(canvas, display_text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_color, 1, cv2.LINE_AA)
+
+    item_rects = [("DROPDOWN_TOGGLE", (x1, y1, x2, y2))]
+    menu_bounding_rect = None
+
+    # 2. 若处于展开状态，绘制下拉悬浮菜单 (Popover)
+    if is_open and options:
+        item_h = 32
+        menu_w = max(x2 - x1, 185)
+        menu_h = len(options) * item_h + 8
+        mx1 = x1
+        my1 = y2 + 3
+        mx2 = mx1 + menu_w
+        my2 = my1 + menu_h
+        menu_bounding_rect = (mx1, my1, mx2, my2)
+
+        # 菜单半透明深色阴影与底板
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (mx1, my1), (mx2, my2), (18, 20, 25), -1)
+        cv2.addWeighted(overlay, 0.96, canvas, 0.04, 0, canvas)
+        cv2.rectangle(canvas, (mx1, my1), (mx2, my2), (90, 95, 115), 1)
+
+        # 绘制每一个菜单项
+        for idx, (opt_key, opt_lbl) in enumerate(options):
+            iy1 = my1 + 4 + idx * item_h
+            iy2 = iy1 + item_h
+            ix1 = mx1 + 4
+            ix2 = mx2 - 4
+            is_active = (opt_key == active_key)
+            is_hover_item = (ix1 <= mx <= ix2 and iy1 <= my <= iy2)
+
+            if is_active:
+                cv2.rectangle(canvas, (ix1, iy1), (ix2, iy2), active_color, -1)
+                cv2.rectangle(canvas, (ix1, iy1), (ix2, iy2), (255, 255, 255), 1)
+                bullet = "[*]"
+                col = (255, 255, 255)
+                thick = 2
+            elif is_hover_item:
+                cv2.rectangle(canvas, (ix1, iy1), (ix2, iy2), (55, 60, 75), -1)
+                bullet = "[ ]"
+                col = (255, 255, 255)
+                thick = 1
+            else:
+                bullet = "[ ]"
+                col = (180, 185, 195)
+                thick = 1
+
+            item_text = f" {bullet} {opt_lbl}"
+            cv2.putText(canvas, item_text, (ix1 + 8, iy1 + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, col, thick, cv2.LINE_AA)
+
+            item_rects.append((f"SELECT_{opt_key}", (ix1, iy1, ix2, iy2)))
+
+            # 分割线
+            if idx < len(options) - 1:
+                cv2.line(canvas, (ix1 + 6, iy2), (ix2 - 6, iy2), (40, 44, 55), 1)
+
+    return item_rects, menu_bounding_rect
+

@@ -66,13 +66,15 @@ from src.calibration.verification_visualizer import VerificationVisualizer
 try:
     from src.utils.viewport_manager import (
         ViewportManager, get_safe_screen_size,
-        draw_styled_button, draw_segmented_toggle
+        draw_styled_button, draw_segmented_toggle,
+        draw_dropdown_box
     )
 except ImportError:
     ViewportManager = None
     get_safe_screen_size = None
     draw_styled_button = None
     draw_segmented_toggle = None
+    draw_dropdown_box = None
 
 
 class TagOfflineVerifier:
@@ -159,6 +161,7 @@ class TagOfflineVerifier:
         self.filter_flagged_only = False
         self.flagged_frames: List[str] = []
         self.flagged_tags: List[int] = []
+        self.is_filter_dropdown_open: bool = False
 
         # 鼠标交互
         self.mouse_pos = (-1, -1)
@@ -438,14 +441,11 @@ class TagOfflineVerifier:
             top_bar_h = self.viewport.top_bar_h if self.viewport else 62
             bot_bar_h = self.viewport.bottom_bar_h if self.viewport else 58
 
-            # A. 退出指令全域绝对优先捕获 (零防抖冷却限制，只要点在退出热区立刻毫秒级关闭)
+            # A. 退出指令全域绝对优先捕获 (零防抖冷却限制，仅保留右上角关闭热区与标记为 EXIT 的按钮)
             # 1) 顶部 HUD 右上角关闭区域 (w - 120 <= x <= w 且 y <= top_bar_h + 8)
-            # 2) 底部工具栏右下角区域 (x >= w - 150 且 y >= h - bot_bar_h - 8)
-            # 3) 遍历命中了任何标记为 EXIT 的按钮矩形 (带 8px 扩充容差)
+            # 2) 遍历命中了任何标记为 EXIT 的按钮矩形 (右上角关闭按钮，带 8px 扩充容差)
             is_exit_clicked = False
             if (w - 120) <= x and 0 <= y <= (top_bar_h + 8):
-                is_exit_clicked = True
-            elif (w - 150) <= x and (h - bot_bar_h - 8) <= y:
                 is_exit_clicked = True
             else:
                 for btn_id, (bx1, by1, bx2, by2), _, _ in self.gui_buttons:
@@ -464,11 +464,36 @@ class TagOfflineVerifier:
             if now - getattr(self, "_last_btn_click_time", 0.0) < 0.20:
                 return
 
+            # C. 下拉菜单优先拦截 (若当前处于展开状态，优先捕获菜单项点击或外部空白点击关闭)
+            if self.is_filter_dropdown_open:
+                self._last_btn_click_time = now
+                # 1) 检查是否命中下拉选项
+                for btn_id, (bx1, by1, bx2, by2), _, _ in self.gui_buttons:
+                    if btn_id.startswith("SELECT_"):
+                        if bx1 <= x <= bx2 and by1 <= y <= by2:
+                            if btn_id == "SELECT_ALL":
+                                self.set_flagged_filter(False)
+                            elif btn_id == "SELECT_FLAGGED":
+                                self.set_flagged_filter(True)
+                            return
+                # 2) 检查是否点击了下拉框主按钮 (再次点击收起)
+                for btn_id, (bx1, by1, bx2, by2), _, _ in self.gui_buttons:
+                    if btn_id == "DROPDOWN_TOGGLE":
+                        if bx1 <= x <= bx2 and by1 <= y <= by2:
+                            self.is_filter_dropdown_open = False
+                            return
+                # 3) 点击了菜单与主框外部 (Click Outside)，自动收起且不向下穿透误触
+                self.is_filter_dropdown_open = False
+                return
+
+            # D. 常态业务按钮响应 (下拉菜单未展开时)
             for btn_id, (bx1, by1, bx2, by2), label, _ in self.gui_buttons:
                 pad = 5
                 if (bx1 - pad) <= x <= (bx2 + pad) and (by1 - pad) <= y <= (by2 + pad):
                     self._last_btn_click_time = now
-                    if btn_id == "PREV":
+                    if btn_id == "DROPDOWN_TOGGLE":
+                        self.is_filter_dropdown_open = True
+                    elif btn_id == "PREV":
                         self.prev_image()
                     elif btn_id == "NEXT":
                         self.next_image()
@@ -530,22 +555,29 @@ class TagOfflineVerifier:
         mode_str = "【3D双棱柱空间对比】(BA真值 vs 实测)" if self.view_mode_3d else "【2D角点残差矢量】"
         self.set_toast(f"视图切换: {mode_str}")
 
-    def toggle_flagged_filter(self):
-        """切换是否仅浏览建议回审帧"""
-        if not self.flagged_frames:
-            self.set_toast("当前无任何建议回审帧，无需过滤！")
-            self.filter_flagged_only = False
-            return
-        self.filter_flagged_only = not self.filter_flagged_only
-        if self.filter_flagged_only:
+    def set_flagged_filter(self, only_flagged: bool):
+        """显式设置是否仅浏览回审帧"""
+        self.is_filter_dropdown_open = False
+        if only_flagged:
+            if not self.flagged_frames:
+                self.set_toast("当前无任何建议回审帧，无需过滤！")
+                self.filter_flagged_only = False
+                return
+            self.filter_flagged_only = True
             target_fname = self.flagged_frames[0]
             for idx, p in enumerate(self.image_files):
                 if os.path.basename(p) == target_fname:
                     self.current_idx = idx
                     break
-            self.set_toast(f"已开启【仅看回审帧模式】(共 {len(self.flagged_frames)} 帧)")
+            self.set_toast(f"已开启【仅回审模式】(共 {len(self.flagged_frames)} 帧)")
         else:
+            self.filter_flagged_only = False
             self.set_toast(f"已恢复【全量浏览模式】(共 {len(self.image_files)} 帧)")
+
+    def toggle_flagged_filter(self):
+        """切换是否仅浏览建议回审帧"""
+        self.is_filter_dropdown_open = False
+        self.set_flagged_filter(not self.filter_flagged_only)
 
     def open_reviewer_modal(self):
         """模态呼出审核画板，定向跳转到当前帧，退出后自动原地热重载"""
@@ -704,21 +736,20 @@ class TagOfflineVerifier:
         else:
             cur_mean_px, cur_max_px, worst_tid = 0.0, 0.0, -1
 
-        status_tag = "FAIL (回审)" if is_cur_flagged else ("PASS" if cur_mean_px <= 1.5 else "WARN")
-        status_bg = (0, 0, 180) if is_cur_flagged else ((0, 180, 0) if cur_mean_px <= 1.5 else (0, 140, 220))
+        if is_cur_flagged:
+            conclusion_str = "结论: 需回审"
+            conclusion_color = (0, 90, 255)   # 醒目警示橙红
+        elif cur_mean_px <= 1.5:
+            conclusion_str = "结论: PASS"
+            conclusion_color = (0, 240, 120)  # 达标翠绿
+        else:
+            conclusion_str = "结论: 需复核"
+            conclusion_color = (0, 190, 245)  # 预警亮黄
 
-        # 绘制帧状态标牌
-        cv2.rectangle(canvas, (12, 10), (105, 48), status_bg, -1)
-        cv2.rectangle(canvas, (12, 10), (105, 48), (255, 255, 255), 1)
-        cv2.putText(canvas, status_tag, (20, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
+        # 初始化按钮列表 (涵盖顶部整套/全局操作栏与底部当前单帧控制栏)
+        self.gui_buttons = []
 
-        # 帧文字明细
-        idx_str = f"[{self.current_idx + 1:02d}/{len(self.image_files):02d}] {cur_fname}"
-        cv2.putText(canvas, idx_str, (118, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 235, 255), 2, cv2.LINE_AA)
-        detail_str = f"帧均: {cur_mean_px:.2f}px | 最大: {cur_max_px:.2f}px (Tag#{worst_tid}) | 盲测: {len(cur_results)} 靶"
-        cv2.putText(canvas, detail_str, (118, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (190, 190, 190), 1, cv2.LINE_AA)
-
-        # 右侧全局仪表盘
+        # 计算全局准入门限与统计指标
         med_mm = self.stats.get("global_median_mm", 0.0)
         med_px = self.stats.get("global_median_px", 0.0)
         gate_ok = (med_mm <= 2.0 and med_px <= 3.0 and len(self.flagged_tags) == 0 and len(self.flagged_frames) == 0)
@@ -726,78 +757,117 @@ class TagOfflineVerifier:
         gate_label = f"{gate_tag} 准入门限: 达标 (允许进入AR)" if gate_ok else f"{gate_tag} 准入门限: 超标 (需审核/重平差)"
         gate_color = (0, 240, 120) if gate_ok else (0, 100, 255)
 
-        cv2.putText(canvas, gate_label, (w - 455, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.46, gate_color, 2, cv2.LINE_AA)
-        glob_str = f"全局中位: {med_mm:.2f}mm ({med_px:.2f}px) | 嫌疑Tag: {self.flagged_tags or '无'} | 回审: {len(self.flagged_frames)} 帧"
-        cv2.putText(canvas, glob_str, (w - 565, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, cv2.LINE_AA)
+        # -------------------------------------------------------------------------
+        # 3. 顶部 HUD: 整套样本 / 全局业务操作栏 (全量/回审过滤、BA平差、在线验证、导出报告、关闭)
+        # -------------------------------------------------------------------------
+        top_by1 = 12
+        top_by2 = top_bar_h - 12
+        top_bx = 12
 
-        # 初始化按钮列表 (涵盖顶部快捷关闭与底部全量控制栏)
-        self.gui_buttons = []
+        # A. 全局浏览模式下拉选择框 (Drop-down ComboBox，更加紧凑现代)
+        flagged_cnt = len(self.flagged_frames)
+        total_cnt = len(self.image_files)
+        filter_opts = [
+            ("ALL", f"全量浏览 ({total_cnt}帧)"),
+            ("FLAGGED", f"仅回审 ({flagged_cnt}帧)")
+        ]
+        active_key = "FLAGGED" if self.filter_flagged_only else "ALL"
+        active_c = (35, 45, 175) if self.filter_flagged_only else (150, 95, 20)
+        dd_w = 175
+        dd_rect = (top_bx, top_by1, top_bx + dd_w, top_by2)
+        if draw_dropdown_box:
+            dd_items, _ = draw_dropdown_box(
+                canvas, dd_rect, filter_opts, active_key,
+                is_open=self.is_filter_dropdown_open,
+                mouse_pos=self.mouse_pos,
+                shortcut="F",
+                active_color=active_c
+            )
+            for key, irect in dd_items:
+                self.gui_buttons.append((key, irect, key, (255, 255, 255)))
+        else:
+            self.gui_buttons.append(("DROPDOWN_TOGGLE", dd_rect, "TOGGLE", (255, 255, 255)))
+        top_bx += dd_w + 8
 
-        # 顶部 HUD 右上角快捷关闭按钮 (双保险交互设计，无论是右上角还是右下角均可秒退)
+        # B. 全局业务操作按钮：[BA平差 (B)]、[在线验证 (V)]、[导出报告 (S)]
+        global_action_btns = [
+            ("RUN_BA", "[BA平差 (B)]", 108, "primary"),
+            ("ENTER_AR", "[在线验证 (V)]", 120, "success" if gate_ok else "normal"),
+            ("EXPORT", "[导出报告 (S)]", 116, "normal"),
+        ]
+        for btn_id, label, bw, btype in global_action_btns:
+            btn_rect = (top_bx, top_by1, top_bx + bw, top_by2)
+            if draw_styled_button:
+                draw_styled_button(canvas, btn_rect, label, self.mouse_pos, btn_type=btype)
+            self.gui_buttons.append((btn_id, btn_rect, label, (255, 255, 255)))
+            top_bx += bw + 6
+
+        # C. 右上角关闭按钮 [关闭 (Q)]
         top_exit_rect = (w - 105, 12, w - 12, top_bar_h - 12)
         if draw_styled_button:
             draw_styled_button(canvas, top_exit_rect, "[关闭 (Q)]", self.mouse_pos, btn_type="danger")
         self.gui_buttons.append(("EXIT", top_exit_rect, "退出", (0, 0, 255)))
 
-        # 4. 绘制底部控制栏 (1:1 独立物理像素渲染，牢牢常驻在屏幕视线正下方)
+        # D. 右上角仪表盘指标 (位于关闭按钮左侧)
+        dash_rx = w - 120
+        cv2.putText(canvas, gate_label, (dash_rx - 340, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.46, gate_color, 2, cv2.LINE_AA)
+        glob_str = f"全局中位: {med_mm:.2f}mm ({med_px:.2f}px) | 嫌疑Tag: {self.flagged_tags or '无'} | 回审: {len(self.flagged_frames)} 帧"
+        cv2.putText(canvas, glob_str, (dash_rx - 450, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, cv2.LINE_AA)
+
+        # -------------------------------------------------------------------------
+        # 4. 绘制底部控制栏: 当前单帧专属操作栏 (上张、下张、3D/2D残差、审核此帧、单帧指标)
+        # -------------------------------------------------------------------------
         bot_overlay = canvas.copy()
         cv2.rectangle(bot_overlay, (0, h - bot_bar_h), (w, h), (20, 22, 28), -1)
         cv2.addWeighted(bot_overlay, 0.94, canvas, 0.06, 0, canvas)
         cv2.line(canvas, (0, h - bot_bar_h), (w, h), (50, 54, 66), 1)
 
-        # 组织底栏按钮与分段乒乓开关
-        bx = 12
-        by1 = h - bot_bar_h + 8
-        by2 = h - 8
-        mx, my = self.mouse_pos
+        bot_by1 = h - bot_bar_h + 8
+        bot_by2 = h - 8
+        bot_bx = 12
 
-        # A. 翻页按钮组
+        # A. 翻页按钮组 (A / D)
         for btn_id, label, bw in [("PREV", "< 上张 (A)", 96), ("NEXT", "下张 (D) >", 96)]:
-            btn_rect = (bx, by1, bx + bw, by2)
+            btn_rect = (bot_bx, bot_by1, bot_bx + bw, bot_by2)
             if draw_styled_button:
                 draw_styled_button(canvas, btn_rect, label, self.mouse_pos, btn_type="normal")
             self.gui_buttons.append((btn_id, btn_rect, label, (255, 255, 255)))
-            bx += bw + 6
+            bot_bx += bw + 6
 
-        # B. 核心分段胶囊乒乓开关：[ 全量浏览 | 仅回审(N) (F) ]
-        flagged_cnt = len(self.flagged_frames)
-        filter_opts = [("ALL", "全量浏览"), ("FLAGGED", f"仅回审({flagged_cnt})")]
-        active_idx = 1 if self.filter_flagged_only else 0
-        seg_w = 210
-        seg_rect = (bx, by1, bx + seg_w, by2)
-        active_c = (35, 45, 175) if self.filter_flagged_only else (150, 95, 20)
-        if draw_segmented_toggle:
-            sub_rects = draw_segmented_toggle(canvas, seg_rect, filter_opts, active_idx, self.mouse_pos, shortcut="F", active_color=active_c)
-            for key, srect in sub_rects:
-                self.gui_buttons.append(("TOGGLE_FILTER", srect, "TOGGLE_FILTER", (255, 255, 255)))
-        else:
-            self.gui_buttons.append(("TOGGLE_FILTER", seg_rect, "TOGGLE_FILTER", (255, 255, 255)))
-        bx += seg_w + 8
-
-        # C. 业务操作按钮
+        # B. 3D双棱柱 / 2D残差 乒乓切换
         btn_label_3d = "[3D双棱柱(T)]" if self.view_mode_3d else "[2D残差(T)]"
         btn_type_3d = "info" if self.view_mode_3d else "normal"
-        action_btns = [
-            ("TOGGLE_3D", btn_label_3d, 125, btn_type_3d),
-            ("OPEN_REVIEWER", "[审核此帧 (R)]", 120, "purple"),
-            ("RUN_BA", "[BA平差 (B)]", 110, "primary"),
-            ("ENTER_AR", "[在线验证 (V)]", 125, "success" if gate_ok else "normal"),
-            ("EXPORT", "[导出报告 (S)]", 115, "normal"),
-        ]
-        for btn_id, label, bw, btype in action_btns:
-            btn_rect = (bx, by1, bx + bw, by2)
-            if draw_styled_button:
-                draw_styled_button(canvas, btn_rect, label, self.mouse_pos, btn_type=btype)
-            self.gui_buttons.append((btn_id, btn_rect, label, (255, 255, 255)))
-            bx += bw + 6
-
-        # D. 右侧退出按钮 (加宽至 110px，高辨识度，确保鼠标极易点击)
-        exit_bw = 110
-        exit_bx = w - exit_bw - 10
-        exit_rect = (exit_bx, by1, exit_bx + exit_bw, by2)
+        rect_3d = (bot_bx, bot_by1, bot_bx + 125, bot_by2)
         if draw_styled_button:
-            draw_styled_button(canvas, exit_rect, "[退出 (Q)]", self.mouse_pos, btn_type="danger")
-        self.gui_buttons.append(("EXIT", exit_rect, "退出", (0, 0, 255)))
+            draw_styled_button(canvas, rect_3d, btn_label_3d, self.mouse_pos, btn_type=btn_type_3d)
+        self.gui_buttons.append(("TOGGLE_3D", rect_3d, btn_label_3d, (255, 255, 255)))
+        bot_bx += 125 + 6
+
+        # C. 审核此帧 (R)
+        rect_rev = (bot_bx, bot_by1, bot_bx + 120, bot_by2)
+        if draw_styled_button:
+            draw_styled_button(canvas, rect_rev, "[审核此帧 (R)]", self.mouse_pos, btn_type="purple")
+        self.gui_buttons.append(("OPEN_REVIEWER", rect_rev, "[审核此帧 (R)]", (255, 255, 255)))
+        bot_bx += 120 + 12
+
+        # D. 右侧展示当前单帧指标与状态结论 (背景与底栏/文件名一致，彻底消除按钮视觉误认)
+        # 1) 右侧靠边以醒目纯文本呈现结论 (无按钮外框与实心底板)
+        (cw, ch), _ = cv2.getTextSize(conclusion_str, cv2.FONT_HERSHEY_SIMPLEX, 0.54, 2)
+        concl_x = w - cw - 16
+        concl_y = bot_by1 + (bot_by2 - bot_by1 + ch) // 2
+        cv2.putText(canvas, conclusion_str, (concl_x, concl_y), cv2.FONT_HERSHEY_SIMPLEX, 0.54, conclusion_color, 2, cv2.LINE_AA)
+
+        # 2) 结论左侧展示当前帧索引、文件名与误差指标明细
+        info_rx = concl_x - 18
+        idx_str = f"[{self.current_idx + 1:02d}/{len(self.image_files):02d}] {cur_fname}"
+        detail_str = f"帧均: {cur_mean_px:.2f}px | 最大: {cur_max_px:.2f}px (Tag#{worst_tid}) | 盲测: {len(cur_results)} 靶"
+        (iw, _), _ = cv2.getTextSize(idx_str, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
+        (dw, _), _ = cv2.getTextSize(detail_str, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+        content_w = max(iw, dw)
+        info_tx = max(bot_bx + 12, info_rx - content_w)
+
+        cv2.putText(canvas, idx_str, (info_tx, bot_by1 + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 235, 255), 2, cv2.LINE_AA)
+        cv2.putText(canvas, detail_str, (info_tx, bot_by1 + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (190, 190, 190), 1, cv2.LINE_AA)
 
         # 5. 浮动 Toast 气泡
         if self.toast_msg and (time.time() - self.toast_time < 3.5):
@@ -873,7 +943,12 @@ class TagOfflineVerifier:
             elif key in (ord('0'), ord('z'), ord('Z')):  # 0 / Z 复位视口
                 if self.viewport and self.viewport.reset_zoom():
                     self.set_toast("视口已复位 (1.0x)")
-            elif key in (ord('q'), ord('Q'), 27):  # Q / ESC
+            elif key == 27:  # ESC: 若下拉菜单展开则优先收起，否则退出工作台
+                if self.is_filter_dropdown_open:
+                    self.is_filter_dropdown_open = False
+                    continue
+                break
+            elif key in (ord('q'), ord('Q')):  # Q 退出
                 break
 
         try:
