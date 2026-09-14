@@ -168,6 +168,13 @@ class TagOfflineStudio:
         # 10. UI 界面排版与视觉渲染器
         self.ui_renderer = StudioUIRenderer()
 
+        # 11. 异步全量超精提取任务状态调度
+        self.is_extracting_all: bool = False
+        self.extract_progress: float = 0.0
+        self.extract_stage_text: str = ""
+        self.extract_thread: Optional[threading.Thread] = None
+        self.extract_result_queue: Optional[Tuple[bool, str]] = None
+
         # 首次预热并计算全集残差指标
         self.refresh_all_frame_metrics()
 
@@ -309,6 +316,26 @@ class TagOfflineStudio:
     def global_rmse(self, val: float):
         self.data_mgr.global_rmse = val
 
+    @property
+    def global_median_mm(self) -> float:
+        return self.data_mgr.global_median_mm
+
+    @property
+    def global_mean_mm(self) -> float:
+        return self.data_mgr.global_mean_mm
+
+    @property
+    def gate_status(self) -> str:
+        return self.data_mgr.gate_status
+
+    @property
+    def topology_status(self) -> Dict[str, Any]:
+        return self.data_mgr.topology_status
+
+    @property
+    def current_diagnostics(self) -> Dict[str, Any]:
+        return self.data_mgr.current_diagnostics
+
     # ================= 异步 BA 平差属性代理 (透明转发至 ba_runner) =================
     @property
     def is_ba_running(self) -> bool:
@@ -412,6 +439,65 @@ class TagOfflineStudio:
         if bname:
             t_str = "已保留" if is_kept else "已剔除 (打叉)"
             self.set_toast(f"标靶 Tag #{target_tag_id} 在本帧中 {t_str}")
+
+    def super_extract_current_frame(self) -> Tuple[str, int]:
+        """对当前选中帧执行工序 3 工业级超精重提取并持久化"""
+        return self.data_mgr.super_extract_current_frame(self.current_img_idx)
+
+    def super_extract_all_frames(self, progress_callback: Optional[Any] = None) -> Tuple[int, int]:
+        """对所有采图帧清空原有角点与观测，从头重提取超精标靶并持久化"""
+        return self.data_mgr.super_extract_all_frames(progress_callback=progress_callback)
+
+    def start_async_super_extract_all(self) -> bool:
+        """启动后台异步线程执行全量采图工序 3 工业级超精重提取并从头重建"""
+        if self.is_extracting_all:
+            self.set_toast("全量超精提取已在后台运行中，请稍候...")
+            return False
+        if self.is_ba_running:
+            self.set_toast("全局平差计算中，请待平差完成后再执行提取")
+            return False
+        if not self.image_files:
+            self.set_toast("未扫描到采图文件，无法执行超精重提取")
+            return False
+
+        self.is_extracting_all = True
+        self.extract_progress = 0.01
+        self.extract_stage_text = f"正在启动全局全量超精提取 (共 {len(self.image_files)} 帧)..."
+        self.set_toast(self.extract_stage_text)
+
+        def _worker():
+            try:
+                def on_progress(cur, total, bname, count):
+                    self.extract_progress = cur / max(1, total)
+                    self.extract_stage_text = f"全量超精提取 ({cur}/{total}): {bname} (检出 {count} 个标靶)"
+
+                total_frames, total_tags = self.data_mgr.super_extract_all_frames(progress_callback=on_progress)
+                self.extract_progress = 1.0
+                msg = f"全局超精提取完成！处理 {total_frames} 帧，累计提取 {total_tags} 个高精标靶"
+                self.extract_result_queue = (True, msg)
+            except Exception as e:
+                self.extract_result_queue = (False, f"全量超精重提取失败: {e}")
+
+        self.extract_thread = threading.Thread(target=_worker, daemon=True)
+        self.extract_thread.start()
+        return True
+
+    def poll_super_extract_result(self) -> Optional[Tuple[bool, str]]:
+        """检查异步全量超精提取任务是否完成"""
+        if self.extract_result_queue is not None:
+            res = self.extract_result_queue
+            self.extract_result_queue = None
+            self.is_extracting_all = False
+            return res
+        return None
+
+    def reset_map(self) -> bool:
+        """一键复位清空空间立体地图 (自动备份为 tags_map.yaml.bak)"""
+        return self.data_mgr.reset_map()
+
+    def reset_all_keep_status(self) -> int:
+        """一键复位全量观测保留状态"""
+        return self.data_mgr.reset_all_keep_status()
 
     def start_async_bundle_adjustment(self):
         """启动后台线程执行两阶段全局 BA 平差优化，前台持续平滑响应"""
@@ -646,28 +732,52 @@ class TagOfflineStudio:
             self.toggle_tag_exclusion_in_current_frame(tid)
 
         elif btn_id == "SUPER_EXTRACT_FRAME":
-            self.set_toast("正在对当前单帧执行超精重提取...")
-            # 单帧重提取
-            if self.image_files:
-                cur_file = self.image_files[self.current_img_idx]
-                bname = os.path.basename(cur_file)
-                bgr = cv2.imread(cur_file)
-                if bgr is not None:
-                    tags_dict = self.engine.detect_tags(bgr)
-                    obs = []
-                    for tid, c in tags_dict.items():
-                        obs.append({
-                            "tag_id": int(tid),
-                            "corners": c.reshape((4, 2)).tolist(),
-                            "keep": True
-                        })
-                    self.manifest_data.setdefault("images", {})[bname] = {"observations": obs}
-                    self._save_manifest()
-                    self.refresh_all_frame_metrics()
-                    self.set_toast(f"超精重提取完成: 识别到 {len(obs)} 个标靶")
+            self.set_toast("正在执行工序 3 工业级超精重提取 (多尺度CLAHE+2x超分+0.01px亚像素精修)...")
+            bname, cnt = self.super_extract_current_frame()
+            if bname:
+                self.set_toast(f"帧 {bname} 超精重提取完成并已原子持久化: 检出 {cnt} 个标靶")
+        elif btn_id == "SUPER_EXTRACT_ALL":
+            self.start_async_super_extract_all()
+        elif btn_id == "RESET_MAP":
+            self.reset_map()
+            self.set_toast("立体地图已复位清空 (备份为 .bak)，恢复为纯观测模式")
+        elif btn_id == "RESET_KEEP_ALL":
+            restored = self.reset_all_keep_status()
+            self.set_toast(f"已一键复位所有观测有效状态 (恢复 {restored} 个标靶)")
         elif btn_id == "DIAGNOSE_FRAME":
-            self.set_toast("已启动当前帧切片漏检病因诊断 (请查看终端输出)")
-            print(f"\n[*] [STUDIO DIAGNOSTICS] 正在切片诊断当前选定帧: {os.path.basename(self.image_files[self.current_img_idx])}")
+            self.toggle_frame_diagnostics()
+        elif btn_id == "LAUNCH_AR":
+            self.launch_online_ar_verifier()
+
+    def toggle_frame_diagnostics(self):
+        """唤起/关闭当前选定帧的漏检病因深度切片诊断视图"""
+        self.show_frame_diagnostics = not self.show_frame_diagnostics
+        if self.show_frame_diagnostics:
+            diag = self.data_mgr.diagnose_frame(self.current_img_idx)
+            bname = os.path.basename(self.image_files[self.current_img_idx])
+            c_g = diag.get("contrast_grade", "")
+            s_g = diag.get("sharpness_grade", "")
+            rej_n = diag.get("rejected_quads_count", 0)
+            miss_n = len(diag.get("missing_theoretical_tags", []))
+            self.set_toast(f"[{bname}] 病因切片: 对比度 {c_g} | 清晰度 {s_g} | 拒检 {rej_n} | 理论漏检 {miss_n}")
+            print("\n" + "=" * 70)
+            print(f"[*] [STUDIO DIAGNOSTICS] 图像深度病因切片: {bname}")
+            print(f"    - 对比度 (灰度标准差): {diag.get('contrast', 0.0):.1f} ({c_g})")
+            print(f"    - 亮度均值: {diag.get('brightness', 0.0):.1f} ({diag.get('brightness_grade', '')})")
+            print(f"    - 图像清晰度 (拉普拉斯梯度): {diag.get('sharpness', 0.0):.1f} ({s_g})")
+            print(f"    - 算法被拒候选四边形: {rej_n} 个 (过小: {diag.get('rej_small', 0)}, 长宽失真: {diag.get('rej_aspect', 0)})")
+            if diag.get("missing_theoretical_tags"):
+                print(f"    - 视场理论可见但漏检的标靶: {[m['tag_id'] for m in diag['missing_theoretical_tags']]}")
+            print("=" * 70 + "\n")
+        else:
+            self.set_toast("已退出病因切片诊断模式，返回常规视口")
+
+    def launch_online_ar_verifier(self):
+        """一键跨工序启动工序 7 在线 AR 姿态重投影验证器"""
+        print("\n[*] [STUDIO] 正在启动工序 7 在线 AR 验证器 (tag_calibration_verifier.py)...")
+        self.set_toast("正在启动工序 7 在线 AR 验证器...")
+        import subprocess
+        subprocess.Popen([sys.executable, "tools/calibration/tag_calibration_verifier.py"])
 
     def run(self):
         """进入 Studio 主交互渲染循环"""
@@ -686,16 +796,19 @@ class TagOfflineStudio:
         print(f" [空间立体地图] : {self.map_path}")
         print(" [工作流指南]   :")
         print("   - [↑] / [↓] 或 [W] / [S] : 上下顺序切换当前选定的图像帧")
+        print("   - [E]                    : 执行工序 3 工业级超精重提取 (5路增强+2x超分+0.01px精修)")
+        print("   - [D]                    : 运行当前帧漏检病因切片诊断")
         print("   - [V]                    : 循环切换视口模式 (混合 ⇋ 3D双棱柱 ⇋ 2D残差矢量)")
         print("   - [滚轮 (中间画布)]      : 以鼠标为中心实时精准放大/缩小图像 (0.4x ~ 15.0x)")
         print("   - [右键/中键拖拽]        : 在中间画布中自由平移浏览图像细节")
         print("   - [滚轮 (左侧栏)]        : 上下滚动浏览帧序列列表")
         print("   - [双击画布] / [Z] / [0] : 一键重置图像缩放和平移为适应视口 (1.0x)")
         print("   - [T] / [Space]          : 翻转当前帧有效性状态 (保留 ⇋ 剔除)")
-        print("   - [B]                    : 异步执行全局平差优化 (BA) 并就地热重载")
+        print("   - [B]                    : 异步执行全局平差优化 (全量批处理 Batch BA) 并就地热重载")
         print("   - [P]                    : 全量重算并刷新所有帧精度体检残差指标")
         print("   - [R]                    : 导出离线全景精度体检 Markdown 质检单")
-        print("   - [S]                    : 保存当前优化后的空间立体地图")
+        print("   - [M]                    : 保存当前优化后的空间立体地图")
+        print("   - [Backspace] / [Delete] : 一键复位清空空间立体地图 (重置为未建图纯观测状态)")
         print("   - [Q] / [ESC]            : 安全退出工作台返回控制台")
         print("=" * 80 + "\n")
 
@@ -713,7 +826,12 @@ class TagOfflineStudio:
                 self.render(canvas)
 
                 cv2.imshow(window_name, canvas)
-                key = cv2.waitKey(20) & 0xFF
+                raw_key = cv2.waitKey(20)
+                if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    break
+                if raw_key == -1:
+                    continue
+                key = raw_key & 0xFF
 
                 if key in (ord('q'), ord('Q'), 27):
                     break
@@ -721,10 +839,21 @@ class TagOfflineStudio:
                     if self.image_files:
                         self.current_img_idx = (self.current_img_idx - 1) % len(self.image_files)
                         self.set_toast(f"选定帧: {os.path.basename(self.image_files[self.current_img_idx])}")
+                        if self.show_frame_diagnostics:
+                            self.data_mgr.diagnose_frame(self.current_img_idx)
                 elif key in (ord('s'), ord('S'), 84):  # 下一帧 (S / Down)
                     if self.image_files:
                         self.current_img_idx = (self.current_img_idx + 1) % len(self.image_files)
                         self.set_toast(f"选定帧: {os.path.basename(self.image_files[self.current_img_idx])}")
+                        if self.show_frame_diagnostics:
+                            self.data_mgr.diagnose_frame(self.current_img_idx)
+                elif key in (ord('e'), ord('E')):      # E 键 -> 单帧超精重提取
+                    self.set_toast("正在执行单帧工业级超精重提取...")
+                    bname, cnt = self.super_extract_current_frame()
+                    if bname:
+                        self.set_toast(f"帧 {bname} 超精提取完成并永久持久化: 检出 {cnt} 个标靶")
+                elif key in (ord('d'), ord('D')):      # D 键 -> 漏检病因切片诊断
+                    self.toggle_frame_diagnostics()
                 elif key in (ord('v'), ord('V')):      # V 键 -> 循环切换视口预设模式
                     presets = [
                         ("3d", "3d", "全 3D 双棱柱空间对比 (BA 3D + 实测 3D)"),
@@ -753,9 +882,12 @@ class TagOfflineStudio:
                     self.set_toast("已全量重算体检指标")
                 elif key in (ord('r'), ord('R')):      # R 键 -> 导出报告
                     self.export_verification_report()
-                elif key in (ord('s'), ord('S')):      # S 键 -> 保存地图
+                elif key in (ord('m'), ord('M')):      # M 键 -> 保存地图
                     ManifestRepository.save_map(self.tags_map_data, self.map_path)
                     self.set_toast("空间立体地图已保存！")
+                elif key in (8, 127):                  # Backspace 或 Delete (DEL) -> 一键复位地图
+                    self.reset_map()
+                    self.set_toast("立体地图已复位清空 (备份为 .bak)，恢复为纯观测模式")
 
 
 

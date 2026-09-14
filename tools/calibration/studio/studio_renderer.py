@@ -112,6 +112,15 @@ class StudioUIRenderer:
             if succ:
                 studio.refresh_all_frame_metrics()
 
+        # 异步全量超精提取结果轮询
+        if hasattr(studio, "poll_super_extract_result"):
+            ext_res = studio.poll_super_extract_result()
+            if ext_res is not None:
+                succ, msg = ext_res
+                studio.set_toast(msg)
+                if succ:
+                    studio.refresh_all_frame_metrics()
+
         # 1. 顶栏
         self.render_top_bar(studio, canvas, w, top_h)
 
@@ -134,9 +143,11 @@ class StudioUIRenderer:
         mid_w = w - studio.left_bar_w - studio.right_bar_w
         self.render_center_viewport(studio, canvas, mid_x1, content_y1, mid_w, content_h)
 
-        # 4. 居中展示异步 BA 运行中进度卡片
+        # 4. 居中展示异步 BA 运行中或全量超精提取进度卡片
         if studio.is_ba_running:
             self.render_ba_loading_card(studio, canvas, w, h)
+        elif getattr(studio, "is_extracting_all", False):
+            self.render_extract_loading_card(studio, canvas, w, h)
 
         # 5. Toast 浮层
         if time.time() - studio.status_toast_time < 3.0 and studio.status_toast:
@@ -155,10 +166,60 @@ class StudioUIRenderer:
         cv2.putText(canvas, "OFFLINE STUDIO", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 220, 255), 2, cv2.LINE_AA)
         cv2.putText(canvas, "| AprilTag 离线标定与空间建图综合工作站", (185, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 200, 200), 1, cv2.LINE_AA)
 
+        # 右侧状态胶囊区域
+        curr_x = w - 16
+
+        # 1. 质量放行门限徽章 (Gate Verdict)
+        gate = getattr(studio, "gate_status", "REVIEW")
+        verdict = gate if isinstance(gate, str) else gate.get("gate_verdict", "REVIEW")
+        if verdict == "PASS":
+            v_txt = "放行: PASS"
+            v_bg, v_border, v_fg = (20, 70, 30), (40, 180, 70), (160, 255, 180)
+        elif verdict == "ACCEPTABLE":
+            v_txt = "放行: 可接受"
+            v_bg, v_border, v_fg = (20, 60, 80), (30, 160, 220), (140, 230, 255)
+        else:
+            v_txt = "放行: 建议回审"
+            v_bg, v_border, v_fg = (30, 20, 80), (50, 40, 220), (180, 160, 255)
+
+        (vw, _), _ = cv2.getTextSize(v_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+        v_box_w = vw + 14
+        curr_x -= v_box_w
+        cv2.rectangle(canvas, (curr_x, 9), (curr_x + v_box_w, top_h - 9), v_bg, -1)
+        cv2.rectangle(canvas, (curr_x, 9), (curr_x + v_box_w, top_h - 9), v_border, 1)
+        cv2.putText(canvas, v_txt, (curr_x + 7, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.38, v_fg, 1, cv2.LINE_AA)
+
+        curr_x -= 10
+
+        # 2. 拓扑连通度徽章 (Topology Status)
+        topo = getattr(studio, "topology_status", {})
+        is_conn = topo.get("is_valid", True)
+        unconnected = topo.get("unconnected_tags", [])
+        if unconnected:
+            t_txt = f"拓扑: 孤岛 #{unconnected[0]}"
+            t_bg, t_border, t_fg = (20, 20, 75), (40, 40, 200), (140, 140, 255)
+        elif not is_conn:
+            t_txt = "拓扑: 弱连通"
+            t_bg, t_border, t_fg = (20, 50, 75), (40, 130, 200), (140, 210, 255)
+        else:
+            t_txt = "拓扑: 全连通"
+            t_bg, t_border, t_fg = (20, 60, 35), (40, 160, 80), (160, 255, 190)
+
+        (tw, _), _ = cv2.getTextSize(t_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+        t_box_w = tw + 14
+        curr_x -= t_box_w
+        cv2.rectangle(canvas, (curr_x, 9), (curr_x + t_box_w, top_h - 9), t_bg, -1)
+        cv2.rectangle(canvas, (curr_x, 9), (curr_x + t_box_w, top_h - 9), t_border, 1)
+        cv2.putText(canvas, t_txt, (curr_x + 7, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.38, t_fg, 1, cv2.LINE_AA)
+
+        curr_x -= 14
+
+        # 3. 统计指标文字 (采图数 | 标靶数 | 全局 RMSE / 空间毫米偏差)
         tag_num = len(studio.tags_map_data.get("tags", {}))
-        stat_txt = f"采图集: {len(studio.image_files)} 帧  |  已知标靶: {tag_num} 个  |  全局 RMSE: {studio.global_rmse:.2f} px"
-        (tw, _), _ = cv2.getTextSize(stat_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
-        cv2.putText(canvas, stat_txt, (w - tw - 20, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 180), 1, cv2.LINE_AA)
+        med_mm = getattr(studio, "global_median_mm", 0.0)
+        stat_txt = f"采图集: {len(studio.image_files)} 帧 | 标靶: {tag_num} 个 | 全局 RMSE: {studio.global_rmse:.2f}px ({med_mm:.2f}mm)"
+        (sw, _), _ = cv2.getTextSize(stat_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+        cv2.putText(canvas, stat_txt, (curr_x - sw, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 180), 1, cv2.LINE_AA)
 
     def render_bottom_toolbar(self, studio: Any, canvas: np.ndarray, w: int, h: int, bot_h: int):
         y1 = h - bot_h
@@ -170,7 +231,24 @@ class StudioUIRenderer:
         bx = 16
         mx, my = studio.mouse_pos
 
-        # [B] 全局平差
+        # 1. 复位地图 (清空已知平差地图)
+        rst_map_w = 105
+        draw_styled_button(canvas, (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "复位地图",
+                           mouse_pos=(mx, my), btn_type="danger")
+        studio.gui_buttons.append(("RESET_MAP", (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "RESET_MAP"))
+        bx += rst_map_w + 10
+
+        # 2. 全局全量超精提取 (清空旧角点并从头重提取)
+        ext_w = 135
+        is_ext = getattr(studio, "is_extracting_all", False)
+        ext_type = "warning" if is_ext else "normal"
+        ext_txt = "正在超精提取..." if is_ext else "全局超精提取"
+        draw_styled_button(canvas, (bx, btn_y_top, bx + ext_w, btn_y_bot), ext_txt,
+                           mouse_pos=(mx, my), btn_type=ext_type)
+        studio.gui_buttons.append(("SUPER_EXTRACT_ALL", (bx, btn_y_top, bx + ext_w, btn_y_bot), "SUPER_EXTRACT_ALL"))
+        bx += ext_w + 10
+
+        # 3. [B] 全局平差
         ba_w = 135
         ba_type = "warning" if studio.is_ba_running else "primary"
         ba_txt = "正在平差..." if studio.is_ba_running else "全局平差 (B)"
@@ -179,28 +257,35 @@ class StudioUIRenderer:
         studio.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_w, btn_y_bot), "RUN_BA"))
         bx += ba_w + 10
 
-        # [P] 全量精度体检重算
+        # 3. [M] 保存/发布地图
+        s_w = 115
+        draw_styled_button(canvas, (bx, btn_y_top, bx + s_w, btn_y_bot), "保存地图 (M)",
+                           mouse_pos=(mx, my), btn_type="success")
+        studio.gui_buttons.append(("SAVE_MAP", (bx, btn_y_top, bx + s_w, btn_y_bot), "SAVE_MAP"))
+        bx += s_w + 10
+
+        # 4. [P] 全程/全量精度体检重算
         p_w = 125
         draw_styled_button(canvas, (bx, btn_y_top, bx + p_w, btn_y_bot), "全量体检 (P)",
                            mouse_pos=(mx, my), btn_type="normal")
         studio.gui_buttons.append(("RECOMPUTE_METRICS", (bx, btn_y_top, bx + p_w, btn_y_bot), "RECOMPUTE_METRICS"))
         bx += p_w + 10
 
-        # [R] 导出质检报告
+        # 5. [R] 导出质检报告
         r_w = 115
         draw_styled_button(canvas, (bx, btn_y_top, bx + r_w, btn_y_bot), "导出报告 (R)",
                            mouse_pos=(mx, my), btn_type="normal")
         studio.gui_buttons.append(("EXPORT_REPORT", (bx, btn_y_top, bx + r_w, btn_y_bot), "EXPORT_REPORT"))
         bx += r_w + 10
 
-        # [S] 保存/发布地图
-        s_w = 115
-        draw_styled_button(canvas, (bx, btn_y_top, bx + s_w, btn_y_bot), "保存地图 (S)",
-                           mouse_pos=(mx, my), btn_type="success")
-        studio.gui_buttons.append(("SAVE_MAP", (bx, btn_y_top, bx + s_w, btn_y_bot), "SAVE_MAP"))
-        bx += s_w + 10
+        # 6. 复位保留 (一键恢复所有剔除的观测为有效)
+        rst_keep_w = 105
+        draw_styled_button(canvas, (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "复位保留",
+                           mouse_pos=(mx, my), btn_type="normal")
+        studio.gui_buttons.append(("RESET_KEEP_ALL", (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "RESET_KEEP_ALL"))
+        bx += rst_keep_w + 10
 
-        # 右侧 [Q] 退出工作台
+        # 7. 右侧 [Q] 退出工作台 (最右侧退出不动)
         exit_w = 90
         exit_x1 = w - exit_w - 16
         draw_styled_button(canvas, (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "退出 (Q)",
@@ -505,8 +590,22 @@ class StudioUIRenderer:
                     if hasattr(studio.visualizer, "draw_reprojection_vectors"):
                         studio.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
 
+        # 5. 若处于病因切片诊断模式，叠加视野内预测但实测漏检的标靶框 (橙黄色矩形与 Tag 标注)
+        if getattr(studio, "show_frame_diagnostics", False):
+            diag = getattr(studio, "current_diagnostics", {})
+            missing = diag.get("missing_projected_tags", []) or diag.get("missing_theoretical_tags", [])
+            for m in missing:
+                tid = m.get("tag_id")
+                c_pts = m.get("proj_corners") or m.get("predicted_corners")
+                if c_pts is not None and len(c_pts) == 4:
+                    pts_i = np.array(c_pts, dtype=np.int32)
+                    cv2.polylines(disp_frame, [pts_i], isClosed=True, color=(0, 140, 255), thickness=2, lineType=cv2.LINE_AA)
+                    mcx, mcy = int(np.mean(pts_i[:, 0])), int(np.mean(pts_i[:, 1]))
+                    cv2.putText(disp_frame, f"? Tag #{tid} [漏检预测]", (mcx - 45, mcy),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 2, cv2.LINE_AA)
+
     def render_right_inspector(self, studio: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
-        """右栏：精简瘦身属性与标靶残差清单面板 (瘦身宽度: 180px)"""
+        """右栏：精简属性与标靶残差清单/病因切片诊断双模面板 (瘦身宽度: 180px)"""
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (22, 24, 30), -1)
         cv2.line(canvas, (x, y), (x, y + h), (50, 54, 66), 1)
 
@@ -524,58 +623,115 @@ class StudioUIRenderer:
         is_excl = meta.get("is_excluded", False)
         b_type = "danger" if is_excl else "success"
         b_label = "恢复此帧 (T)" if is_excl else "剔除此帧 (T)"
-        draw_styled_button(canvas, (x + 8, y + 30, x + w - 8, y + 56), b_label,
+        draw_styled_button(canvas, (x + 8, y + 30, x + w - 8, y + 54), b_label,
                            mouse_pos=studio.mouse_pos, btn_type=b_type)
-        studio.gui_buttons.append(("TOGGLE_FRAME_STATUS", (x + 8, y + 30, x + w - 8, y + 56), bname))
+        studio.gui_buttons.append(("TOGGLE_FRAME_STATUS", (x + 8, y + 30, x + w - 8, y + 54), bname))
 
-        # 2. 标靶细目清单 (精简高信息密度表格)
-        list_y = y + 66
-        cv2.line(canvas, (x + 8, list_y), (x + w - 8, list_y), (45, 48, 58), 1)
-        obs_list = meta.get("observations", [])
-        tag_errors = meta.get("tag_errors", {})
-        cv2.putText(canvas, f"标靶与残差 ({len(obs_list)})", (x + 8, list_y + 16),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 185, 195), 1, cv2.LINE_AA)
+        # 底部动作区域基准 Y (预留 3 个紧凑按钮: 超精提取、病因诊断/常规面板、在线AR)
+        diag_y = y + h - 88
 
-        row_y = list_y + 24
-        row_h = 24
-        for obs in obs_list:
-            tid = obs["tag_id"]
-            keep = obs.get("keep", True)
-            err_val = tag_errors.get(tid, 0.0)
+        # 2. 中间区域：根据 show_frame_diagnostics 模式切换
+        is_diag_mode = getattr(studio, "show_frame_diagnostics", False)
+        if is_diag_mode:
+            # 渲染【单帧深度切片病因诊断】面板
+            diag_top_y = y + 62
+            cv2.line(canvas, (x + 8, diag_top_y), (x + w - 8, diag_top_y), (45, 48, 58), 1)
+            cv2.putText(canvas, "单帧病因切片诊断", (x + 8, diag_top_y + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 215, 255), 1, cv2.LINE_AA)
 
-            rx1, ry1, rx2, ry2 = x + 6, row_y, x + w - 6, row_y + row_h - 2
-            is_hover = (rx1 <= studio.mouse_pos[0] <= rx2 and ry1 <= studio.mouse_pos[1] <= ry2)
-            bg_col = (34, 38, 48) if is_hover else (26, 28, 36)
-            cv2.rectangle(canvas, (rx1, ry1), (rx2, ry2), bg_col, -1)
-            cv2.rectangle(canvas, (rx1, ry1), (rx2, ry2), (48, 52, 64), 1)
-            studio.gui_buttons.append((f"TOGGLE_TAG_{tid}", (rx1, ry1, rx2, ry2), tid))
+            diag = getattr(studio, "current_diagnostics", {})
+            cy = diag_top_y + 36
 
-            dot_c = (0, 220, 80) if keep else (0, 0, 220)
-            cv2.circle(canvas, (rx1 + 10, ry1 + 11), 3, dot_c, -1)
+            # 指标1：清晰度 Laplace
+            lap = diag.get("sharpness", diag.get("laplacian_var", 0.0))
+            lap_g = diag.get("sharpness_grade", "")
+            cv2.putText(canvas, f"清晰度: {lap:.1f} {lap_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
+            cy += 20
 
-            t_col = (230, 230, 230) if keep else (120, 120, 120)
-            cv2.putText(canvas, f"#{tid}", (rx1 + 18, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.38, t_col, 1, cv2.LINE_AA)
+            # 指标2：对比度 RMS
+            c_rms = diag.get("contrast", diag.get("contrast_rms", 0.0))
+            c_g = diag.get("contrast_grade", "")
+            cv2.putText(canvas, f"对比度: {c_rms:.1f} {c_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
+            cy += 20
 
-            err_str = f"{err_val:.2f}px" if keep else "EXCL"
-            err_c = (120, 120, 120) if not keep else ((0, 200, 255) if err_val > 0.5 else (0, 230, 80))
-            (ew, _), _ = cv2.getTextSize(err_str, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
-            cv2.putText(canvas, err_str, (rx2 - ew - 6, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.36, err_c, 1, cv2.LINE_AA)
+            # 指标3：平均亮度 Mean
+            m_lum = diag.get("brightness", diag.get("mean_intensity", 0.0))
+            b_g = diag.get("brightness_grade", "")
+            cv2.putText(canvas, f"亮度: {m_lum:.1f} {b_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
+            cy += 24
 
-            row_y += row_h
-            if row_y > y + h - 80:
-                break
+            # 拒检四边形候选
+            rej_c = diag.get("rejected_quads_count", diag.get("false_rejections_count", 0))
+            cv2.putText(canvas, f"畸变/超小候选: {rej_c}个", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (170, 175, 185), 1, cv2.LINE_AA)
+            cy += 20
 
-        # 3. 底部紧凑快捷动作
-        diag_y = y + h - 68
+            # 理论漏检标靶
+            missing = diag.get("missing_projected_tags", []) or diag.get("missing_theoretical_tags", [])
+            if missing:
+                m_tids = ",".join([f"#{m['tag_id']}" for m in missing])
+                cv2.putText(canvas, f"理论漏检: {len(missing)}个", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 140, 255), 1, cv2.LINE_AA)
+                cy += 18
+                cv2.putText(canvas, f"目标: {m_tids}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 180, 255), 1, cv2.LINE_AA)
+            else:
+                cv2.putText(canvas, "理论漏检: 无 (全捕获)", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 220, 100), 1, cv2.LINE_AA)
+
+        else:
+            # 渲染常规【标靶与残差清单】面板
+            list_y = y + 62
+            cv2.line(canvas, (x + 8, list_y), (x + w - 8, list_y), (45, 48, 58), 1)
+            obs_list = meta.get("observations", [])
+            tag_errors = meta.get("tag_errors", {})
+            cv2.putText(canvas, f"标靶与残差 ({len(obs_list)})", (x + 8, list_y + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 185, 195), 1, cv2.LINE_AA)
+
+            row_y = list_y + 24
+            row_h = 24
+            for obs in obs_list:
+                tid = obs["tag_id"]
+                keep = obs.get("keep", True)
+                err_val = tag_errors.get(tid, 0.0)
+
+                rx1, ry1, rx2, ry2 = x + 6, row_y, x + w - 6, row_y + row_h - 2
+                is_hover = (rx1 <= studio.mouse_pos[0] <= rx2 and ry1 <= studio.mouse_pos[1] <= ry2)
+                bg_col = (34, 38, 48) if is_hover else (26, 28, 36)
+                cv2.rectangle(canvas, (rx1, ry1), (rx2, ry2), bg_col, -1)
+                cv2.rectangle(canvas, (rx1, ry1), (rx2, ry2), (48, 52, 64), 1)
+                studio.gui_buttons.append((f"TOGGLE_TAG_{tid}", (rx1, ry1, rx2, ry2), tid))
+
+                dot_c = (0, 220, 80) if keep else (0, 0, 220)
+                cv2.circle(canvas, (rx1 + 10, ry1 + 11), 3, dot_c, -1)
+
+                t_col = (230, 230, 230) if keep else (120, 120, 120)
+                cv2.putText(canvas, f"#{tid}", (rx1 + 18, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.38, t_col, 1, cv2.LINE_AA)
+
+                err_str = f"{err_val:.2f}px" if keep else "EXCL"
+                err_c = (120, 120, 120) if not keep else ((0, 200, 255) if err_val > 0.5 else (0, 230, 80))
+                (ew, _), _ = cv2.getTextSize(err_str, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
+                cv2.putText(canvas, err_str, (rx2 - ew - 6, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.36, err_c, 1, cv2.LINE_AA)
+
+                row_y += row_h
+                if row_y > diag_y - 12:
+                    break
+
+        # 3. 底部 3 个紧凑快捷动作
         cv2.line(canvas, (x + 8, diag_y), (x + w - 8, diag_y), (45, 48, 58), 1)
 
-        draw_styled_button(canvas, (x + 8, diag_y + 8, x + w - 8, diag_y + 32), "超精提取 (E)",
+        # 按钮 1: 超精提取 (E)
+        draw_styled_button(canvas, (x + 8, diag_y + 4, x + w - 8, diag_y + 28), "超精提取 (E)",
                            mouse_pos=studio.mouse_pos, btn_type="primary")
-        studio.gui_buttons.append(("SUPER_EXTRACT_FRAME", (x + 8, diag_y + 8, x + w - 8, diag_y + 32), bname))
+        studio.gui_buttons.append(("SUPER_EXTRACT_FRAME", (x + 8, diag_y + 4, x + w - 8, diag_y + 28), bname))
 
-        draw_styled_button(canvas, (x + 8, diag_y + 36, x + w - 8, diag_y + 60), "病因诊断 (D)",
-                           mouse_pos=studio.mouse_pos, btn_type="warning")
-        studio.gui_buttons.append(("DIAGNOSE_FRAME", (x + 8, diag_y + 36, x + w - 8, diag_y + 60), bname))
+        # 按钮 2: 病因诊断 (D) / 常规面板 (D)
+        d_lbl = "常规面板 (D)" if is_diag_mode else "病因诊断 (D)"
+        d_typ = "normal" if is_diag_mode else "warning"
+        draw_styled_button(canvas, (x + 8, diag_y + 32, x + w - 8, diag_y + 56), d_lbl,
+                           mouse_pos=studio.mouse_pos, btn_type=d_typ)
+        studio.gui_buttons.append(("DIAGNOSE_FRAME", (x + 8, diag_y + 32, x + w - 8, diag_y + 56), bname))
+
+        # 按钮 3: 在线 AR 验证 (7)
+        draw_styled_button(canvas, (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "在线 AR (7)",
+                           mouse_pos=studio.mouse_pos, btn_type="success")
+        studio.gui_buttons.append(("LAUNCH_AR", (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "LAUNCH_AR"))
 
     def render_ba_loading_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
         """居中展示异步 BA 全局平差双轨进度卡片 (大阶段主进度条 + 求解器子进度条与实时收敛指标)"""
@@ -641,6 +797,47 @@ class StudioUIRenderer:
         sub_txt = studio.ba_sub_text or "等待当前阶段迭代步进推进..."
         cv2.putText(canvas, sub_txt, (cx1 + 22, cy1 + 132),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1, cv2.LINE_AA)
+
+    def render_extract_loading_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
+        """工序 3 全量超精提取进行中：居中磨砂半透明高科技进度卡片"""
+        card_w, card_h = 520, 110
+        cx1 = (w - card_w) // 2
+        cy1 = (h - card_h) // 2
+        cx2 = cx1 + card_w
+        cy2 = cy1 + card_h
+
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (cx1, cy1), (cx2, cy2), (20, 24, 32), -1)
+        cv2.addWeighted(overlay, 0.94, canvas, 0.06, 0, canvas)
+        cv2.rectangle(canvas, (cx1, cy1), (cx2, cy2), (0, 200, 255), 2)
+
+        pct = max(0.0, min(1.0, getattr(studio, "extract_progress", 0.0)))
+        pct_int = int(round(pct * 100))
+
+        cv2.putText(canvas, "工序 3: 全局全量图像超精重提取", (cx1 + 22, cy1 + 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+        pct_str = f"{pct_int}%"
+        (pw, _), _ = cv2.getTextSize(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
+        cv2.putText(canvas, pct_str, (cx1 + card_w - 22 - pw, cy1 + 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 235, 255), 2, cv2.LINE_AA)
+
+        bar_x1 = cx1 + 22
+        bar_y1 = cy1 + 38
+        bar_x2 = cx1 + card_w - 22
+        bar_y2 = bar_y1 + 14
+        bar_w = bar_x2 - bar_x1
+
+        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (30, 34, 44), -1)
+        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (55, 62, 78), 1)
+
+        fill_w = int(bar_w * pct)
+        if fill_w > 0:
+            cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y2), (0, 210, 255), -1)
+            cv2.line(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y1), (180, 245, 255), 1)
+
+        stage_txt = getattr(studio, "extract_stage_text", "") or "正在全量调用多尺度增强与正交亚像素精修..."
+        cv2.putText(canvas, stage_txt, (cx1 + 22, cy1 + 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 215, 240), 1, cv2.LINE_AA)
 
     def render_toast(self, studio: Any, canvas: np.ndarray, w: int, h: int, bot_h: int):
         (tw, _), _ = cv2.getTextSize(studio.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)

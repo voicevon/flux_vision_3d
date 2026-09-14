@@ -59,9 +59,62 @@ class StudioDataManager:
         # 3. 体检指标缓存
         self.frame_metrics_cache: Dict[str, Dict[str, Any]] = {}
         self.global_rmse: float = 0.0
+        self.global_median_mm: float = 0.0
+        self.global_mean_mm: float = 0.0
+        self.gate_status: str = "REVIEW"
+        self.topology_status: Dict[str, Any] = {
+            "is_valid": True,
+            "components_count": 1,
+            "critical_bridges": [],
+            "unconnected_tags": [],
+            "connected_tags_count": 0,
+            "message": "就绪"
+        }
+        self.current_diagnostics: Dict[str, Any] = {}
+
+        # 4. 超精重提取引擎 (惰性装载)
+        self._super_extractor = None
 
         # 首次加载全集残差指标
         self.refresh_all_frame_metrics()
+
+    @property
+    def super_extractor(self):
+        """惰性装载工序 3 工业级超精重提取引擎"""
+        if self._super_extractor is None:
+            from tools.calibration.tag_super_extractor import TagSuperExtractor
+            self._super_extractor = TagSuperExtractor(
+                image_dir=self.image_dir,
+                manifest_path=self.manifest_path,
+                marker_size_mm=self.marker_size_mm
+            )
+        return self._super_extractor
+
+    def _sync_manifest_summary(self):
+        """同步更新 manifest 顶层 summary 统计指标"""
+        total_obs = 0
+        total_kept = 0
+        total_excl = 0
+        total_enabled = 0
+        images_dict = self.manifest_data.get("images", {})
+        for img_info in images_dict.values():
+            if img_info.get("enabled", True) and not img_info.get("excluded", False):
+                total_enabled += 1
+            for obs in img_info.get("observations", []):
+                total_obs += 1
+                if obs.get("keep", True):
+                    total_kept += 1
+                else:
+                    total_excl += 1
+        if "summary" not in self.manifest_data or not isinstance(self.manifest_data["summary"], dict):
+            self.manifest_data["summary"] = {}
+        self.manifest_data["summary"].update({
+            "total_images": len(images_dict),
+            "total_enabled_images": total_enabled,
+            "total_observations": total_obs,
+            "total_kept": total_kept,
+            "total_excluded": total_excl
+        })
 
     def _scan_images(self):
         """扫描采图资产目录"""
@@ -143,19 +196,212 @@ class StudioDataManager:
         return info.get("observations", [])
 
     def is_image_excluded(self, base_name: str) -> bool:
-        """判断某帧是否被整帧标记为剔除"""
+        """判断某帧是否被整帧标记为剔除 (兼容 excluded 与 not enabled)"""
         images_dict = self.manifest_data.get("images", {})
         info = images_dict.get(base_name, {})
-        return info.get("excluded", False)
+        if "excluded" in info:
+            return bool(info["excluded"])
+        if "enabled" in info:
+            return not bool(info["enabled"])
+        return False
 
     def toggle_image_exclusion(self, base_name: str) -> bool:
-        """翻转单张图像的保留/剔除状态并持久化"""
+        """翻转单张图像的保留/剔除状态并持久化 (双向同步 excluded 与 enabled)"""
         self.manifest_data.setdefault("images", {}).setdefault(base_name, {})
-        curr = self.manifest_data["images"][base_name].get("excluded", False)
-        new_status = not curr
-        self.manifest_data["images"][base_name]["excluded"] = new_status
+        curr = self.is_image_excluded(base_name)
+        new_excluded = not curr
+        self.manifest_data["images"][base_name]["excluded"] = new_excluded
+        self.manifest_data["images"][base_name]["enabled"] = not new_excluded
+        self._sync_manifest_summary()
         self._save_manifest()
-        return new_status
+        return new_excluded
+
+    def super_extract_current_frame(self, img_idx: Optional[int] = None) -> Tuple[str, int]:
+        """
+        对指定帧或当前选定帧执行工序 3 工业级超精重提取并原子持久化
+        动用 5 路增强底图 + 16 级致密网格 + 微靶 2x 超分 + 0.01px 轮廓正交亚像素精修
+        """
+        if img_idx is None:
+            img_idx = self.current_img_idx
+        if not self.image_files or img_idx >= len(self.image_files):
+            return "", 0
+
+        cur_file = self.image_files[img_idx]
+        bname = os.path.basename(cur_file)
+
+        # 动用工序 3 离线超精提取引擎
+        super_res = self.super_extractor.extract_from_image(cur_file)
+
+        # 智能继承已有的人工保留/剔除决策与备注
+        existing_img_entry = self.manifest_data.get("images", {}).get(bname, {})
+        existing_prefs = {}
+        for obs in existing_img_entry.get("observations", []):
+            tid = obs.get("tag_id")
+            existing_prefs[tid] = (obs.get("keep", True), obs.get("note", ""))
+
+        new_obs = []
+        for tid in sorted(super_res.keys()):
+            item = super_res[tid]
+            keep_val, note_val = existing_prefs.get(tid, (True, f"超精提取 [{item.get('channel', 'SUPER')}]"))
+            m = item.get("metrics", {})
+            c_arr = item["corners"]
+            new_obs.append({
+                "tag_id": int(tid),
+                "keep": bool(keep_val),
+                "corners": [[round(float(c[0]), 2), round(float(c[1]), 2)] for c in c_arr.reshape(4, 2)],
+                "cell_size_px": m.get("cell_size_px", [0, 0]),
+                "center_px": m.get("center_px", [0.0, 0.0]),
+                "area_px": m.get("area_px", 0.0),
+                "channel": item.get("channel", "SUPER"),
+                "note": str(note_val)
+            })
+
+        # 组装符合 Manifest 标准格式的完整结构
+        self.manifest_data.setdefault("images", {})[bname] = {
+            "file_name": bname,
+            "image_path": cur_file.replace("\\", "/"),
+            "enabled": not self.is_image_excluded(bname),
+            "excluded": self.is_image_excluded(bname),
+            "detected_count": len(new_obs),
+            "observations": new_obs
+        }
+
+        # 更新 summary 统计
+        self._sync_manifest_summary()
+
+        # 立即原子持久化落盘
+        self._save_manifest()
+
+        # 刷新体检指标缓存
+        self.refresh_all_frame_metrics()
+        print(f"[OK] [STUDIO] 帧 {bname} 超精重提取完成并已原子持久化: 检出 {len(new_obs)} 个标靶")
+        return bname, len(new_obs)
+
+    def super_extract_all_frames(
+        self,
+        progress_callback: Optional[Any] = None
+    ) -> Tuple[int, int]:
+        """
+        全局全量超精重提取：
+        对所有采图帧原有提取的角点与空间观测完全清空删除，
+        从头开始重新调用工序 3 工业级超精重提取引擎 (5路增强 + 16级致密网格 + 2x超分 + 0.01px轮廓正交亚像素拟合)
+        提取所有标靶角点，默认全部从头启用为有效保留状态，并原子持久化至 manifest_path。
+        :param progress_callback: 可选进度回调 callback(cur_idx, total_count, bname, tag_count)
+        :return: (处理的总帧数, 累计检出的标靶总数)
+        """
+        if not self.image_files:
+            return 0, 0
+
+        total_frames = len(self.image_files)
+        total_tags = 0
+
+        # 清空原有的所有帧 observations，从头彻底重建 images 字典
+        new_images_dict: Dict[str, Any] = {}
+
+        for i, cur_file in enumerate(self.image_files):
+            bname = os.path.basename(cur_file)
+
+            # 调用工序 3 离线超精提取引擎
+            try:
+                super_res = self.super_extractor.extract_from_image(cur_file)
+            except Exception as e:
+                print(f"[WARN] [STUDIO] 超精提取帧 {bname} 异常: {e}")
+                super_res = {}
+
+            new_obs = []
+            for tid in sorted(super_res.keys()):
+                item = super_res[tid]
+                m = item.get("metrics", {})
+                c_arr = item["corners"]
+                new_obs.append({
+                    "tag_id": int(tid),
+                    "keep": True,  # 全部从头开始重新启用
+                    "corners": [[round(float(c[0]), 2), round(float(c[1]), 2)] for c in c_arr.reshape(4, 2)],
+                    "cell_size_px": m.get("cell_size_px", [0, 0]),
+                    "center_px": m.get("center_px", [0.0, 0.0]),
+                    "area_px": m.get("area_px", 0.0),
+                    "channel": item.get("channel", "SUPER"),
+                    "note": f"全局超精提取 [{item.get('channel', 'SUPER')}]"
+                })
+
+            new_images_dict[bname] = {
+                "file_name": bname,
+                "image_path": cur_file.replace("\\", "/"),
+                "enabled": True,
+                "excluded": False,
+                "detected_count": len(new_obs),
+                "observations": new_obs
+            }
+            total_tags += len(new_obs)
+
+            if progress_callback is not None:
+                try:
+                    progress_callback(i + 1, total_frames, bname, len(new_obs))
+                except Exception:
+                    pass
+
+        self.manifest_data["images"] = new_images_dict
+
+        # 更新 summary 统计
+        self._sync_manifest_summary()
+
+        # 立即原子持久化落盘
+        self._save_manifest()
+
+        # 刷新所有体检指标
+        self.refresh_all_frame_metrics()
+        print(f"[OK] [STUDIO] 全局全量超精提取完成并持久化: 共处理 {total_frames} 帧，累计检出 {total_tags} 个标靶")
+        return total_frames, total_tags
+
+    def reset_map(self) -> bool:
+        """
+        清空当前解算的空间立体地图，使工作站完全复位为未建图的初始状态
+        同时将已存在的 tags_map.yaml 自动备份为 tags_map.yaml.bak 并写空
+        """
+        if os.path.exists(self.map_path):
+            try:
+                bak_path = self.map_path + ".bak"
+                import shutil
+                shutil.copyfile(self.map_path, bak_path)
+                print(f"[*] [STUDIO] 旧地图已安全备份至: {bak_path}")
+            except Exception as e:
+                print(f"[WARN] 备份地图失败: {e}")
+
+        # 清空内存与引擎中的地图
+        self.tags_map_data = {"version": "2.0_reset", "tags": {}}
+        if self.engine:
+            self.engine.tags_map = self.tags_map_data
+
+        # 写回空地图文件
+        try:
+            with open(self.map_path, "w", encoding="utf-8") as f:
+                yaml.dump(self.tags_map_data, f, allow_unicode=True, sort_keys=False)
+            print(f"[OK] [STUDIO] 地图文件已成功复位清空: {self.map_path}")
+        except Exception as e:
+            print(f"[WARN] 写入空地图文件失败: {e}")
+
+        self.refresh_all_frame_metrics()
+        return True
+
+    def reset_all_keep_status(self) -> int:
+        """
+        一键复位全量观测状态：将所有帧设为保留 (enabled: true, excluded: false)，所有标靶观测设为有效 (keep: true)
+        :return: 恢复的总观测数量
+        """
+        restored_count = 0
+        images_dict = self.manifest_data.get("images", {})
+        for img_info in images_dict.values():
+            img_info["enabled"] = True
+            img_info["excluded"] = False
+            for obs in img_info.get("observations", []):
+                obs["keep"] = True
+                restored_count += 1
+
+        self._sync_manifest_summary()
+        self._save_manifest()
+        self.refresh_all_frame_metrics()
+        print(f"[OK] [STUDIO] 已一键复位所有标靶保留状态: 共恢复 {restored_count} 次标靶观测为有效")
+        return restored_count
 
     def toggle_observation_keep(self, base_name: str, tag_id: int) -> bool:
         """翻转某帧中特定标靶的保留/剔除状态并持久化"""
@@ -192,17 +438,24 @@ class StudioDataManager:
         is_kept = self.toggle_observation_keep(base_name, target_tag_id)
         meta = self.frame_metrics_cache.get(base_name, {})
         obs_list = self.get_observations_for_image(base_name)
-        mean_err, max_err, errors_dict = self._evaluate_frame_reprojection(obs_list)
+        mean_err, max_err, errors_dict, rvec, tvec, mean_mm, errs_mm = self._evaluate_frame_reprojection(obs_list)
         meta["observations"] = obs_list
         meta["mean_err"] = mean_err
         meta["max_err"] = max_err
+        meta["mean_err_mm"] = mean_mm
         meta["tag_errors"] = errors_dict
+        meta["tag_errors_mm"] = errs_mm
+        meta["rvec"] = rvec
+        meta["tvec"] = tvec
         return base_name, is_kept
 
-    def _evaluate_frame_reprojection(self, observations: List[Dict[str, Any]]) -> Tuple[float, float, Dict[int, float]]:
-        """计算单帧中所有有效标靶的重投影残差"""
+    def _evaluate_frame_reprojection(
+        self,
+        observations: List[Dict[str, Any]]
+    ) -> Tuple[float, float, Dict[int, float], Optional[np.ndarray], Optional[np.ndarray], float, Dict[int, float]]:
+        """计算单帧中所有有效标靶的像素残差与空间毫米偏差"""
         if not self.tags_map_data or "tags" not in self.tags_map_data:
-            return 0.0, 0.0, {}
+            return 0.0, 0.0, {}, None, None, 0.0, {}
 
         obj_pts = []
         img_pts = []
@@ -220,53 +473,206 @@ class StudioDataManager:
                 valid_tids.append(tid)
 
         if not obj_pts:
-            return 0.0, 0.0, {}
+            return 0.0, 0.0, {}, None, None, 0.0, {}
 
         obj_flat = np.concatenate(obj_pts, axis=0)
         img_flat = np.concatenate(img_pts, axis=0)
 
         rvec, tvec, success = self.engine.solve_pnp(obj_flat, img_flat)
         if not success:
-            return 0.0, 0.0, {}
+            return 0.0, 0.0, {}, None, None, 0.0, {}
 
         proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, self.engine.camera_matrix, self.engine.dist_coeffs)
         dists = np.linalg.norm(img_flat - proj_pts.reshape((-1, 2)), axis=1)
 
+        tz = float(tvec[2, 0]) if tvec is not None else 800.0
+        fx = float(self.engine.camera_matrix[0, 0]) if (self.engine and self.engine.camera_matrix is not None) else 1363.0
+        scale_mm_per_px = abs(tz) / fx if fx > 0 else 0.0
+
         errors_dict = {}
+        errors_dict_mm = {}
         for idx, tid in enumerate(valid_tids):
-            errors_dict[tid] = float(np.mean(dists[idx * 4:(idx + 1) * 4]))
+            err_px = float(np.mean(dists[idx * 4:(idx + 1) * 4]))
+            errors_dict[tid] = err_px
+            errors_dict_mm[tid] = float(err_px * scale_mm_per_px)
 
         mean_val = float(np.mean(dists))
         max_val = float(np.max(dists))
-        return mean_val, max_val, errors_dict
+        mean_val_mm = float(mean_val * scale_mm_per_px)
+        return mean_val, max_val, errors_dict, rvec, tvec, mean_val_mm, errors_dict_mm
 
     def refresh_all_frame_metrics(self):
-        """全量预热并刷新所有采图帧的精度体检残差指标"""
+        """全量预热并刷新所有采图帧的精度体检残差指标、空间毫米偏差与共视拓扑健康度"""
         self.frame_metrics_cache.clear()
         all_reproj_errors = []
+        all_mm_errors = []
+        valid_frame_detections = []
+        valid_frame_names = []
 
         for p in self.image_files:
             base_name = os.path.basename(p)
             obs_list = self.get_observations_for_image(base_name)
             is_excl = self.is_image_excluded(base_name)
 
-            mean_err, max_err, errors_dict = self._evaluate_frame_reprojection(obs_list)
+            mean_err, max_err, errors_dict, rvec, tvec, mean_mm, errs_mm = self._evaluate_frame_reprojection(obs_list)
             if not is_excl and obs_list:
                 all_reproj_errors.extend(list(errors_dict.values()))
+                all_mm_errors.extend(list(errs_mm.values()))
+                tag_dict = {}
+                for obs in obs_list:
+                    if obs.get("keep", True):
+                        tag_dict[int(obs["tag_id"])] = np.array(obs["corners"], dtype=np.float64)
+                if len(tag_dict) >= 1:
+                    valid_frame_detections.append(tag_dict)
+                    valid_frame_names.append(base_name)
 
             self.frame_metrics_cache[base_name] = {
                 "tag_count": len(obs_list),
                 "mean_err": mean_err,
                 "max_err": max_err,
+                "mean_err_mm": mean_mm,
                 "is_excluded": is_excl,
                 "observations": obs_list,
-                "tag_errors": errors_dict
+                "tag_errors": errors_dict,
+                "tag_errors_mm": errs_mm,
+                "rvec": rvec,
+                "tvec": tvec
             }
 
         if all_reproj_errors:
             self.global_rmse = float(np.sqrt(np.mean(np.array(all_reproj_errors) ** 2)))
         else:
             self.global_rmse = 0.0
+
+        if all_mm_errors:
+            self.global_median_mm = float(np.median(np.array(all_mm_errors)))
+            self.global_mean_mm = float(np.mean(np.array(all_mm_errors)))
+        else:
+            self.global_median_mm = 0.0
+            self.global_mean_mm = 0.0
+
+        # 共视拓扑连通度检查
+        if valid_frame_detections:
+            try:
+                from src.calibration.covisibility_graph import CovisibilityGraphAnalyzer
+                topo = CovisibilityGraphAnalyzer.analyze(valid_frame_detections, valid_frame_names)
+                self.topology_status = {
+                    "is_valid": bool(topo.get("is_valid", False)),
+                    "components_count": len(topo.get("components", [])),
+                    "critical_bridges": topo.get("critical_bridges", []),
+                    "unconnected_tags": topo.get("unconnected_tags", []),
+                    "connected_tags_count": len(topo.get("connected_tags", [])),
+                    "message": str(topo.get("message", "拓扑分析完成"))
+                }
+            except Exception as e:
+                self.topology_status = {
+                    "is_valid": True,
+                    "components_count": 1,
+                    "critical_bridges": [],
+                    "unconnected_tags": [],
+                    "connected_tags_count": 0,
+                    "message": f"拓扑分析异常: {e}"
+                }
+        else:
+            self.topology_status = {
+                "is_valid": False,
+                "components_count": 0,
+                "critical_bridges": [],
+                "unconnected_tags": [],
+                "connected_tags_count": 0,
+                "message": "暂无参与解算的有效采图帧"
+            }
+
+        # 放行门限评定
+        if self.global_rmse > 0 and self.global_rmse <= 0.50 and self.global_median_mm <= 1.50 and self.topology_status.get("is_valid", False):
+            self.gate_status = "PASS"
+        elif self.global_rmse > 0 and self.global_rmse <= 1.00:
+            self.gate_status = "ACCEPTABLE"
+        else:
+            self.gate_status = "REVIEW"
+
+    def diagnose_frame(self, img_idx: Optional[int] = None) -> Dict[str, Any]:
+        """
+        对指定帧或当前选定帧执行工序 3/4 深度图像质量与漏检病因切片诊断
+        """
+        if img_idx is None:
+            img_idx = self.current_img_idx
+        if not self.image_files or img_idx >= len(self.image_files):
+            return {}
+
+        cur_file = self.image_files[img_idx]
+        bname = os.path.basename(cur_file)
+        bgr = cv2.imread(cur_file)
+        if bgr is None:
+            return {}
+
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape[:2]
+
+        contrast = float(np.std(gray))
+        brightness = float(np.mean(gray))
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+        # 候选多边形与拒检分析
+        c_raw, ids_raw, rejected = self.engine.detector_bright.detectMarkers(gray)
+        detected_tids = set(ids_raw.flatten().tolist()) if ids_raw is not None else set()
+        rej_count = len(rejected) if rejected is not None else 0
+
+        rej_small = 0
+        rej_aspect = 0
+        if rejected is not None:
+            for r in rejected:
+                pts = r.reshape((4, 2))
+                area = cv2.contourArea(pts)
+                if area < 200:
+                    rej_small += 1
+                side_a = np.linalg.norm(pts[0] - pts[1])
+                side_b = np.linalg.norm(pts[1] - pts[2])
+                if side_b > 0 and (side_a / side_b > 3.0 or side_b / side_a > 3.0):
+                    rej_aspect += 1
+
+        # 理论漏检分析
+        missing_tags = []
+        meta = self.frame_metrics_cache.get(bname, {})
+        rvec = meta.get("rvec")
+        tvec = meta.get("tvec")
+        if rvec is not None and tvec is not None:
+            mapped_tids = self.tags_map_data.get("tags", {})
+            for tid_str in mapped_tids.keys():
+                t_int = int(tid_str)
+                if t_int not in detected_tids:
+                    wc = self.get_tag_world_corners(t_int)
+                    if wc is not None:
+                        proj, _ = cv2.projectPoints(wc, rvec, tvec, self.engine.camera_matrix, self.engine.dist_coeffs)
+                        p2 = proj.reshape((4, 2))
+                        if np.all(p2[:, 0] >= -20) and np.all(p2[:, 0] < w + 20) and np.all(p2[:, 1] >= -20) and np.all(p2[:, 1] < h + 20):
+                            missing_tags.append({
+                                "tag_id": t_int,
+                                "predicted_corners": p2.tolist(),
+                                "reason": "视场内但未被快速检出 (建议按 E 超精提取)"
+                            })
+
+        diag_res = {
+            "image": bname,
+            "contrast": contrast,
+            "contrast_rms": contrast,
+            "contrast_grade": "良" if contrast >= 35 else ("偏低" if contrast >= 20 else "极差"),
+            "brightness": brightness,
+            "mean_intensity": brightness,
+            "brightness_grade": "正常" if 60 <= brightness <= 190 else ("偏暗" if brightness < 60 else "过曝"),
+            "sharpness": sharpness,
+            "laplacian_var": sharpness,
+            "sharpness_grade": "清晰" if sharpness >= 100 else ("轻微模糊" if sharpness >= 50 else "严重虚焦"),
+            "detected_count": len(detected_tids),
+            "rejected_quads_count": rej_count,
+            "false_rejections_count": rej_count,
+            "rej_small": rej_small,
+            "rej_aspect": rej_aspect,
+            "missing_theoretical_tags": missing_tags,
+            "missing_projected_tags": missing_tags
+        }
+        self.current_diagnostics = diag_res
+        return diag_res
 
     def get_filtered_indices(self) -> List[int]:
         """依据当前的过滤模式与排序模式获取最终展示的帧索引列表"""

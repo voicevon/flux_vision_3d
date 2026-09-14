@@ -289,6 +289,170 @@ class TestTagOfflineStudio(unittest.TestCase):
         obs_restored = self.studio.get_observations_for_image(bname)
         self.assertTrue(obs_restored[0]["keep"], "再次点击应恢复保留状态")
 
+    def test_super_extract_and_persistence(self):
+        """测试单帧超精重提取的规范字段生成与磁盘文件持久化"""
+        bname = os.path.basename(self.studio.image_files[0])
+        self.studio.current_img_idx = 0
+
+        # Mock super_extractor 返回包含多字段的测试标靶
+        fake_corners = np.array([[100, 100], [200, 100], [200, 200], [100, 200]], dtype=np.float32)
+        mock_result = {
+            10: {
+                "tag_id": 10,
+                "corners": fake_corners,
+                "channel": "CLAHE_8x8",
+                "metrics": {
+                    "cell_size_px": [16, 16],
+                    "center_px": [150.0, 150.0],
+                    "area_px": 10000.0
+                }
+            },
+            11: {
+                "tag_id": 11,
+                "corners": fake_corners + 100,
+                "channel": "RAW",
+                "metrics": {
+                    "cell_size_px": [16, 16],
+                    "center_px": [250.0, 250.0],
+                    "area_px": 10000.0
+                }
+            }
+        }
+        self.studio.data_mgr.super_extractor.extract_from_image = lambda path: mock_result
+
+        # 执行超精重提取
+        ret_bname, ret_count = self.studio.super_extract_current_frame()
+        self.assertEqual(ret_bname, bname)
+        self.assertEqual(ret_count, 2)
+
+        # 检查内存中的 manifest 条目规范完整性
+        img_entry = self.studio.manifest_data["images"][bname]
+        self.assertEqual(img_entry["detected_count"], 2)
+        self.assertTrue(img_entry["enabled"])
+        self.assertIn("observations", img_entry)
+        self.assertEqual(len(img_entry["observations"]), 2)
+        self.assertEqual(img_entry["observations"][0]["channel"], "CLAHE_8x8")
+        self.assertIn("cell_size_px", img_entry["observations"][0])
+
+        # 核心持久化验证：新建一个 StudioDataManager 从磁盘加载 manifest_path
+        from tools.calibration.studio.studio_state import StudioDataManager
+        new_mgr = StudioDataManager(
+            map_path=self.map_path,
+            image_dir=self.image_dir,
+            manifest_path=self.studio.manifest_path,
+            engine=self.studio.engine,
+            marker_size_mm=50.0
+        )
+        loaded_obs = new_mgr.get_observations_for_image(bname)
+        self.assertEqual(len(loaded_obs), 2, "重新加载后超精提取的标靶数量必须100%保持，不可丢失")
+        self.assertEqual(loaded_obs[0]["tag_id"], 10)
+        self.assertEqual(loaded_obs[1]["tag_id"], 11)
+
+    def test_reset_map(self):
+        """测试地图一键复位：内存清空、地图文件备份与重写为空"""
+        self.assertGreater(len(self.studio.tags_map_data.get("tags", {})), 0, "初始应装载了地图")
+
+        # 执行地图复位
+        success = self.studio.reset_map()
+        self.assertTrue(success)
+        self.assertEqual(len(self.studio.tags_map_data.get("tags", {})), 0, "复位后 tags 字典应为空")
+        self.assertEqual(len(self.studio.engine.tags_map.get("tags", {})), 0, "引擎内绑定的地图也应同步清空")
+
+        # 验证 .bak 备份文件存在
+        bak_file = self.studio.map_path + ".bak"
+        self.assertTrue(os.path.exists(bak_file), "复位前应自动生成地图 .bak 备份")
+
+    def test_reset_all_keep_status(self):
+        """测试一键复位所有观测保留状态"""
+        bname = os.path.basename(self.studio.image_files[0])
+        # 先剔除该帧并剔除某个 tag
+        self.studio.toggle_image_exclusion(bname)
+        self.assertTrue(self.studio.is_image_excluded(bname))
+
+        # 执行一键复位
+        restored_cnt = self.studio.reset_all_keep_status()
+        self.assertFalse(self.studio.is_image_excluded(bname), "一键复位后帧应恢复为有效保留")
+
+        # 从磁盘重新验证
+        import yaml
+        with open(self.studio.manifest_path, "r", encoding="utf-8") as f:
+            disk_data = yaml.safe_load(f)
+        self.assertTrue(disk_data["images"][bname]["enabled"])
+        self.assertFalse(disk_data["images"][bname]["excluded"])
+
+    def test_super_extract_all_frames(self):
+        """测试全局全量超精重提取：旧角点与空间观测全部清空，全量重新超精拟合与落盘"""
+        # Mock super_extractor 返回包含 2 个标靶的字典
+        mock_result = {
+            10: {
+                "corners": np.array([[100.0, 100.0], [200.0, 100.0], [200.0, 200.0], [100.0, 200.0]]),
+                "channel": "CLAHE_8x8",
+                "metrics": {"cell_size_px": [25, 25], "center_px": [150.0, 150.0], "area_px": 10000.0}
+            },
+            20: {
+                "corners": np.array([[300.0, 300.0], [400.0, 300.0], [400.0, 400.0], [300.0, 400.0]]),
+                "channel": "BICUBIC_2X",
+                "metrics": {"cell_size_px": [30, 30], "center_px": [350.0, 350.0], "area_px": 10000.0}
+            }
+        }
+        self.studio.data_mgr.super_extractor.extract_from_image = lambda path: mock_result
+
+        # 执行全局全量超精提取
+        progress_records = []
+        def on_prog(cur, total, bname, count):
+            progress_records.append((cur, total, bname, count))
+
+        total_frames, total_tags = self.studio.super_extract_all_frames(progress_callback=on_prog)
+        self.assertEqual(total_frames, 3, "应处理全部 3 帧图片")
+        self.assertEqual(total_tags, 6, "3 帧每帧 2 个标靶，总计 6 个标靶")
+        self.assertEqual(len(progress_records), 3, "回调应触发 3 次")
+
+        # 校验内存中的每帧标靶状态
+        for bname in self.studio.manifest_data["images"]:
+            obs = self.studio.manifest_data["images"][bname]["observations"]
+            self.assertEqual(len(obs), 2, "旧标靶位置应被完全清空并重建为 2 个新标靶")
+            self.assertTrue(obs[0]["keep"], "新提取的标靶应默认启用为有效保留")
+            self.assertTrue(obs[1]["keep"])
+
+        # 校验磁盘持久化落盘
+        import yaml
+        with open(self.studio.manifest_path, "r", encoding="utf-8") as f:
+            disk_manifest = yaml.safe_load(f)
+        for bname in disk_manifest["images"]:
+            self.assertEqual(len(disk_manifest["images"][bname]["observations"]), 2)
+            self.assertTrue(disk_manifest["images"][bname]["enabled"])
+
+    def test_frame_diagnostics_and_gate_status(self):
+        """测试单帧病因切片诊断算法、物理指标与准入门限/拓扑评估"""
+        diag = self.studio.data_mgr.diagnose_frame(0)
+        self.assertIn("contrast_rms", diag)
+        self.assertIn("laplacian_var", diag)
+        self.assertIn("mean_intensity", diag)
+        self.assertIn("false_rejections_count", diag)
+        self.assertIn("missing_projected_tags", diag)
+
+        # 检查 StudioDataManager 的门限与拓扑字段
+        self.assertIn(self.studio.gate_status, ["PASS", "ACCEPTABLE", "REVIEW"])
+        self.assertIn("is_valid", self.studio.topology_status)
+        self.assertIsInstance(self.studio.global_median_mm, float)
+
+    def test_diagnostics_ui_and_viewport_rendering(self):
+        """测试切换至病因诊断切片视图下的 GUI 渲染与动作按钮注册"""
+        self.studio.toggle_frame_diagnostics()
+        self.assertTrue(self.studio.show_frame_diagnostics)
+
+        canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        self.studio.render(canvas)
+
+        # 校验注册的按钮中应包含 DIAGNOSE_FRAME 与 LAUNCH_AR
+        btn_ids = [btn[0] for btn in self.studio.gui_buttons]
+        self.assertIn("DIAGNOSE_FRAME", btn_ids)
+        self.assertIn("LAUNCH_AR", btn_ids)
+
+        # 模拟点击 DIAGNOSE_FRAME 切回常规视图
+        self.studio._handle_button_click("DIAGNOSE_FRAME", "", 0, 0)
+        self.assertFalse(self.studio.show_frame_diagnostics)
+
 
 if __name__ == "__main__":
     unittest.main()
