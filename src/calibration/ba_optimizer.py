@@ -714,10 +714,33 @@ class BundleAdjustmentOptimizer:
             print(f"[WARN] 未在有效图像中检出 Tag {origin_tag_id}，将以参考标靶相对对齐！")
 
         yaw_rad = 0.0
+        aligned_x_target_id = x_align_tag_id
+
         if origin_tag_id in tag_poses and x_align_tag_id in tag_poses:
             vec_x = tag_poses[x_align_tag_id][:3, 3] - p_origin
             yaw_rad = math.atan2(vec_x[1], vec_x[0])
-            print(f"[+] 坐标系 X 轴对齐旋转角: {-math.degrees(yaw_rad):.2f}°")
+            print(f"[+] [ALIGN] 成功锚定基准 Tag {origin_tag_id} -> Tag {x_align_tag_id}，坐标系 X 轴对齐旋转角: {-math.degrees(yaw_rad):.2f}°")
+        else:
+            # 指定对齐标靶缺失，打印显式告警
+            available_tags = [tid for tid in tag_poses.keys() if tid != origin_tag_id]
+            print(f"[WARN] [ALIGN] 指定的 X 轴对齐标靶 Tag {x_align_tag_id} 不在解算标靶中 (可用静态标靶: {sorted(available_tags)})！")
+            
+            # 自适应寻找候选远端标靶（水平距离最大且在有效范围内的标靶）
+            if available_tags and origin_tag_id in tag_poses:
+                candidate_dists = []
+                for tid in available_tags:
+                    dist_xy = np.linalg.norm(tag_poses[tid][:2, 3] - p_origin[:2])
+                    candidate_dists.append((dist_xy, tid))
+                candidate_dists.sort(reverse=True)
+                fallback_id = candidate_dists[0][1]
+                aligned_x_target_id = fallback_id
+                vec_x = tag_poses[fallback_id][:3, 3] - p_origin
+                yaw_rad = math.atan2(vec_x[1], vec_x[0])
+                print(f"[!] [ALIGN] 自动降级使用最远端刚体标靶 Tag {fallback_id} (距离 {candidate_dists[0][0]:.1f}mm) 进行 X 轴定向校正: {-math.degrees(yaw_rad):.2f}°")
+            else:
+                print(f"[ERROR] [ALIGN] 无法进行世界 X 轴对齐，世界系方向将退化保持为基准标靶印刷朝向！")
+
+        aligned_map["x_axis_align_tag_id"] = aligned_x_target_id
 
         cos_y = math.cos(-yaw_rad)
         sin_y = math.sin(-yaw_rad)

@@ -140,6 +140,9 @@ class TagOfflineStudio:
         self.active_dropdown: Optional[str] = None
         self.dropdown_boxes: Dict[str, Dict[str, Any]] = {}
 
+        # 4. 文件列表多轮残差演进矩阵视图模式 (Matrix View)
+        self.matrix_view_mode: bool = False
+
         # 5. 异步 BA 全局平差任务调度器
         self.ba_runner = StudioBARunner(
             data_mgr=self.data_mgr,
@@ -504,13 +507,35 @@ class TagOfflineStudio:
             return res
         return None
 
+    @property
+    def dynamic_left_bar_w(self) -> int:
+        """根据当前是否处于矩阵视图动态计算左栏排版宽度"""
+        if not self.matrix_view_mode:
+            return 340
+        headers = getattr(self.data_mgr, "convergence_headers", [])
+        num_cols = max(1, len(headers))
+        # 基础列宽 175px (状态点+文件名+标靶数) + 各轮次列 (56px/列) + 降幅列 (72px)
+        calc_w = 175 + num_cols * 56 + 72
+        return min(960, max(640, calc_w))
+
+    def toggle_matrix_view_mode(self):
+        """一键切换左栏文件列表的单列紧凑视图与多轮残差演进矩阵宽表大视图"""
+        self.matrix_view_mode = not self.matrix_view_mode
+        self.left_bar_w = self.dynamic_left_bar_w
+        if self.matrix_view_mode:
+            self.set_toast("已切换为: 逐帧多轮残差演进矩阵大表 (Matrix View)")
+        else:
+            self.set_toast("已切换为: 紧凑图像帧列表 (Compact View)")
+
     def start_auto_prune_ba(self) -> bool:
         """启动全自动基于边际收益与共视拓扑守门的残差剪枝平差"""
         if self.is_ba_running or self.is_extracting_all:
             self.set_toast("后台任务正在计算中，请稍候...")
             return False
-        # 联动质检视角: 自动将左侧图像序列切换为【残差降序 (最差优先 ↓)】
+        # 联动质检视角: 自动将左侧图像序列切换为【残差降序 (最差优先 ↓)】并展开多轮残差矩阵视图
         self.sort_mode = "err_desc"
+        self.matrix_view_mode = True
+        self.left_bar_w = self.dynamic_left_bar_w
         res = self.ba_runner.start_auto_prune(max_rounds=10, min_improvement_px=0.01)
         if res:
             # 自动将主视口聚焦至残差最大、最亟待排查的首张图像
@@ -573,6 +598,42 @@ class TagOfflineStudio:
                     meta = self.frame_metrics_cache.get(bname, {})
                     status_str = "❌ 已剔除" if meta.get("is_excluded", False) else "✅ 参与解算"
                     f.write(f"| `{bname}` | {meta.get('tag_count', 0)} | {meta.get('mean_err', 0.0):.2f} px | {meta.get('max_err', 0.0):.2f} px | {status_str} |\n")
+
+                # 2. 智能剪枝平差逐帧多轮残差收敛矩阵 (若存在多轮历史)
+                headers = getattr(self.data_mgr, "convergence_headers", [])
+                matrix = getattr(self.data_mgr, "frame_convergence_matrix", {})
+                if headers and matrix and len(headers) >= 1:
+                    f.write(f"\n## 2. 智能剪枝平差逐帧多轮残差收敛矩阵 (Per-Frame Convergence Matrix)\n\n")
+                    f.write(f"> 记录各图像帧在每一轮平差求解后的残差演进变化情况：\n\n")
+                    header_cols = ["图像帧", "标靶数"] + headers + ["累计降幅"]
+                    f.write("| " + " | ".join(header_cols) + " |\n")
+                    f.write("| " + " | ".join([":---"] + [":---:"] * (len(header_cols) - 1)) + " |\n")
+
+                    for p in self.image_files:
+                        bname = os.path.basename(p)
+                        meta = self.frame_metrics_cache.get(bname, {})
+                        tag_cnt = meta.get("tag_count", 0)
+                        row_vals = matrix.get(bname, [])
+                        r_strs = []
+                        for val in row_vals:
+                            r_strs.append(f"{val:.2f} px" if val is not None else "--")
+                        while len(r_strs) < len(headers):
+                            r_strs.append("--")
+
+                        first_val = row_vals[0] if (row_vals and row_vals[0] is not None) else None
+                        last_val = None
+                        for v in reversed(row_vals):
+                            if v is not None:
+                                last_val = v
+                                break
+                        if first_val is not None and last_val is not None and first_val > 0.001:
+                            drop_px = first_val - last_val
+                            drop_pct = (drop_px / first_val) * 100.0
+                            drop_str = f"↓{drop_pct:.1f}% ({drop_px:+.2f}px)"
+                        else:
+                            drop_str = "--"
+
+                        f.write(f"| `{bname}` | {tag_cnt} | " + " | ".join(r_strs) + f" | {drop_str} |\n")
 
             self.set_toast("全景质检报告已成功导出至 data/tag_calibration_verification/！")
             print(f"[OK] 质检报告导出成功: {report_path}")
@@ -794,6 +855,8 @@ class TagOfflineStudio:
             self.launch_online_ar_verifier()
         elif btn_id == "RUN_AUTO_PRUNE_BA":
             self.start_auto_prune_ba()
+        elif btn_id == "TOGGLE_MATRIX_VIEW":
+            self.toggle_matrix_view_mode()
         elif btn_id == "ACCEPT_PRUNE":
             self.accept_prune_results()
         elif btn_id == "UNDO_PRUNE":
@@ -856,6 +919,7 @@ class TagOfflineStudio:
         print("   - [滚轮 (左侧栏)]        : 上下滚动浏览帧序列列表")
         print("   - [双击画布] / [Z] / [0] : 一键重置图像缩放和平移为适应视口 (1.0x)")
         print("   - [T] / [Space]          : 翻转当前帧有效性状态 (保留 ⇋ 剔除)")
+        print("   - [X]                    : 切换左栏视图 (紧凑列表 ⇋ 逐帧多轮残差演进矩阵宽表)")
         print("   - [B]                    : 异步执行全局平差优化 (全量批处理 Batch BA) 并就地热重载")
         print("   - [P]                    : 全量重算并刷新所有帧精度体检残差指标")
         print("   - [R]                    : 导出离线全景精度体检 Markdown 质检单")
@@ -904,6 +968,8 @@ class TagOfflineStudio:
                     break
                 elif key in (ord('a'), ord('A')):      # A 键 -> 智能迭代剪枝平差
                     self.start_auto_prune_ba()
+                elif key in (ord('x'), ord('X')):      # X 键 -> 切换多轮残差矩阵视图
+                    self.toggle_matrix_view_mode()
                 elif key in (ord('w'), ord('W'), 82):  # 上一帧 (W / Up)
                     if self.image_files:
                         self.current_img_idx = (self.current_img_idx - 1) % len(self.image_files)

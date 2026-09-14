@@ -72,7 +72,13 @@ class StudioDataManager:
         }
         self.current_diagnostics: Dict[str, Any] = {}
 
-        # 4. 超精重提取引擎 (惰性装载)
+        # 4. 智能剪枝平差逐帧多轮残差收敛矩阵
+        # frame_convergence_matrix: { "view_0001.png": [582.13, 39.81, 25.30, ...] }
+        # convergence_headers: ["R0(基准)", "R1", "R2", ...]
+        self.frame_convergence_matrix: Dict[str, List[Optional[float]]] = {}
+        self.convergence_headers: List[str] = []
+
+        # 5. 超精重提取引擎 (惰性装载)
         self._super_extractor = None
 
         # 首次加载全集残差指标
@@ -459,7 +465,9 @@ class StudioDataManager:
             "global_median_mm": self.global_median_mm,
             "global_mean_mm": self.global_mean_mm,
             "gate_status": self.gate_status,
-            "topology_status": copy.deepcopy(self.topology_status)
+            "topology_status": copy.deepcopy(self.topology_status),
+            "frame_convergence_matrix": copy.deepcopy(self.frame_convergence_matrix),
+            "convergence_headers": copy.deepcopy(self.convergence_headers)
         }
         return self._manifest_snapshot
 
@@ -476,6 +484,10 @@ class StudioDataManager:
         self.global_mean_mm = snap["global_mean_mm"]
         self.gate_status = snap["gate_status"]
         self.topology_status = copy.deepcopy(snap["topology_status"])
+        if "frame_convergence_matrix" in snap:
+            self.frame_convergence_matrix = copy.deepcopy(snap["frame_convergence_matrix"])
+        if "convergence_headers" in snap:
+            self.convergence_headers = copy.deepcopy(snap["convergence_headers"])
 
         self._save_manifest()
         if self.map_path and os.path.exists(os.path.dirname(self.map_path)):

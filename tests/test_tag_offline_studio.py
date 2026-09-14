@@ -547,11 +547,37 @@ class TestTagOfflineStudio(unittest.TestCase):
         self.assertIn("final_rmse", settle)
         self.assertIn("total_pruned_count", settle)
 
+        # 核心断言：逐帧多轮残差收敛矩阵
+        self.assertIn("convergence_headers", settle)
+        self.assertIn("frame_convergence_matrix", settle)
+        headers = settle["convergence_headers"]
+        self.assertIn("R0", headers)
+        self.assertIn("R1", headers)
+        matrix = settle["frame_convergence_matrix"]
+        bname = os.path.basename(self.studio.image_files[0])
+        self.assertIn(bname, matrix)
+        self.assertGreaterEqual(len(matrix[bname]), 2, "应包含初始 R0 与第 1 轮 R1 的残差值")
+
+        # 视图自动展开与切换断言
+        self.assertTrue(self.studio.matrix_view_mode, "启动剪枝平差后应自动展开矩阵大表视图")
+        self.assertGreater(self.studio.dynamic_left_bar_w, 340, "展开矩阵模式后左栏宽度应大于 340px")
+
+        # 测试一键切换收起与恢复
+        self.studio.toggle_matrix_view_mode()
+        self.assertFalse(self.studio.matrix_view_mode)
+        self.assertEqual(self.studio.dynamic_left_bar_w, 340)
+        self.studio.toggle_matrix_view_mode()
+        self.assertTrue(self.studio.matrix_view_mode)
+
         canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
         self.studio.render(canvas)
         btn_ids = [btn[0] for btn in self.studio.gui_buttons]
         self.assertIn("ACCEPT_PRUNE", btn_ids)
         self.assertIn("UNDO_PRUNE", btn_ids)
+        self.assertIn("TOGGLE_MATRIX_VIEW", btn_ids)
+
+        # 测试质检报告导出中包含多轮收敛矩阵大表
+        self.studio.export_verification_report()
 
         self.studio.undo_prune_results()
         self.assertIsNone(self.studio.prune_settlement_data)

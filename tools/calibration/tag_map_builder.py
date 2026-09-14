@@ -862,11 +862,25 @@ def interactive_workflow(args, builder: TagMapBuilder, image_paths: List[str], b
 
 def main():
     parser = argparse.ArgumentParser(description="AprilTag 16h5 多标靶离线两阶段建图与 BA 平差工具")
+    # 从 config.yaml 动态加载基准标靶 ID
+    def_origin_id = 0
+    def_x_axis_id = 28
+    try:
+        cfg_file = os.path.join(PROJECT_ROOT, "config.yaml")
+        if os.path.exists(cfg_file):
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                cfg_obj = yaml.safe_load(f) or {}
+            c_sec = cfg_obj.get("calibration", {})
+            def_origin_id = int(c_sec.get("origin_tag_id", 0))
+            def_x_axis_id = int(c_sec.get("x_axis_tag_id", 28))
+    except Exception:
+        pass
+
     parser.add_argument("--image_dir", type=str, default="data/tag_calibration_images", help="多视角标定图片目录")
     parser.add_argument("--manifest", type=str, default="data/tag_calibration_images/tag_observations.yaml", help="观测数据审核清单路径")
     parser.add_argument("--marker_size", type=float, default=50.0, help="标靶黑白边框名义边长 (mm)")
-    parser.add_argument("--origin_id", type=int, default=0, help="SCARA 原点锚定标靶 ID")
-    parser.add_argument("--x_axis_id", type=int, default=1, help="世界 X 轴对齐基准标靶 ID")
+    parser.add_argument("--origin_id", type=int, default=def_origin_id, help="SCARA 原点锚定标靶 ID")
+    parser.add_argument("--x_axis_id", type=int, default=def_x_axis_id, help="世界 X 轴对齐基准标靶 ID (默认与 config.yaml 一致)")
     parser.add_argument("--baseline_pair", nargs=3, type=float, metavar=('TAG_A', 'TAG_B', 'DIST_MM'),
                         help="双标靶基线尺度校准参数: TAG_A TAG_B 真实距离(mm), 例如: --baseline_pair 1 5 620.5")
     parser.add_argument("--output", type=str, default="config/tags_map.yaml", help="导出的图谱文件路径")

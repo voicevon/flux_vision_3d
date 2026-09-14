@@ -127,12 +127,13 @@ class StudioUIRenderer:
         # 2. 底栏
         self.render_bottom_toolbar(studio, canvas, w, h, bot_h)
 
-        # 3. 工作区尺寸
+        # 3. 工作区尺寸与左栏自适应宽度
+        studio.left_bar_w = getattr(studio, "dynamic_left_bar_w", studio.left_bar_w)
         content_y1 = top_h
         content_y2 = h - bot_h
         content_h = content_y2 - content_y1
 
-        # 左栏：紧凑帧序列列表
+        # 左栏：紧凑帧序列列表或逐帧多轮残差演进矩阵宽表
         self.render_left_frame_list(studio, canvas, 0, content_y1, studio.left_bar_w, content_h)
 
         # 右栏：180px 瘦身属性与单帧诊断面板
@@ -307,20 +308,33 @@ class StudioUIRenderer:
         studio.gui_buttons.append(("EXIT", (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "EXIT"))
 
     def render_left_frame_list(self, studio: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
-        """左栏：高信息密度垂直紧凑帧列表"""
+        """左栏：高信息密度垂直紧凑帧列表 或 逐帧多轮残差演进矩阵宽表大视图"""
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (22, 24, 30), -1)
         cv2.line(canvas, (x + w, y), (x + w, y + h), (50, 54, 66), 1)
+
+        is_matrix = getattr(studio, "matrix_view_mode", False)
+        headers = getattr(studio.data_mgr, "convergence_headers", [])
+        matrix = getattr(studio.data_mgr, "frame_convergence_matrix", {})
 
         header_h = 36
         dd_y1 = y + 6
         dd_y2 = y + header_h
-        dd1_w = (w - 24) // 2
+
+        # 1. 顶部操作栏自适应排版：切换按钮 + 筛选下拉框 + 排序下拉框
+        btn_w = 98 if is_matrix else 86
+        btn_x1 = x + w - btn_w - 8
+        btn_x2 = x + w - 8
+
+        avail_w = max(120, btn_x1 - (x + 8) - 8)
+        dd1_w = avail_w // 2
+        dd2_w = avail_w - dd1_w - 6
+
         dd1_x1 = x + 8
         dd1_x2 = dd1_x1 + dd1_w
-        dd2_x1 = dd1_x2 + 8
-        dd2_x2 = x + w - 8
+        dd2_x1 = dd1_x2 + 6
+        dd2_x2 = dd2_x1 + dd2_w
 
-        # 1. 筛选范围下拉框
+        # 筛选范围下拉框
         cur_filter_label = dict(FILTER_MODE_OPTIONS).get(studio.filter_mode, "全部帧")
         is_f_open = (studio.active_dropdown == "FILTER_DROPDOWN")
         draw_dropdown_button(canvas, (dd1_x1, dd_y1, dd1_x2, dd_y2), cur_filter_label,
@@ -332,7 +346,7 @@ class StudioUIRenderer:
         }
         studio.gui_buttons.append(("TOGGLE_FILTER_DROPDOWN", (dd1_x1, dd_y1, dd1_x2, dd_y2), "FILTER_DROPDOWN"))
 
-        # 2. 排序方式下拉框
+        # 排序方式下拉框
         cur_sort_label = dict(SORT_MODE_OPTIONS).get(studio.sort_mode, "文件名升序")
         short_sort = cur_sort_label.split(" ")[0] if "(" in cur_sort_label else cur_sort_label
         is_s_open = (studio.active_dropdown == "SORT_DROPDOWN")
@@ -345,78 +359,233 @@ class StudioUIRenderer:
         }
         studio.gui_buttons.append(("TOGGLE_SORT_DROPDOWN", (dd2_x1, dd_y1, dd2_x2, dd_y2), "SORT_DROPDOWN"))
 
-        list_y = y + header_h + 8
-        item_h = 36
-        visible_count = (h - header_h - 16) // item_h
+        # 矩阵模式切换按钮 (一键展开/收起 10 轮残差对比大表)
+        btn_txt = "⊟ 紧凑 (X)" if is_matrix else "⊞ 矩阵 (X)"
+        btn_type = "primary" if is_matrix else "secondary"
+        draw_styled_button(canvas, (btn_x1, dd_y1, btn_x2, dd_y2), btn_txt,
+                           mouse_pos=studio.mouse_pos, btn_type=btn_type)
+        studio.gui_buttons.append(("TOGGLE_MATRIX_VIEW", (btn_x1, dd_y1, btn_x2, dd_y2), "TOGGLE_MATRIX_VIEW"))
 
         filtered_indices = studio._get_filtered_indices()
         if not filtered_indices:
-            cv2.putText(canvas, "当前筛选条件下无图像", (x + 60, list_y + 40),
+            cv2.putText(canvas, "当前筛选条件下无图像", (x + 60, y + header_h + 45),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.44, (120, 120, 120), 1, cv2.LINE_AA)
             return
 
-        studio.scroll_offset = max(0, min(studio.scroll_offset, len(filtered_indices) - visible_count))
+        # 2. 列表内容区布局与渲染
+        if is_matrix:
+            # ==================== 【模式 A: 逐帧多轮残差演进矩阵宽表】 ====================
+            th_h = 24
+            th_y1 = y + header_h + 6
+            th_y2 = th_y1 + th_h
+            list_y = th_y2 + 4
+            item_h = 30
+            visible_count = (h - (list_y - y) - 10) // item_h
 
-        for row_idx in range(visible_count):
-            list_idx = studio.scroll_offset + row_idx
-            if list_idx >= len(filtered_indices):
-                break
+            studio.scroll_offset = max(0, min(studio.scroll_offset, len(filtered_indices) - visible_count))
 
-            orig_img_idx = filtered_indices[list_idx]
-            p = studio.image_files[orig_img_idx]
-            bname = os.path.basename(p)
-            meta = studio.frame_metrics_cache.get(bname, {})
+            # 绘制矩阵表头背景
+            cv2.rectangle(canvas, (x + 6, th_y1), (x + w - 6, th_y2), (32, 36, 46), -1)
+            cv2.rectangle(canvas, (x + 6, th_y1), (x + w - 6, th_y2), (52, 58, 72), 1)
 
-            iy1 = list_y + row_idx * item_h
-            iy2 = iy1 + item_h - 2
-            is_selected = (orig_img_idx == studio.current_img_idx)
-            is_hover = (x + 4 <= studio.mouse_pos[0] <= x + w - 4 and iy1 <= studio.mouse_pos[1] <= iy2)
+            c_name_w = 110
+            c_tag_w = 34
+            c_round_w = 54
+            c_drop_w = 68
 
-            # 行底色
-            if is_selected:
-                row_bg = (48, 42, 28)
-                border_c = (0, 220, 255)
-            elif is_hover:
-                row_bg = (35, 38, 48)
-                border_c = (55, 60, 75)
-            else:
-                row_bg = (25, 27, 34)
-                border_c = (38, 40, 50)
+            # 表头固定列
+            cv2.putText(canvas, "图像帧", (x + 14, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 205, 215), 1, cv2.LINE_AA)
+            cv2.putText(canvas, "Tag", (x + 14 + c_name_w, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 205, 215), 1, cv2.LINE_AA)
 
-            cv2.rectangle(canvas, (x + 6, iy1), (x + w - 6, iy2), row_bg, -1)
-            cv2.rectangle(canvas, (x + 6, iy1), (x + w - 6, iy2), border_c, 1)
+            cur_col_x = x + 14 + c_name_w + c_tag_w
+            # 动态平差轮次表头列 (R0, R1, R2, ..., R10)
+            active_headers = headers if headers else ["基准(R0)"]
+            for col_idx, h_name in enumerate(active_headers):
+                is_latest_col = (col_idx == len(active_headers) - 1)
+                th_color = (0, 240, 255) if is_latest_col else (180, 185, 195)
+                # 最新一轮列高亮底框
+                if is_latest_col and len(active_headers) > 1:
+                    cv2.rectangle(canvas, (cur_col_x - 2, th_y1 + 2), (cur_col_x + c_round_w - 4, th_y2 - 2), (25, 60, 75), -1)
+                cv2.putText(canvas, h_name, (cur_col_x + 6, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, th_color, 1 if not is_latest_col else 2, cv2.LINE_AA)
+                cur_col_x += c_round_w
 
-            btn_id = f"SELECT_FRAME_{orig_img_idx}"
-            studio.gui_buttons.append((btn_id, (x + 6, iy1, x + w - 6, iy2), orig_img_idx))
+            # 累计改善降幅列
+            cv2.putText(canvas, "累计降幅", (cur_col_x + 4, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 240, 120), 1, cv2.LINE_AA)
 
-            # 状态小圆点
-            dot_y = iy1 + item_h // 2
-            is_excl = meta.get("is_excluded", False)
-            if is_excl:
-                dot_c = (0, 0, 240)
-            elif meta.get("mean_err", 0.0) > 0.5:
-                dot_c = (0, 180, 255)
-            else:
-                dot_c = (0, 230, 80)
-            cv2.circle(canvas, (x + 18, dot_y), 4, dot_c, -1)
+            # 绘制逐帧矩阵数据行
+            for row_idx in range(visible_count):
+                list_idx = studio.scroll_offset + row_idx
+                if list_idx >= len(filtered_indices):
+                    break
 
-            # 文件名
-            txt_col = (255, 255, 255) if is_selected else (200, 200, 200)
-            short_name = bname if len(bname) <= 16 else bname[:13] + "..."
-            cv2.putText(canvas, short_name, (x + 30, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.42, txt_col, 1, cv2.LINE_AA)
+                orig_img_idx = filtered_indices[list_idx]
+                p = studio.image_files[orig_img_idx]
+                bname = os.path.basename(p)
+                meta = studio.frame_metrics_cache.get(bname, {})
 
-            # Tag 计数
-            tag_cnt = meta.get("tag_count", 0)
-            t_str = f"{tag_cnt}T"
-            cv2.putText(canvas, t_str, (x + 175, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 160, 175), 1, cv2.LINE_AA)
+                iy1 = list_y + row_idx * item_h
+                iy2 = iy1 + item_h - 2
+                is_selected = (orig_img_idx == studio.current_img_idx)
+                is_hover = (x + 6 <= studio.mouse_pos[0] <= x + w - 6 and iy1 <= studio.mouse_pos[1] <= iy2)
 
-            # 平均残差数值
-            if is_excl:
-                cv2.putText(canvas, "EXCL", (x + 225, dot_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 240), 1, cv2.LINE_AA)
-            else:
-                err_str = f"{meta.get('mean_err', 0.0):.2f}px"
-                err_col = (0, 200, 255) if meta.get('mean_err', 0.0) > 0.5 else (0, 240, 100)
-                cv2.putText(canvas, err_str, (x + 225, dot_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.40, err_col, 1, cv2.LINE_AA)
+                if is_selected:
+                    row_bg = (48, 42, 28)
+                    border_c = (0, 220, 255)
+                elif is_hover:
+                    row_bg = (35, 38, 48)
+                    border_c = (55, 60, 75)
+                else:
+                    row_bg = (24, 26, 33) if row_idx % 2 == 0 else (20, 22, 28)
+                    border_c = (36, 38, 48)
+
+                cv2.rectangle(canvas, (x + 6, iy1), (x + w - 6, iy2), row_bg, -1)
+                cv2.rectangle(canvas, (x + 6, iy1), (x + w - 6, iy2), border_c, 1)
+
+                btn_id = f"SELECT_FRAME_{orig_img_idx}"
+                studio.gui_buttons.append((btn_id, (x + 6, iy1, x + w - 6, iy2), orig_img_idx))
+
+                # 状态小圆点
+                dot_y = iy1 + item_h // 2
+                is_excl = meta.get("is_excluded", False)
+                if is_excl:
+                    dot_c = (0, 0, 240)
+                elif meta.get("mean_err", 0.0) > 0.5:
+                    dot_c = (0, 180, 255)
+                else:
+                    dot_c = (0, 230, 80)
+                cv2.circle(canvas, (x + 14, dot_y), 3, dot_c, -1)
+
+                # 文件名 (截取前10个字符)
+                name_stem = bname.replace(".png", "").replace(".jpg", "")
+                short_name = name_stem if len(name_stem) <= 10 else name_stem[:9] + "…"
+                name_col = (255, 255, 255) if is_selected else (200, 205, 215)
+                cv2.putText(canvas, short_name, (x + 22, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, name_col, 1, cv2.LINE_AA)
+
+                # Tag 数量
+                tag_cnt = meta.get("tag_count", 0)
+                cv2.putText(canvas, f"{tag_cnt}T", (x + 14 + c_name_w, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (140, 150, 165), 1, cv2.LINE_AA)
+
+                # 各轮次残差单元格值 (R0, R1, ..., R10)
+                row_vals = matrix.get(bname, [])
+                r_col_x = x + 14 + c_name_w + c_tag_w
+
+                for c_idx in range(len(active_headers)):
+                    is_latest_c = (c_idx == len(active_headers) - 1)
+                    val = row_vals[c_idx] if c_idx < len(row_vals) else None
+
+                    # 最新一轮单元格微高亮底框
+                    if is_latest_c and len(active_headers) > 1 and not is_selected:
+                        cv2.rectangle(canvas, (r_col_x - 2, iy1 + 2), (r_col_x + c_round_w - 6, iy2 - 2), (20, 42, 54), -1)
+
+                    if val is None or is_excl:
+                        v_txt = "EXCL" if is_excl else "--"
+                        v_col = (90, 95, 110) if not is_excl else (0, 0, 200)
+                        cv2.putText(canvas, v_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.32, v_col, 1, cv2.LINE_AA)
+                    else:
+                        v_txt = f"{val:.1f}" if val >= 100.0 else f"{val:.2f}"
+                        if val > 1.0:
+                            v_col = (0, 180, 255)
+                        elif val > 0.5:
+                            v_col = (0, 220, 255)
+                        else:
+                            v_col = (0, 240, 100)
+                        cv2.putText(canvas, v_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, v_col, 1, cv2.LINE_AA)
+                    r_col_x += c_round_w
+
+                # 累计降幅百分比
+                first_v = row_vals[0] if (row_vals and row_vals[0] is not None) else None
+                last_v = None
+                for rv in reversed(row_vals):
+                    if rv is not None:
+                        last_v = rv
+                        break
+
+                if first_v is not None and last_v is not None and first_v > 0.001:
+                    drop_val = first_v - last_v
+                    drop_pct = (drop_val / first_v) * 100.0
+                    if drop_pct >= 5.0:
+                        pct_txt = f"↓{drop_pct:.0f}%" if drop_pct >= 10.0 else f"↓{drop_pct:.1f}%"
+                        pct_col = (0, 240, 255)
+                    elif drop_pct <= -5.0:
+                        pct_txt = f"↑{abs(drop_pct):.0f}%"
+                        pct_col = (0, 100, 255)
+                    else:
+                        pct_txt = "0%"
+                        pct_col = (150, 160, 175)
+                else:
+                    pct_txt = "--"
+                    pct_col = (110, 115, 125)
+
+                cv2.putText(canvas, pct_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, pct_col, 1, cv2.LINE_AA)
+
+        else:
+            # ==================== 【模式 B: 高信息密度垂直紧凑帧列表】 ====================
+            list_y = y + header_h + 8
+            item_h = 36
+            visible_count = (h - header_h - 16) // item_h
+
+            studio.scroll_offset = max(0, min(studio.scroll_offset, len(filtered_indices) - visible_count))
+
+            for row_idx in range(visible_count):
+                list_idx = studio.scroll_offset + row_idx
+                if list_idx >= len(filtered_indices):
+                    break
+
+                orig_img_idx = filtered_indices[list_idx]
+                p = studio.image_files[orig_img_idx]
+                bname = os.path.basename(p)
+                meta = studio.frame_metrics_cache.get(bname, {})
+
+                iy1 = list_y + row_idx * item_h
+                iy2 = iy1 + item_h - 2
+                is_selected = (orig_img_idx == studio.current_img_idx)
+                is_hover = (x + 4 <= studio.mouse_pos[0] <= x + w - 4 and iy1 <= studio.mouse_pos[1] <= iy2)
+
+                if is_selected:
+                    row_bg = (48, 42, 28)
+                    border_c = (0, 220, 255)
+                elif is_hover:
+                    row_bg = (35, 38, 48)
+                    border_c = (55, 60, 75)
+                else:
+                    row_bg = (25, 27, 34)
+                    border_c = (38, 40, 50)
+
+                cv2.rectangle(canvas, (x + 6, iy1), (x + w - 6, iy2), row_bg, -1)
+                cv2.rectangle(canvas, (x + 6, iy1), (x + w - 6, iy2), border_c, 1)
+
+                btn_id = f"SELECT_FRAME_{orig_img_idx}"
+                studio.gui_buttons.append((btn_id, (x + 6, iy1, x + w - 6, iy2), orig_img_idx))
+
+                # 状态小圆点
+                dot_y = iy1 + item_h // 2
+                is_excl = meta.get("is_excluded", False)
+                if is_excl:
+                    dot_c = (0, 0, 240)
+                elif meta.get("mean_err", 0.0) > 0.5:
+                    dot_c = (0, 180, 255)
+                else:
+                    dot_c = (0, 230, 80)
+                cv2.circle(canvas, (x + 18, dot_y), 4, dot_c, -1)
+
+                # 文件名
+                txt_col = (255, 255, 255) if is_selected else (200, 200, 200)
+                short_name = bname if len(bname) <= 15 else bname[:12] + "..."
+                cv2.putText(canvas, short_name, (x + 28, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_col, 1, cv2.LINE_AA)
+
+                # Tag 计数
+                tag_cnt = meta.get("tag_count", 0)
+                t_str = f"{tag_cnt}T"
+                cv2.putText(canvas, t_str, (x + 168, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 160, 175), 1, cv2.LINE_AA)
+
+                # 平均残差数值与降幅
+                if is_excl:
+                    cv2.putText(canvas, "EXCL", (x + 218, dot_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 240), 1, cv2.LINE_AA)
+                else:
+                    err_val = meta.get('mean_err', 0.0)
+                    err_str = f"{err_val:.2f}px"
+                    err_col = (0, 200, 255) if err_val > 0.5 else (0, 240, 100)
+                    cv2.putText(canvas, err_str, (x + 218, dot_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.40, err_col, 1, cv2.LINE_AA)
 
     def render_center_viewport(self, studio: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
         """中栏：高清工作视口，等比居中自适应渲染"""
@@ -1234,22 +1403,33 @@ class StudioUIRenderer:
             cv2.putText(canvas, log_line, (cx1 + 32, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 210, 220), 1, cv2.LINE_AA)
             y_c += 20
 
-        # 4. 底部决策操作按钮
-        btn_y1 = cy1 + card_h - 48
-        btn_y2 = btn_y1 + 34
+        # 4. 底部决策操作与提示
+        card_hint = "左侧列表已自动展开逐帧多轮残差演进矩阵大表 (按 X 键可自由收放)"
+        cv2.putText(canvas, card_hint, (cx1 + 24, cy1 + card_h - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 220, 255), 1, cv2.LINE_AA)
+
+        btn_y1 = cy1 + card_h - 44
+        btn_y2 = btn_y1 + 32
 
         # 采纳按钮 (Enter)
-        b1_w = 230
-        b1_x1 = cx1 + 90
+        b1_w = 200
+        b1_x1 = cx1 + 40
         b1_x2 = b1_x1 + b1_w
-        draw_styled_button(canvas, (b1_x1, btn_y1, b1_x2, btn_y2), "采纳平差成果 (Enter)",
+        draw_styled_button(canvas, (b1_x1, btn_y1, b1_x2, btn_y2), "采纳成果 (Enter)",
                            mouse_pos=studio.mouse_pos, btn_type="success")
         studio.gui_buttons.append(("ACCEPT_PRUNE", (b1_x1, btn_y1, b1_x2, btn_y2), "ACCEPT_PRUNE"))
 
-        # 撤销还原按钮 (Esc)
-        b2_w = 210
-        b2_x1 = b1_x2 + 70
+        # 导出报告按钮 (R)
+        b2_w = 190
+        b2_x1 = b1_x2 + 25
         b2_x2 = b2_x1 + b2_w
-        draw_styled_button(canvas, (b2_x1, btn_y1, b2_x2, btn_y2), "撤销还原 (Esc)",
+        draw_styled_button(canvas, (b2_x1, btn_y1, b2_x2, btn_y2), "导出质检单 (R)",
+                           mouse_pos=studio.mouse_pos, btn_type="primary")
+        studio.gui_buttons.append(("EXPORT_REPORT", (b2_x1, btn_y1, b2_x2, btn_y2), "EXPORT_REPORT"))
+
+        # 撤销还原按钮 (Esc)
+        b3_w = 170
+        b3_x1 = b2_x2 + 25
+        b3_x2 = b3_x1 + b3_w
+        draw_styled_button(canvas, (b3_x1, btn_y1, b3_x2, btn_y2), "撤销还原 (Esc)",
                            mouse_pos=studio.mouse_pos, btn_type="danger")
-        studio.gui_buttons.append(("UNDO_PRUNE", (b2_x1, btn_y1, b2_x2, btn_y2), "UNDO_PRUNE"))
+        studio.gui_buttons.append(("UNDO_PRUNE", (b3_x1, btn_y1, b3_x2, btn_y2), "UNDO_PRUNE"))

@@ -414,7 +414,9 @@ class TagCalibrationVerifier:
                     [0.0, intr.fy, intr.ppy],
                     [0.0, 0.0, 1.0]
                 ], dtype=np.float64)
-                print(f"[OK] RealSense 硬件在线内参已同步: fx={intr.fx:.2f}, cx={intr.ppx:.2f}")
+                if hasattr(intr, 'coeffs') and len(intr.coeffs) >= 5:
+                    self.dist_coeffs = np.array(intr.coeffs[:5], dtype=np.float64).reshape((5, 1))
+                print(f"[OK] RealSense 硬件在线内参与畸变已同步: fx={intr.fx:.2f}, cx={intr.ppx:.2f}, model={intr.model}")
             except Exception:
                 config = rs.config()
                 config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
@@ -820,8 +822,6 @@ class TagCalibrationVerifier:
                         self.start_batch_collection()
                     elif btn_id == "EXPORT":
                         self.export_report()
-                    elif btn_id == "OPEN_OFFLINE_STUDIO":
-                        self.open_offline_studio()
                     elif btn_id == "CLEAR_BLIND":
                         self.blind_target_tag_id = None
                         self.set_toast("已清除盲测，恢复全量解算 (ALL)")
@@ -895,10 +895,8 @@ class TagCalibrationVerifier:
         print("   - 【乒乓开关】[Tab/M] 在【实时动态 (LIVE)】与【静态滤波锁定 (STATIC LOCKED)】之间一键切换；")
         print("   - 【基准凝固】在静态模式下采足 30/60 帧后一次性去噪并绝对锁死位姿，抖动严格 0.00mm；")
         print("   - 【留一盲测】在顶栏直接点击 Tag 编号，由其余标靶反推 3D 棱柱并评估残差；")
-        print("   - 【离线Studio】按 [S] 键直达 AprilTag 离线综合工作站，退回后自动热重载最新地图；")
         print("   - 【HUD 终端】按 [H] 键随时展开/折叠黑晶诊断终端，U/J 翻页。")
         print(" [快捷键指南]   :")
-        print("   - [S]             : 【一键直达 AprilTag 离线标定综合工作站 (Studio)】；")
         print("   - [E]             : 【导出当前静态量测质检报告 (.md)】；")
         print("   - [Tab] / [M]     : 【乒乓切换模式】(实时动态 <-> 静态滤波锁定)；")
         print("   - [W]             : 【循环切换采样批次深度】(30F <-> 60F)；")
@@ -1247,21 +1245,14 @@ class TagCalibrationVerifier:
                 self.gui_buttons.append(("RESAMPLE_LOCK", (bx, btn_y_top, bx + sample_btn_w, btn_y_bot), "RESAMPLE_LOCK"))
                 bx += sample_btn_w + 8
 
-                # 按钮 5：【跳转旗舰离线工作站 (S)】(替代旧画板与旧体检台)
-                studio_btn_w = 125
-                draw_styled_button(canvas, (bx, btn_y_top, bx + studio_btn_w, btn_y_bot), "离线Studio (S)",
-                                   mouse_pos=(mx, my), btn_type="purple")
-                self.gui_buttons.append(("OPEN_OFFLINE_STUDIO", (bx, btn_y_top, bx + studio_btn_w, btn_y_bot), "OPEN_OFFLINE_STUDIO"))
-                bx += studio_btn_w + 8
-
-                # 按钮 6：【导出静态质检单 (E)】
+                # 按钮 5：【导出静态质检单 (E)】
                 exp_btn_w = 95
                 draw_styled_button(canvas, (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "导出报告 (E)",
                                    mouse_pos=(mx, my), btn_type="normal")
                 self.gui_buttons.append(("EXPORT", (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "EXPORT"))
                 bx += exp_btn_w + 8
 
-                # 按钮 7：【退出 (Q)】 (居右)
+                # 按钮 6：【退出 (Q)】 (居右)
                 exit_btn_w = 80
                 draw_styled_button(canvas, (w_img - exit_btn_w - 12, btn_y_top, w_img - 12, btn_y_bot), "退出 (Q)",
                                    mouse_pos=(mx, my), btn_type="danger")
@@ -1370,9 +1361,6 @@ class TagCalibrationVerifier:
                 elif key in (ord('c'), ord('C')):
                     self.blind_target_tag_id = None
                     self.set_toast("已清除盲测，恢复全量解算 (ALL)")
-
-                elif key in (ord('s'), ord('S')):     # S 键 -> 呼出 AprilTag 离线标定综合工作站 (Studio)
-                    self.open_offline_studio()
 
                 elif key in (ord('e'), ord('E')):     # E 键 -> 导出当前静态量测质检单
                     self.export_report()

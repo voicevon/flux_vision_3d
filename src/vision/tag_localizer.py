@@ -20,16 +20,18 @@ class TagLocalizer:
     def __init__(self, 
                  tags_map_path: str = "config/tags_map.yaml",
                  camera_matrix: Optional[np.ndarray] = None,
-                 dist_coeffs: Optional[np.ndarray] = None):
+                 dist_coeffs: Optional[np.ndarray] = None,
+                 marker_size_mm: float = 50.0):
         """
         初始化定位器
         :param tags_map_path: 标靶空间地图配置文件路径
         :param camera_matrix: 3x3 相机内参矩阵
         :param dist_coeffs: 畸变系数
+        :param marker_size_mm: 标靶物理边长 (mm)
         """
         self.tags_map_path = tags_map_path
         self.tags_map: Optional[Dict] = None
-        self.marker_size_mm = 50.0
+        self.marker_size_mm = marker_size_mm
 
         # 相机内参与畸变
         if camera_matrix is None:
@@ -46,10 +48,10 @@ class TagLocalizer:
         # 加载地图
         self.load_map(tags_map_path)
 
-        # 初始化检测器 (AprilTag 16h5)
+        # 初始化检测器 (AprilTag 16h5: 统一采用 CONTOUR 消除梯度吸附滑移)
         self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_16h5)
         self.detector_params = cv2.aruco.DetectorParameters()
-        self.detector_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        self.detector_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_CONTOUR
         self.detector = cv2.aruco.ArucoDetector(self.dictionary, self.detector_params)
 
         # 单标靶局部 4 角点物理坐标 (逆时针, Z=0)
@@ -62,12 +64,24 @@ class TagLocalizer:
         ], dtype=np.float64)
 
     def load_map(self, path: str):
-        """加载已建好的标靶地图配置"""
+        """加载已建好的标靶地图配置并执行 Schema 安全守门校验"""
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
-                self.tags_map = yaml.safe_load(f)
+                self.tags_map = yaml.safe_load(f) or {}
             self.marker_size_mm = float(self.tags_map.get("marker_size_mm", 50.0))
-            print(f"[TagLocalizer] 成功加载标靶立体地图: {path} (包含 {len(self.tags_map.get('tags', {}))} 个标靶)")
+            
+            # 严格校验 schema 与 is_dynamic_yaw 标记 (安全守门)
+            tags_dict = self.tags_map.get("tags", {})
+            origin_id = int(self.tags_map.get("origin_tag_id", 0))
+            missing_dynamic_flag = False
+            for tid, t_info in list(tags_dict.items()):
+                if int(tid) == origin_id:
+                    if not t_info.get("is_dynamic_yaw", False):
+                        t_info["is_dynamic_yaw"] = True
+                        missing_dynamic_flag = True
+            if missing_dynamic_flag:
+                print(f"[TagLocalizer] [WARN] 地图缺少 is_dynamic_yaw 标志，已自动强制将原点标靶 Tag {origin_id} 标记为动态 (禁止参与 PnP 外参求解)！")
+            print(f"[TagLocalizer] 成功加载标靶立体地图: {path} (包含 {len(tags_dict)} 个标靶)")
         else:
             self.tags_map = None
 
@@ -100,13 +114,17 @@ class TagLocalizer:
         detected_ids = [int(i) for i in ids.flatten()]
         info["detected_tag_ids"] = detected_ids
 
-        # 收集 3D-2D 对应点对 (主要使用静止 Tag 1~19 解算相机绝对外参)
+        # 收集 3D-2D 对应点对 (严格使用静止标靶解算相机绝对外参)
         object_points_3d = []
         image_points_2d = []
         static_tags_map = self.tags_map.get("tags", {})
+        origin_tid = int(self.tags_map.get("origin_tag_id", 0))
 
         for idx, tag_id in enumerate(detected_ids):
-            # 如果是已知静止标靶
+            # 核心安全守门：原点标靶 (Tag 0) 随机械臂旋转，双重铁律排除在静态 PnP 之外
+            if tag_id == origin_tid:
+                continue
+            # 如果是已知静止标靶 (必须确认 is_dynamic_yaw 不为 True)
             if tag_id in static_tags_map and not static_tags_map[tag_id].get("is_dynamic_yaw", False):
                 T_w_t = np.array(static_tags_map[tag_id]["transform_matrix"], dtype=np.float64)
                 # 计算 4 个角点在世界系下的绝对 3D 坐标: P_w = T_w_t @ P_local

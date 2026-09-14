@@ -17,6 +17,8 @@ from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.manifest_repository import ManifestRepository
 from tools.calibration.studio.studio_state import StudioDataManager
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
 
 class StudioBARunner:
     """异步 BA 平差执行器与进度调度器"""
@@ -58,6 +60,24 @@ class StudioBARunner:
         self.prune_settlement_data: Optional[Dict[str, Any]] = None
         self.current_pruning_target: str = ""
 
+        # 世界系对齐锚定配置 (从 config.yaml 动态加载，杜绝幽灵 Tag 1)
+        self.origin_tag_id: int = 0
+        self.x_align_tag_id: int = 28
+        self._load_alignment_config()
+
+    def _load_alignment_config(self):
+        try:
+            import yaml
+            cfg_path = os.path.join(PROJECT_ROOT, "config.yaml")
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    c = yaml.safe_load(f) or {}
+                calib = c.get("calibration", {})
+                self.origin_tag_id = int(calib.get("origin_tag_id", 0))
+                self.x_align_tag_id = int(calib.get("x_axis_tag_id", 28))
+        except Exception as e:
+            print(f"[WARN] [STUDIO] 读取对齐标靶配置异常，采用默认值 (0, 28): {e}")
+
     def _notify(self, msg: str):
         if self.on_status_change is not None:
             try:
@@ -65,24 +85,39 @@ class StudioBARunner:
             except Exception:
                 pass
 
-    def _execute_ba_solve(self, callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> Tuple[bool, Optional[Dict[str, Any]], str]:
-        """执行单次底层平差求解并更新空间地图文件"""
+    def _execute_ba_solve(self, callback: Optional[Any] = None) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+        """执行单次核心两阶段 BA 平差求解计算并保存完整地图 Schema"""
         frame_detections, valid_frame_names, _ = self.manifest_repo.load_manifest(self.manifest_path)
         if len(frame_detections) < 2:
             return False, None, "有效图像帧不足 2 帧，无法执行 BA 平差"
 
-        opt_res = self.optimizer.optimize(frame_detections, valid_frame_names, callback=callback)
-        if opt_res and "final_tag_poses_aligned" in opt_res:
+        opt_res = self.optimizer.optimize(
+            frame_detections=frame_detections,
+            active_frame_names=valid_frame_names,
+            origin_tag_id=self.origin_tag_id,
+            x_align_tag_id=self.x_align_tag_id,
+            callback=callback
+        )
+        if opt_res and "tags" in opt_res:
+            # 完整继承优化器产出的全量标准 schema (保留 is_dynamic_yaw, is_origin, rpy_deg 等)
+            raw_tags = opt_res.get("tags", {})
             tags_dict = {}
-            for tid, T in opt_res["final_tag_poses_aligned"].items():
-                tags_dict[tid] = {
-                    "transform_matrix": T.tolist(),
-                    "position_mm": T[:3, 3].tolist()
+            for tid, t_info in raw_tags.items():
+                tags_dict[int(tid)] = {
+                    "transform_matrix": t_info.get("transform_matrix"),
+                    "position_mm": t_info.get("position_mm"),
+                    "rpy_deg": t_info.get("rpy_deg", [0.0, 0.0, 0.0]),
+                    "is_origin": bool(t_info.get("is_origin", False)),
+                    "is_dynamic_yaw": bool(t_info.get("is_dynamic_yaw", False))
                 }
             new_map = {
-                "marker_size_mm": self.marker_size_mm,
-                "tags": tags_dict,
-                "rmse_px": opt_res.get("final_rmse", 0.0)
+                "origin_tag_id": opt_res.get("origin_tag_id", self.origin_tag_id),
+                "x_axis_align_tag_id": opt_res.get("x_axis_align_tag_id", self.x_align_tag_id),
+                "marker_size_mm": opt_res.get("marker_size_mm", self.marker_size_mm),
+                "rmse_px": opt_res.get("final_rmse", 0.0),
+                "rmse_reprojection_px": opt_res.get("rmse_reprojection_px", opt_res.get("final_rmse", 0.0)),
+                "calibrated_images_count": opt_res.get("calibrated_images_count", len(valid_frame_names)),
+                "tags": tags_dict
             }
             ManifestRepository.save_map(new_map, self.map_path)
             self.data_mgr.tags_map_data = new_map
@@ -208,6 +243,17 @@ class StudioBARunner:
                 prev_rmse = init_rmse
                 stop_reason = "达到最大预设轮数"
 
+                # 初始化逐帧多轮残差收敛矩阵: 首列为 R0(基准)
+                self.data_mgr.convergence_headers = ["R0"]
+                self.data_mgr.frame_convergence_matrix = {}
+                for p in self.data_mgr.image_files:
+                    bn = os.path.basename(p)
+                    meta = self.data_mgr.frame_metrics_cache.get(bn, {})
+                    err = meta.get("mean_err", 0.0)
+                    is_excl = meta.get("is_excluded", False)
+                    val = round(float(err), 2) if (not is_excl and err is not None) else None
+                    self.data_mgr.frame_convergence_matrix[bn] = [val]
+
                 # 2. 迭代剪枝主循环
                 for r in range(1, self.max_prune_rounds + 1):
                     if self.should_stop_pruning:
@@ -263,6 +309,18 @@ class StudioBARunner:
                         print(f"[✓] 已安全恢复至最优 RMSE: {prev_rmse:.3f} px，自动触发最优收敛停机！\n", flush=True)
                         break
 
+                    # 本轮求解成功且有效，横向自动增加一列记录各图像在求解后的最新残差
+                    self.data_mgr.convergence_headers.append(f"R{r}")
+                    for p in self.data_mgr.image_files:
+                        bn = os.path.basename(p)
+                        meta = self.data_mgr.frame_metrics_cache.get(bn, {})
+                        err = meta.get("mean_err", 0.0)
+                        is_excl = meta.get("is_excluded", False)
+                        val = round(float(err), 2) if (not is_excl and err is not None) else None
+                        if bn not in self.data_mgr.frame_convergence_matrix:
+                            self.data_mgr.frame_convergence_matrix[bn] = []
+                        self.data_mgr.frame_convergence_matrix[bn].append(val)
+
                     self.prune_history.append({
                         "round": r,
                         "pruned": prunable,
@@ -283,6 +341,7 @@ class StudioBARunner:
                     prev_rmse = new_rmse
 
                 # 3. 生成结算对比卡片数据包
+                import copy
                 final_rmse = self.data_mgr.global_rmse
                 final_mm = self.data_mgr.global_median_mm
                 total_pruned = sum(len(item["pruned"]) for item in self.prune_history)
@@ -295,7 +354,9 @@ class StudioBARunner:
                     "rounds_executed": len(self.prune_history),
                     "total_pruned_count": total_pruned,
                     "stop_reason": stop_reason,
-                    "history": self.prune_history
+                    "history": self.prune_history,
+                    "convergence_headers": list(self.data_mgr.convergence_headers),
+                    "frame_convergence_matrix": copy.deepcopy(self.data_mgr.frame_convergence_matrix)
                 }
 
                 self.ba_progress = 1.0
