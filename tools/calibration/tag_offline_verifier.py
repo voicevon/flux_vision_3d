@@ -49,10 +49,12 @@ try:
     _active_sc = CalibrationSceneManager().get_active_scene()
     DEFAULT_MAP_PATH = _active_sc.map_path
     DEFAULT_IMAGE_DIR = _active_sc.raw_images_dir
+    DEFAULT_MANIFEST_PATH = _active_sc.manifest_path
     VERIFICATION_DIR = _active_sc.reports_dir
 except Exception:
     DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
     DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
+    DEFAULT_MANIFEST_PATH = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "tag_observations.yaml")
     VERIFICATION_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
 
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
@@ -91,6 +93,7 @@ class TagOfflineVerifier:
     def __init__(self,
                  map_path: str = DEFAULT_MAP_PATH,
                  image_dir: str = DEFAULT_IMAGE_DIR,
+                 manifest_path: Optional[str] = None,
                  marker_size_mm: float = 50.0,
                  source: str = "auto",
                  caller_ar_instance: Any = None):
@@ -98,6 +101,7 @@ class TagOfflineVerifier:
         初始化离线体检引擎
         :param map_path: tags_map.yaml 路径
         :param image_dir: 采集样本图像目录
+        :param manifest_path: tag_observations.yaml 路径 (可选，默认自适应)
         :param marker_size_mm: 标靶物理边长 (mm)，会被地图中的值覆盖
         :param source: 数据源 'auto' (优先清单), 'manifest' (仅已审核清单), 'images' (原图重检测)
         :param caller_ar_instance: 若由 AR 验证器唤起，传入其实例用于避免递归调用
@@ -119,8 +123,20 @@ class TagOfflineVerifier:
         # 加载白名单
         self.valid_tag_ids = self._load_valid_tag_ids()
 
-        # 数据源策略判定
-        self.manifest_path = os.path.join(self.image_dir, "tag_observations.yaml")
+        # 数据源策略判定 (自适应场景沙盒与常规目录结构)
+        if manifest_path is not None:
+            self.manifest_path = manifest_path
+        else:
+            candidates = [
+                DEFAULT_MANIFEST_PATH,
+                os.path.join(self.image_dir, "tag_observations.yaml"),
+                os.path.join(os.path.dirname(self.image_dir), "tag_observations.yaml"),
+            ]
+            self.manifest_path = candidates[0]
+            for c in candidates:
+                if os.path.exists(c):
+                    self.manifest_path = c
+                    break
         self.manifest_data = None
         self._load_manifest()
 

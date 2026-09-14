@@ -200,7 +200,8 @@ def print_calibration_banner(status):
     print(f"   {C_GREEN}[1]{C_RESET} AprilTag 标靶图纸生成                  (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
     print("")
     print(f"{C_BOLD} [ 二、 场景与批次分组管理 (Scene & Batch Management) ]{C_RESET}")
-    print(f"   {C_GREEN}{C_BOLD}[2]{C_RESET} {C_CYAN}{C_BOLD}标定采样场景管理与切换        (切换当前场景 / 新建工况场景 / 克隆比对 / 发布至生产){C_RESET}")
+    print(f"   {C_GREEN}{C_BOLD}[2]{C_RESET} {C_CYAN}{C_BOLD}标定采样场景综合管理驾驶舱 (Scene Hub)  ★ GUI卡片画廊/原地连拍/一键发布{C_RESET}")
+    print(f"       {C_GRAY}(相册缩略图流、空间几何健康度体检看板、无缝实时连拍与发布生产){C_RESET}")
     print("")
     print(f"{C_BOLD} [ 三、 图像采集 (Image Acquisition) ]{C_RESET}")
     print(f"   {C_GREEN}[3]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍)")
@@ -240,6 +241,7 @@ def print_test_banner():
     print(f"   {C_GREEN}[3]{C_RESET} 运行 AprilTag 空间建图与平差单元测试    (tests/test_tag_map_builder.py)")
     print(f"   {C_GREEN}[4]{C_RESET} 运行 AprilTag 在线 AR 综合验证单元测试  (tests/test_tag_calibration_verifier.py)")
     print(f"   {C_GREEN}[5]{C_RESET} 运行 AprilTag 离线精度体检单元测试      (tests/test_tag_offline_verifier.py)")
+    print(f"   {C_GREEN}[6]{C_RESET} 运行 AprilTag 场景管理与取流单元测试    (tests/test_scene_hub.py)")
     print(f"   {C_GREEN}[A]{C_RESET} 一键运行全部自动化测试")
     print("")
     print(f"   {C_YELLOW}[B]{C_RESET} 返回主菜单")
@@ -659,6 +661,20 @@ def run_offline_studio(status=None):
         active_scene.save_meta()
 
 
+def run_scene_hub(status=None):
+    """优先启动标定采样场景综合管理 GUI 驾驶舱 (Scene Hub)，异常时优雅回退至命令行菜单"""
+    print(f"\n{C_CYAN}[驾驶舱]{C_RESET} 正在启动标定采样场景综合管理 GUI 驾驶舱 (Scene Hub)...")
+    cmd = [sys.executable, "tools/calibration/tag_scene_hub.py"]
+    try:
+        res = subprocess.run(cmd)
+        if res.returncode != 0:
+            print(f"\n{C_YELLOW}[提示]{C_RESET} GUI 驾驶舱异常退出 (退出码: {res.returncode})，切入文本式命令行场景管理器...")
+            submenu_scene_manager(status.get('scene_mgr') if status else None)
+    except Exception as e:
+        print(f"\n{C_YELLOW}[回退]{C_RESET} 无法启动 GUI 驾驶舱 ({e})，切入文本式命令行场景管理器...")
+        submenu_scene_manager(status.get('scene_mgr') if status else None)
+
+
 def submenu_scene_manager(scene_mgr):
     """标定采样场景与批次分组管理专属子菜单"""
     import time
@@ -782,6 +798,8 @@ def submenu_calibration_suite():
         elif choice == '1':
             run_generate_tags()
         elif choice in ('2', '0', 'SCENE', 'SCENES'):
+            run_scene_hub(status)
+        elif choice in ('CLI', 'TXT'):
             submenu_scene_manager(status.get('scene_mgr'))
         elif choice == '3':
             run_tag_capture_wizard(status)
@@ -842,6 +860,12 @@ def run_test_tag_offline_verifier():
     pause_prompt()
 
 
+def run_test_scene_hub():
+    print(f"\n{C_CYAN}[测试]{C_RESET} 正在执行 AprilTag 场景管理与取流单元测试 (tests/test_scene_hub.py)...")
+    subprocess.run([sys.executable, "-m", "unittest", "tests/test_scene_hub.py"])
+    pause_prompt()
+
+
 def run_test_all():
     print(f"\n{C_CYAN}[测试]{C_RESET} 正在一键执行全部自动化测试...")
     print(f"{C_BOLD}--- 1. 运行仿真管线测试 ---{C_RESET}")
@@ -854,6 +878,8 @@ def run_test_all():
     res4 = subprocess.run([sys.executable, "tests/test_tag_calibration_verifier.py"]).returncode
     print(f"\n{C_BOLD}--- 5. 运行 AprilTag 离线精度体检单元测试 ---{C_RESET}")
     res5 = subprocess.run([sys.executable, "tests/test_tag_offline_verifier.py"]).returncode
+    print(f"\n{C_BOLD}--- 6. 运行 AprilTag 场景管理与取流单元测试 ---{C_RESET}")
+    res6 = subprocess.run([sys.executable, "-m", "unittest", "tests/test_scene_hub.py"]).returncode
 
     print(f"\n{C_CYAN}================ 测试汇总结果 ================{C_RESET}")
     print(f" 1. 仿真管线: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res1 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
@@ -861,6 +887,7 @@ def run_test_all():
     print(f" 3. 空间建图: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res3 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f" 4. 综合验证: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res4 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f" 5. 离线体检: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res5 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
+    print(f" 6. 场景管理: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res6 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f"{C_CYAN}=============================================={C_RESET}")
     pause_prompt()
 
@@ -869,7 +896,7 @@ def submenu_test_suite():
     """二级子菜单：自动化测试与算法验证专区"""
     while True:
         print_test_banner()
-        choice = input(f"请输入测试选项 [1-5, A, B]: ").strip().upper()
+        choice = input(f"请输入测试选项 [1-6, A, B]: ").strip().upper()
         
         if choice == '1':
             run_test_mock()
@@ -881,6 +908,8 @@ def submenu_test_suite():
             run_test_tag_verifier()
         elif choice == '5':
             run_test_tag_offline_verifier()
+        elif choice == '6':
+            run_test_scene_hub()
         elif choice == 'A':
             run_test_all()
         elif choice == 'B' or choice == '0':
