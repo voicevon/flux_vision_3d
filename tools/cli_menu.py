@@ -182,7 +182,7 @@ def print_calibration_banner(status):
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
     print(f"{C_CYAN}{C_BOLD}       【手眼标定与 AprilTag 空间建图专区】(Calibration & Tag Mapping)         {C_RESET}")
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
-    print(f" 标准流水线: {C_YELLOW}[0 选场景]{C_RESET} -> {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio]{C_RESET} -> {C_YELLOW}[7 在线AR验证]{C_RESET}")
+    print(f" 标准流水线: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 选场景]{C_RESET} -> {C_YELLOW}[3 采图]{C_RESET} -> {C_YELLOW}[4 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio]{C_RESET} -> {C_YELLOW}[7 在线AR验证]{C_RESET}")
 
     scene = status.get('active_scene')
     if scene:
@@ -194,26 +194,26 @@ def print_calibration_banner(status):
         print(f" 状态一览: 采图集: {C_GREEN}{status['calib_image_count']}{C_RESET} 帧 | 审核清单: {status.get('has_manifest', False)}")
 
     print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
-    print(f"{C_BOLD} [ 零、 场景与批次分组管理 (Scene & Batch Management) ]{C_RESET}")
-    print(f"   {C_GREEN}{C_BOLD}[0]{C_RESET} {C_CYAN}{C_BOLD}标定采样场景管理与切换        (切换当前场景 / 新建工况场景 / 克隆比对 / 发布至生产){C_RESET}")
-    print("")
     print(f"{C_BOLD} [ 一、 标靶准备 (Target Preparation) ]{C_RESET}")
     print(f"   {C_GREEN}[1]{C_RESET} AprilTag 标靶图纸生成                  (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
     print("")
-    print(f"{C_BOLD} [ 二、 图像采集 (Image Acquisition) ]{C_RESET}")
-    print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍)")
+    print(f"{C_BOLD} [ 二、 场景与批次分组管理 (Scene & Batch Management) ]{C_RESET}")
+    print(f"   {C_GREEN}{C_BOLD}[2]{C_RESET} {C_CYAN}{C_BOLD}标定采样场景管理与切换        (切换当前场景 / 新建工况场景 / 克隆比对 / 发布至生产){C_RESET}")
     print("")
-    print(f"{C_BOLD} [ 三、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
+    print(f"{C_BOLD} [ 三、 图像采集 (Image Acquisition) ]{C_RESET}")
+    print(f"   {C_GREEN}[3]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍)")
+    print("")
+    print(f"{C_BOLD} [ 四、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
     print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 自动装载当前活动场景{C_RESET}")
     print(f"       {C_GRAY}(整合样本交互审核、高精BA平差解算、热力覆盖率分析与全局体检闭环){C_RESET}")
-    print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (当前场景: 16级阈值网格+双尺度CLAHE+0.01px精修)")
+    print(f"   {C_GREEN}[4]{C_RESET} 离线图像诊断调优与超精重提取           (当前场景: 16级阈值网格+双尺度CLAHE+0.01px精修)")
     print(f"   {C_GREEN}[5]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，命令行静默求解) {C_GRAY}[快捷键: M]{C_RESET}")
     print(f"   {C_GREEN}[6]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (当前场景全量留一盲测，残差矢量评估) {C_GRAY}[快捷键: P]{C_RESET}")
     print("")
-    print(f"{C_BOLD} [ 四、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
+    print(f"{C_BOLD} [ 五、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
     print(f"   {C_GREEN}[7]{C_RESET} 标定精度在线 AR 综合实时验证系统      (相机实时取流，3D轴/棱柱虚实融合，静态位姿锁定)")
     print("")
-    print(f"{C_BOLD} [ 五、 辅助工具与维护通道 (Auxiliary Tools & Maintenance) ]{C_RESET}")
+    print(f"{C_BOLD} [ 六、 辅助工具与维护通道 (Auxiliary Tools & Maintenance) ]{C_RESET}")
     print(f"   {C_GREEN}[W]{C_RESET} AprilTag 标靶 ID 白名单管理            (查看当前/一键放行探索/指定有效 ID 列表)")
     print(f"   {C_GREEN}[V]{C_RESET} 浏览当前场景标注与分析目录            (在系统资源管理器中打开当前场景 visualized/)")
     print(f"   {C_GREEN}[D]{C_RESET} 单帧标靶漏检病因深度诊断与切片分析    (分析真图淘汰候选框/尺寸/反差/模糊原因)")
@@ -386,11 +386,11 @@ def run_tag_super_extractor(status=None):
     manifest_path = active_scene.manifest_path if active_scene else "data/tag_calibration_images/tag_observations.yaml"
     scene_name = active_scene.scene_id if active_scene else "默认目录"
 
-    print(f"\n{C_CYAN}[工序 3: 超精提取]{C_RESET} 正在启动 AprilTag 图像质量诊断与超精重提取 (当前场景: {C_GREEN}{scene_name}{C_RESET})...")
+    print(f"\n{C_CYAN}[工序 4: 超精提取]{C_RESET} 正在启动 AprilTag 图像质量诊断与超精重提取 (当前场景: {C_GREEN}{scene_name}{C_RESET})...")
     images = glob.glob(os.path.join(image_dir, "*.png"))
     if not images:
         print(f"{C_YELLOW}[提示]{C_RESET} 当前场景目录 ({image_dir}) 下没有图像！")
-        print(f"请先运行工序 {C_GREEN}[2]{C_RESET} 采图向导，拍摄约 10~20 张多视角标靶照片后再运行重提取。")
+        print(f"请先运行工序 {C_GREEN}[3]{C_RESET} 采图向导，拍摄约 10~20 张多视角标靶照片后再运行重提取。")
         pause_prompt()
         return
 
@@ -415,7 +415,7 @@ def run_build_tag_map(status=None):
     images = glob.glob(os.path.join(image_dir, "*.png"))
     if not images:
         print(f"{C_YELLOW}[提示]{C_RESET} 当前场景目录 ({image_dir}) 下没有图像！")
-        print(f"请先运行工序 {C_GREEN}[2]{C_RESET} 采图向导，拍摄约 10~20 张多视角标靶照片后再运行建图。")
+        print(f"请先运行工序 {C_GREEN}[3]{C_RESET} 采图向导，拍摄约 10~20 张多视角标靶照片后再运行建图。")
         pause_prompt()
         return
 
@@ -432,7 +432,7 @@ def run_tag_calibration_verifier():
     map_path = "config/tags_map.yaml"
     if not os.path.exists(map_path):
         print(f"{C_YELLOW}[提示]{C_RESET} 尚未检测到生产标靶地图文件: {map_path}！")
-        print(f"请先在场景管理器 {C_GREEN}[0]{C_RESET} 中将平差完毕的场景地图【[P] 一键发布至生产环境】后再运行在线 AR 验证。")
+        print(f"请先在场景管理器 {C_GREEN}[2]{C_RESET} 或离线工作站中将平差完毕的场景地图【[P]/[U] 一键发布至生产环境】后再运行在线 AR 验证。")
         pause_prompt()
         return
 
@@ -601,7 +601,7 @@ def run_open_observations_manifest():
     manifest_path = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "tag_observations.yaml")
     if not os.path.exists(manifest_path):
         print(f"\n{C_YELLOW}[提示]{C_RESET} 尚未检测到审核清单: {manifest_path}")
-        print(f"请先运行工序 {C_GREEN}[3]{C_RESET}，系统将自动扫描当前采图并生成观测清单。")
+        print(f"请先运行工序 {C_GREEN}[4]{C_RESET}，系统将自动扫描当前采图并生成观测清单。")
         pause_prompt()
         return
 
@@ -769,22 +769,18 @@ def submenu_calibration_suite():
     while True:
         status = check_env_status()
         print_calibration_banner(status)
-        choice = input(f"请输入工序编号 [0, S, 1-8, W, V, D, C, M, O, P, B]: ").strip().upper()
+        choice = input(f"请输入工序编号 [S, 1-8, W, V, D, C, M, P, B]: ").strip().upper()
         
-        if choice in ('0', 'SCENE', 'SCENES'):
-            submenu_scene_manager(status.get('scene_mgr'))
-        elif choice in ('S', 'STUDIO'):
+        if choice in ('S', 'STUDIO', 'O'):
             run_offline_studio(status)
         elif choice == '1':
             run_generate_tags()
-        elif choice == '2':
-            run_tag_capture_wizard(status)
+        elif choice in ('2', '0', 'SCENE', 'SCENES'):
+            submenu_scene_manager(status.get('scene_mgr'))
         elif choice == '3':
+            run_tag_capture_wizard(status)
+        elif choice == '4':
             run_tag_super_extractor(status)
-        elif choice in ('4', 'O'):
-            print(f"\n{C_GREEN}[提示]{C_RESET} 原工序4（审核画板）已全面融入升级为【[S] 离线标定综合工作站 (Offline Studio)】！")
-            print(f"正在直接为您唤起 Offline Studio...")
-            run_offline_studio(status)
         elif choice in ('5', 'M'):
             run_build_tag_map(status)
         elif choice in ('6', 'P'):
