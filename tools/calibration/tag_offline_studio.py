@@ -70,9 +70,17 @@ try:
 except ImportError:
     resolve_camera_intrinsics = None
 
-CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
-DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
-MANIFEST_PATH = os.path.join(CALIB_IMAGES_DIR, "tag_observations.yaml")
+try:
+    from src.calibration.scene_manager import CalibrationSceneManager
+    _active_sc = CalibrationSceneManager().get_active_scene()
+    CALIB_IMAGES_DIR = _active_sc.raw_images_dir
+    DEFAULT_MAP_PATH = _active_sc.map_path
+    MANIFEST_PATH = _active_sc.manifest_path
+except Exception:
+    CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
+    DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
+    MANIFEST_PATH = os.path.join(CALIB_IMAGES_DIR, "tag_observations.yaml")
+
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 
@@ -94,6 +102,15 @@ class TagOfflineStudio:
         self.marker_size_mm = marker_size_mm
         self.win_w = win_w
         self.win_h = win_h
+
+        # 场景管理器感知
+        try:
+            from src.calibration.scene_manager import CalibrationSceneManager
+            self.scene_mgr = CalibrationSceneManager()
+            self.active_scene = self.scene_mgr.get_active_scene()
+        except Exception:
+            self.scene_mgr = None
+            self.active_scene = None
 
         # 1. 初始化视口管理器与物理布局尺寸
         self.viewport = ViewportManager(win_w=win_w, win_h=win_h, top_bar_h=44, bottom_bar_h=52)
@@ -574,9 +591,28 @@ class TagOfflineStudio:
 
 
 
+    def publish_to_production(self):
+        """将当前工作站优化好的地图一键发布至全局生产环境 (config/tags_map.yaml)"""
+        if not self.tags_map_data:
+            self.set_toast("当前尚无有效地图，请先按 [B] 进行 BA 平差！")
+            return
+
+        ManifestRepository.save_map(self.tags_map_data, self.map_path)
+        if self.scene_mgr and self.active_scene:
+            ok, msg = self.scene_mgr.publish_to_production(self.active_scene.scene_id)
+            if ok:
+                self.set_toast(f"★ 成功发布为生产全局地图！({self.active_scene.name})")
+            else:
+                self.set_toast(f"发布失败: {msg}")
+        else:
+            self.set_toast("未连接场景管理器，已保存至本场景地图")
+
     def export_verification_report(self):
         """导出 Markdown 全景精度质检单"""
-        report_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
+        if self.active_scene:
+            report_dir = self.active_scene.reports_dir
+        else:
+            report_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
         os.makedirs(report_dir, exist_ok=True)
         ts = int(time.time())
         report_path = os.path.join(report_dir, f"studio_qa_report_{ts}.md")
@@ -1019,7 +1055,12 @@ class TagOfflineStudio:
                     self.export_verification_report()
                 elif key in (ord('m'), ord('M')):      # M 键 -> 保存地图
                     ManifestRepository.save_map(self.tags_map_data, self.map_path)
-                    self.set_toast("空间立体地图已保存！")
+                    if self.active_scene:
+                        self.active_scene.refresh_stats()
+                        self.active_scene.save_meta()
+                    self.set_toast("空间立体地图已保存至当前场景！")
+                elif key in (ord('u'), ord('U')):      # U 键 -> 发布至生产全局地图
+                    self.publish_to_production()
                 elif key in (8, 127):                  # Backspace 或 Delete (DEL) -> 一键复位地图
                     self.reset_map()
                     self.set_toast("立体地图已复位清空 (备份为 .bak)，恢复为纯观测模式")

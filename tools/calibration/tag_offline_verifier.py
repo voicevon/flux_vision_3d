@@ -44,9 +44,17 @@ if sys.platform == "win32":
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
 
-DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
-DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
-VERIFICATION_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
+try:
+    from src.calibration.scene_manager import CalibrationSceneManager
+    _active_sc = CalibrationSceneManager().get_active_scene()
+    DEFAULT_MAP_PATH = _active_sc.map_path
+    DEFAULT_IMAGE_DIR = _active_sc.raw_images_dir
+    VERIFICATION_DIR = _active_sc.reports_dir
+except Exception:
+    DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
+    DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
+    VERIFICATION_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
+
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 try:

@@ -876,14 +876,26 @@ def main():
     except Exception:
         pass
 
-    parser.add_argument("--image_dir", type=str, default="data/tag_calibration_images", help="多视角标定图片目录")
-    parser.add_argument("--manifest", type=str, default="data/tag_calibration_images/tag_observations.yaml", help="观测数据审核清单路径")
+    def_image_dir = "data/tag_calibration_images"
+    def_manifest = "data/tag_calibration_images/tag_observations.yaml"
+    def_output = "config/tags_map.yaml"
+    try:
+        from src.calibration.scene_manager import CalibrationSceneManager
+        active_sc = CalibrationSceneManager().get_active_scene()
+        def_image_dir = active_sc.raw_images_dir
+        def_manifest = active_sc.manifest_path
+        def_output = active_sc.map_path
+    except Exception:
+        pass
+
+    parser.add_argument("--image_dir", type=str, default=def_image_dir, help="多视角标定图片目录")
+    parser.add_argument("--manifest", type=str, default=def_manifest, help="观测数据审核清单路径")
     parser.add_argument("--marker_size", type=float, default=50.0, help="标靶黑白边框名义边长 (mm)")
     parser.add_argument("--origin_id", type=int, default=def_origin_id, help="SCARA 原点锚定标靶 ID")
     parser.add_argument("--x_axis_id", type=int, default=def_x_axis_id, help="世界 X 轴对齐基准标靶 ID (默认与 config.yaml 一致)")
     parser.add_argument("--baseline_pair", nargs=3, type=float, metavar=('TAG_A', 'TAG_B', 'DIST_MM'),
                         help="双标靶基线尺度校准参数: TAG_A TAG_B 真实距离(mm), 例如: --baseline_pair 1 5 620.5")
-    parser.add_argument("--output", type=str, default="config/tags_map.yaml", help="导出的图谱文件路径")
+    parser.add_argument("--output", type=str, default=def_output, help="导出的图谱文件路径")
     parser.add_argument("--export-manifest", action="store_true", help="仅扫描图像导出观测数据清单并退出")
     parser.add_argument("--solve-manifest", action="store_true", help="直接读取清单执行 BA 平差 (非交互批处理)")
     parser.add_argument("--inspect", action="store_true", help="仅执行连通性深度诊断并输出报告后退出")

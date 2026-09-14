@@ -31,7 +31,13 @@ import yaml
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
-DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
+
+try:
+    from src.calibration.scene_manager import CalibrationSceneManager
+    DEFAULT_IMAGE_DIR = CalibrationSceneManager().get_active_scene().raw_images_dir
+except Exception:
+    DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
+
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 try:
@@ -391,8 +397,15 @@ class TagCaptureWizard:
                     with open(manifest_path, "w", encoding="utf-8") as f:
                         yaml.dump(manifest_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
                     print(f"  [AUTO-SYNC] 已将快照 #{self.image_count} 自动同步录入清单 {manifest_path} (检出 {len(obs_list)} 个标靶)")
-            except Exception as e:
-                print(f"  [WARN] 自动增量写入清单失败: {e}")
+        # 同步更新活动场景元数据
+        try:
+            from src.calibration.scene_manager import CalibrationSceneManager
+            active_sc = CalibrationSceneManager().get_active_scene()
+            if os.path.normpath(active_sc.raw_images_dir) == os.path.normpath(self.output_dir):
+                active_sc.refresh_stats()
+                active_sc.save_meta()
+        except Exception:
+            pass
 
         self.flash_timer = time.time()
         return raw_filepath
@@ -832,7 +845,7 @@ class TagCaptureWizard:
 
 def main():
     parser = argparse.ArgumentParser(description="AprilTag 多视角交互式采图向导")
-    parser.add_argument("--dir", type=str, default=DEFAULT_IMAGE_DIR, help="保存采集图像的目录路径")
+    parser.add_argument("--dir", "--output_dir", dest="dir", type=str, default=DEFAULT_IMAGE_DIR, help="保存采集图像的目录路径")
     parser.add_argument("--mock", action="store_true", help="仿真模式：无需物理相机演示采图交互")
     args = parser.parse_args()
 

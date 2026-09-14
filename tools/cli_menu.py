@@ -13,6 +13,11 @@ import glob
 import subprocess
 from datetime import datetime
 
+try:
+    from src.calibration.scene_manager import CalibrationSceneManager
+except ImportError:
+    CalibrationSceneManager = None
+
 # Windows 终端色彩支持
 if sys.platform == "win32":
     try:
@@ -70,27 +75,52 @@ def check_env_status():
     snapshots = glob.glob(os.path.join(PROJECT_ROOT, "data", "snapshots", "color_*.png"))
     status['snapshot_count'] = len(snapshots)
 
-    # 采图数据集统计
-    calib_images = glob.glob(os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "*.png"))
-    status['calib_image_count'] = len(calib_images)
+    # 标定场景管理器与当前活动场景
+    scene_mgr = CalibrationSceneManager() if CalibrationSceneManager else None
+    active_scene = scene_mgr.get_active_scene() if scene_mgr else None
+    status['scene_mgr'] = scene_mgr
+    status['active_scene'] = active_scene
 
-    # 标靶空间地图状态
-    map_path = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
-    status['has_tag_map'] = os.path.exists(map_path)
+    # 采图数据集统计 (以当前活动场景为主，兼容旧路径)
+    if active_scene:
+        status['calib_image_count'] = active_scene.image_count
+        status['has_tag_map'] = active_scene.ba_solved
+        status['has_manifest'] = os.path.exists(active_scene.manifest_path)
+        status['manifest_path'] = active_scene.manifest_path
+        status['image_dir'] = active_scene.raw_images_dir
+        status['map_path'] = active_scene.map_path
+        status['is_published'] = active_scene.is_published
+    else:
+        calib_images = glob.glob(os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "*.png"))
+        status['calib_image_count'] = len(calib_images)
+        map_path = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
+        status['has_tag_map'] = os.path.exists(map_path)
+        manifest_path = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "tag_observations.yaml")
+        status['has_manifest'] = os.path.exists(manifest_path)
+        status['manifest_path'] = manifest_path
+        status['image_dir'] = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
+        status['map_path'] = map_path
+        status['is_published'] = os.path.exists(map_path)
 
-    # 标靶观测数据审核清单状态
-    manifest_path = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "tag_observations.yaml")
-    status['has_manifest'] = os.path.exists(manifest_path)
+    # 生产环境全局地图状态
+    prod_map_path = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
+    status['prod_has_map'] = os.path.exists(prod_map_path)
+
     manifest_excluded = 0
     if status['has_manifest']:
         try:
             import yaml
-            with open(manifest_path, "r", encoding="utf-8") as f:
+            with open(status['manifest_path'], "r", encoding="utf-8") as f:
                 m = yaml.safe_load(f) or {}
-            for img in m.get("images", {}).values():
-                for obs in img.get("observations", []):
-                    if not obs.get("keep", True):
-                        manifest_excluded += 1
+            frames = m.get("images", m.get("frames", {}))
+            for img in frames.values():
+                if isinstance(img, dict) and (img.get("excluded", False) or not img.get("enabled", True)):
+                    manifest_excluded += 1
+                elif isinstance(img, dict):
+                    for obs in img.get("observations", []):
+                        if not obs.get("keep", True):
+                            manifest_excluded += 1
+                            break
         except Exception:
             pass
     status['manifest_excluded'] = manifest_excluded
@@ -152,47 +182,47 @@ def print_calibration_banner(status):
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
     print(f"{C_CYAN}{C_BOLD}       【手眼标定与 AprilTag 空间建图专区】(Calibration & Tag Mapping)         {C_RESET}")
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
-    print(f" 标准流水线: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio (审核/平差/体检)]{C_RESET} -> {C_YELLOW}[7 在线AR验证]{C_RESET}")
-    map_status_str = f"{C_GREEN}已生成 (config/tags_map.yaml){C_RESET}" if status['has_tag_map'] else f"{C_YELLOW}未生成 (请执行 1~5 依次解算){C_RESET}"
-    if not status.get('valid_tag_ids'):
-        wl_status_str = f"{C_CYAN}全量探索 (放行所有标靶 0~29){C_RESET}"
-    else:
-        wl_status_str = f"{C_GREEN}白名单过滤 ({len(status['valid_tag_ids'])}个已知ID){C_RESET}"
+    print(f" 标准流水线: {C_YELLOW}[0 选场景]{C_RESET} -> {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio]{C_RESET} -> {C_YELLOW}[7 在线AR验证]{C_RESET}")
 
-    if status.get('has_manifest'):
-        exc_cnt = status.get('manifest_excluded', 0)
-        obs_str = f"{C_GREEN}已生成 (已剔除 {exc_cnt} 项){C_RESET}" if exc_cnt > 0 else f"{C_GREEN}已生成 (全量保留){C_RESET}"
+    scene = status.get('active_scene')
+    if scene:
+        pub_tag = f"{C_GREEN}★已发布生产{C_RESET}" if scene.is_published else f"{C_YELLOW}草稿待发布{C_RESET}"
+        rmse_tag = f"RMSE: {C_GREEN}{scene.global_rmse_px:.3f}px{C_RESET}" if scene.ba_solved else f"{C_GRAY}未平差{C_RESET}"
+        print(f" 【当前活动场景】: {C_BOLD}{C_GREEN}{scene.scene_id}{C_RESET} (别名: {scene.name} | 采图: {scene.image_count}帧 | 有效: {scene.active_image_count}帧 | {rmse_tag} | {pub_tag})")
+        print(f" 场景物理沙盒  : {C_GRAY}{scene.scene_dir}{C_RESET}")
     else:
-        obs_str = f"{C_YELLOW}未生成 (进入工序3自动创建){C_RESET}"
+        print(f" 状态一览: 采图集: {C_GREEN}{status['calib_image_count']}{C_RESET} 帧 | 审核清单: {status.get('has_manifest', False)}")
 
-    print(f" 状态一览: 采图集: {C_GREEN}{status['calib_image_count']}{C_RESET} 帧 | 审核清单: {obs_str} | 空间地图: {map_status_str}")
     print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
+    print(f"{C_BOLD} [ 零、 场景与批次分组管理 (Scene & Batch Management) ]{C_RESET}")
+    print(f"   {C_GREEN}{C_BOLD}[0]{C_RESET} {C_CYAN}{C_BOLD}标定采样场景管理与切换        (切换当前场景 / 新建工况场景 / 克隆比对 / 发布至生产){C_RESET}")
+    print("")
     print(f"{C_BOLD} [ 一、 标靶准备 (Target Preparation) ]{C_RESET}")
     print(f"   {C_GREEN}[1]{C_RESET} AprilTag 标靶图纸生成                  (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
     print("")
     print(f"{C_BOLD} [ 二、 图像采集 (Image Acquisition) ]{C_RESET}")
-    print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (1080P @ 8fps 丝滑轻量采图，空格一键连拍)")
+    print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍)")
     print("")
     print(f"{C_BOLD} [ 三、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
-    print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 旗舰一站式交互平台{C_RESET}")
+    print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 自动装载当前活动场景{C_RESET}")
     print(f"       {C_GRAY}(整合样本交互审核、高精BA平差解算、热力覆盖率分析与全局体检闭环){C_RESET}")
-    print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (16级阈值网格+双尺度CLAHE+0.01px亚像素精修)")
+    print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (当前场景: 16级阈值网格+双尺度CLAHE+0.01px精修)")
     print(f"   {C_GREEN}[5]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，命令行静默求解) {C_GRAY}[快捷键: M]{C_RESET}")
-    print(f"   {C_GREEN}[6]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (全量留一盲测批处理，残差矢量评估) {C_GRAY}[快捷键: P]{C_RESET}")
-
+    print(f"   {C_GREEN}[6]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (当前场景全量留一盲测，残差矢量评估) {C_GRAY}[快捷键: P]{C_RESET}")
     print("")
     print(f"{C_BOLD} [ 四、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
     print(f"   {C_GREEN}[7]{C_RESET} 标定精度在线 AR 综合实时验证系统      (相机实时取流，3D轴/棱柱虚实融合，静态位姿锁定)")
     print("")
     print(f"{C_BOLD} [ 五、 辅助工具与维护通道 (Auxiliary Tools & Maintenance) ]{C_RESET}")
     print(f"   {C_GREEN}[W]{C_RESET} AprilTag 标靶 ID 白名单管理            (查看当前/一键放行探索/指定有效 ID 列表)")
-    print(f"   {C_GREEN}[V]{C_RESET} 浏览图示化分析与检测标注目录          (在系统资源管理器中打开 visualized/)")
+    print(f"   {C_GREEN}[V]{C_RESET} 浏览当前场景标注与分析目录            (在系统资源管理器中打开当前场景 visualized/)")
     print(f"   {C_GREEN}[D]{C_RESET} 单帧标靶漏检病因深度诊断与切片分析    (分析真图淘汰候选框/尺寸/反差/模糊原因)")
-    print(f"   {C_GREEN}[C]{C_RESET} 一键清空标定采图数据集                (重置采图集从 0 开始重新编号)")
+    print(f"   {C_GREEN}[C]{C_RESET} 一键清空当前活动场景采图数据集        (重置当前场景采图集从 0 开始)")
     print(f"   {C_GREEN}[8]{C_RESET} 备用通道: SCARA 经典接触式物理标定    (SVD 点对刚体配准，极端无Tag场景备用)")
     print("")
     print(f"   {C_YELLOW}[B]{C_RESET} 返回主菜单")
     print(f"{C_CYAN}==============================================================================={C_RESET}")
+
 
 
 def print_test_banner():
@@ -328,11 +358,15 @@ def run_generate_tags():
     pause_prompt()
 
 
-def run_tag_capture_wizard():
-    print(f"\n{C_CYAN}[采图]{C_RESET} 正在启动 AprilTag 交互式多视角采图向导 (tag_capture_wizard.py)...")
+def run_tag_capture_wizard(status=None):
+    active_scene = status.get('active_scene') if status else None
+    scene_name = active_scene.scene_id if active_scene else "默认场景"
+    print(f"\n{C_CYAN}[采图]{C_RESET} 正在启动 AprilTag 交互式多视角采图向导 (当前场景: {C_GREEN}{scene_name}{C_RESET})...")
     # 检查硬件
     ok, mode = ensure_camera_connected()
     cmd = [sys.executable, "tools/calibration/tag_capture_wizard.py"]
+    if active_scene:
+        cmd.extend(["--output_dir", active_scene.raw_images_dir])
     if mode == "mock" or not ok:
         print(f"{C_YELLOW}[提示]{C_RESET} 正在以 --mock 仿真模式启动采图向导...")
         cmd.append("--mock")
@@ -341,33 +375,55 @@ def run_tag_capture_wizard():
     if res.returncode != 0:
         print(f"\n{C_RED}[异常退出] 采图向导异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
         pause_prompt()
+    elif active_scene:
+        active_scene.refresh_stats()
+        active_scene.save_meta()
 
 
-def run_tag_super_extractor():
-    print(f"\n{C_CYAN}[工序 3: 超精提取]{C_RESET} 正在启动 AprilTag 离线图像质量诊断与超精重提取 (tag_super_extractor.py)...")
-    images = glob.glob("data/tag_calibration_images/*.png")
+def run_tag_super_extractor(status=None):
+    active_scene = status.get('active_scene') if status else None
+    image_dir = active_scene.raw_images_dir if active_scene else "data/tag_calibration_images"
+    manifest_path = active_scene.manifest_path if active_scene else "data/tag_calibration_images/tag_observations.yaml"
+    scene_name = active_scene.scene_id if active_scene else "默认目录"
+
+    print(f"\n{C_CYAN}[工序 3: 超精提取]{C_RESET} 正在启动 AprilTag 图像质量诊断与超精重提取 (当前场景: {C_GREEN}{scene_name}{C_RESET})...")
+    images = glob.glob(os.path.join(image_dir, "*.png"))
     if not images:
-        print(f"{C_YELLOW}[提示]{C_RESET} 当前 data/tag_calibration_images/ 目录下没有图像！")
+        print(f"{C_YELLOW}[提示]{C_RESET} 当前场景目录 ({image_dir}) 下没有图像！")
         print(f"请先运行工序 {C_GREEN}[2]{C_RESET} 采图向导，拍摄约 10~20 张多视角标靶照片后再运行重提取。")
         pause_prompt()
         return
 
     print(f"{C_GREEN}[性能解耦说明]{C_RESET} 离线引擎针对静态磁盘原图批处理，彻底解除 CPU 与耗时限制。")
     print(f"执行多尺度 CLAHE 增强、16级自适应阈值网格、微靶超分重判与 0.01px 亚像素精修。")
-    subprocess.run([sys.executable, "tools/calibration/tag_super_extractor.py"])
+    cmd = [sys.executable, "tools/calibration/tag_super_extractor.py", "--image_dir", image_dir, "--manifest", manifest_path]
+    subprocess.run(cmd)
+    if active_scene:
+        active_scene.refresh_stats()
+        active_scene.save_meta()
     pause_prompt()
 
 
-def run_build_tag_map():
-    print(f"\n{C_CYAN}[工序 5: BA平差建图]{C_RESET} 正在启动 AprilTag 3D 空间立体地图建图与两阶段 BA 平差求解 (tag_map_builder.py)...")
-    images = glob.glob("data/tag_calibration_images/*.png")
+def run_build_tag_map(status=None):
+    active_scene = status.get('active_scene') if status else None
+    image_dir = active_scene.raw_images_dir if active_scene else "data/tag_calibration_images"
+    manifest_path = active_scene.manifest_path if active_scene else "data/tag_calibration_images/tag_observations.yaml"
+    map_path = active_scene.map_path if active_scene else "config/tags_map.yaml"
+    scene_name = active_scene.scene_id if active_scene else "默认目录"
+
+    print(f"\n{C_CYAN}[工序 5: BA平差建图]{C_RESET} 正在启动 AprilTag 3D 空间立体建图与两阶段 BA 平差求解 (当前场景: {C_GREEN}{scene_name}{C_RESET})...")
+    images = glob.glob(os.path.join(image_dir, "*.png"))
     if not images:
-        print(f"{C_YELLOW}[提示]{C_RESET} 当前 data/tag_calibration_images/ 目录下没有图像！")
+        print(f"{C_YELLOW}[提示]{C_RESET} 当前场景目录 ({image_dir}) 下没有图像！")
         print(f"请先运行工序 {C_GREEN}[2]{C_RESET} 采图向导，拍摄约 10~20 张多视角标靶照片后再运行建图。")
         pause_prompt()
         return
 
-    subprocess.run([sys.executable, "tools/calibration/tag_map_builder.py"])
+    cmd = [sys.executable, "tools/calibration/tag_map_builder.py", "--image_dir", image_dir, "--manifest", manifest_path, "--output", map_path]
+    subprocess.run(cmd)
+    if active_scene:
+        active_scene.refresh_stats()
+        active_scene.save_meta()
     pause_prompt()
 
 
@@ -375,8 +431,8 @@ def run_tag_calibration_verifier():
     print(f"\n{C_CYAN}[工序 7: 在线AR验证]{C_RESET} 正在启动标定精度与 3D 坐标系在线 AR 综合验证系统 (tag_calibration_verifier.py)...")
     map_path = "config/tags_map.yaml"
     if not os.path.exists(map_path):
-        print(f"{C_YELLOW}[提示]{C_RESET} 尚未检测到标靶地图文件: {map_path}！")
-        print(f"请先执行工序 {C_GREEN}[5]{C_RESET} 空间建图与 BA 平差求解，或在审核画板 {C_GREEN}[4]{C_RESET} 按 [V] 键一键求解。")
+        print(f"{C_YELLOW}[提示]{C_RESET} 尚未检测到生产标靶地图文件: {map_path}！")
+        print(f"请先在场景管理器 {C_GREEN}[0]{C_RESET} 中将平差完毕的场景地图【[P] 一键发布至生产环境】后再运行在线 AR 验证。")
         pause_prompt()
         return
 
@@ -404,23 +460,30 @@ def run_diagnose_tag_frame():
     pause_prompt()
 
 
-def run_clear_calib_dataset():
-    print(f"\n{C_CYAN}[清理]{C_RESET} 准备清空标定采图数据集 (data/tag_calibration_images/)...")
-    files = glob.glob("data/tag_calibration_images/*.png")
+def run_clear_calib_dataset(status=None):
+    active_scene = status.get('active_scene') if status else None
+    image_dir = active_scene.raw_images_dir if active_scene else "data/tag_calibration_images"
+    scene_name = active_scene.scene_id if active_scene else "默认目录"
+
+    print(f"\n{C_CYAN}[清理]{C_RESET} 准备清空当前活动场景采图数据集 (当前场景: {C_GREEN}{scene_name}{C_RESET} | {image_dir})...")
+    files = glob.glob(os.path.join(image_dir, "*.png"))
     if not files:
-        print(f"{C_GREEN}[提示]{C_RESET} 当前采图目录已为空，无需清理。")
+        print(f"{C_GREEN}[提示]{C_RESET} 当前场景采图目录已为空，无需清理。")
         pause_prompt()
         return
 
-    print(f"当前目录共有 {len(files)} 张旧采图照片。")
-    ans = input("是否确认全部删除从 0 开始重新采集？[Y/N]: ").strip().lower()
+    print(f"当前场景共有 {len(files)} 张旧采图照片。")
+    ans = input(f"是否确认清空该场景的所有照片从 0 开始重新采集？(其他场景不受影响) [Y/N]: ").strip().lower()
     if ans == 'y':
         for f in files:
             try:
                 os.remove(f)
             except Exception:
                 pass
-        print(f"{C_GREEN}[OK] 已成功清空全部旧标定图像！下次采图将从 view_0001.png 重新编号。{C_RESET}")
+        if active_scene:
+            active_scene.refresh_stats()
+            active_scene.save_meta()
+        print(f"{C_GREEN}[OK] 已成功清空场景 [{scene_name}] 的标定图像！下次采图将重新从 view_0001.png 开始。{C_RESET}")
     else:
         print(f"{C_YELLOW}[已取消]{C_RESET} 操作已终止。")
     pause_prompt()
@@ -514,11 +577,13 @@ def run_tag_whitelist_manager():
             break
 
 
-def run_open_visualized_dir():
-    """在操作系统文件资源管理器中直接打开图示化分析文件目录"""
-    vis_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "visualized")
+def run_open_visualized_dir(status=None):
+    """在操作系统文件资源管理器中直接打开当前场景图示化分析文件目录"""
+    active_scene = status.get('active_scene') if status else None
+    vis_dir = active_scene.visualized_dir if active_scene else os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "visualized")
     os.makedirs(vis_dir, exist_ok=True)
-    print(f"\n{C_CYAN}[浏览]{C_RESET} 正在打开图示化分析图像目录: {vis_dir}...")
+    scene_name = active_scene.scene_id if active_scene else "默认目录"
+    print(f"\n{C_CYAN}[浏览]{C_RESET} 正在打开场景 [{scene_name}] 的图示化分析图像目录: {vis_dir}...")
     try:
         if sys.platform == "win32":
             os.startfile(vis_dir)
@@ -556,27 +621,147 @@ def run_open_observations_manifest():
         pause_prompt()
 
 
-def run_offline_verifier():
+def run_offline_verifier(status=None):
     """运行离线标定精度体检与 LOO 盲测批量验证"""
-    map_path = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
-    if not os.path.exists(map_path):
-        print(f"\n{C_YELLOW}[提示]{C_RESET} 尚未检测到标靶地图文件: {map_path}！")
-        print(f"请先执行工序 {C_GREEN}[5]{C_RESET} 空间建图与 BA 平差求解生成地图后再进行精度体检。")
+    active_scene = status.get('active_scene') if status else None
+    map_path = active_scene.map_path if active_scene else os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
+    image_dir = active_scene.raw_images_dir if active_scene else os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
+    scene_name = active_scene.scene_id if active_scene else "默认场景"
+
+    if not os.path.exists(map_path) or os.path.getsize(map_path) < 50:
+        print(f"\n{C_YELLOW}[提示]{C_RESET} 尚未检测到场景 [{scene_name}] 的有效标靶地图文件: {map_path}！")
+        print(f"请先在离线 Studio {C_GREEN}[S]{C_RESET} 或工序 {C_GREEN}[5]{C_RESET} 中完成 BA 平差求解生成地图后再进行精度体检。")
         pause_prompt()
         return
 
-    print(f"\n{C_CYAN}[工序 6: 离线体检]{C_RESET} 正在启动离线标定精度体检与 Leave-One-Out 盲测批量验证...")
-    subprocess.run([sys.executable, "tools/calibration/tag_offline_verifier.py"])
+    print(f"\n{C_CYAN}[工序 6: 离线体检]{C_RESET} 正在启动场景 [{scene_name}] 的标定精度体检与 Leave-One-Out 盲测批量验证...")
+    cmd = [sys.executable, "tools/calibration/tag_offline_verifier.py", "--images", image_dir, "--map", map_path]
+    subprocess.run(cmd)
     pause_prompt()
 
 
-def run_offline_studio():
+def run_offline_studio(status=None):
     """启动 AprilTag 离线标定综合工作站 (Tag Offline Studio)"""
-    print(f"\n{C_CYAN}[旗舰工作站]{C_RESET} 正在启动 AprilTag 离线标定综合工作站 (tag_offline_studio.py)...")
-    res = subprocess.run([sys.executable, "tools/calibration/tag_offline_studio.py"])
+    active_scene = status.get('active_scene') if status else None
+    cmd = [sys.executable, "tools/calibration/tag_offline_studio.py"]
+    scene_name = active_scene.scene_id if active_scene else "默认场景"
+    if active_scene:
+        cmd.extend(["--images", active_scene.raw_images_dir, "--map", active_scene.map_path])
+    print(f"\n{C_CYAN}[旗舰工作站]{C_RESET} 正在启动 AprilTag 离线标定综合工作站 (当前沙盒: {C_GREEN}{scene_name}{C_RESET})...")
+    res = subprocess.run(cmd)
     if res.returncode != 0:
         print(f"\n{C_RED}[异常退出] 离线综合工作站异常退出 (退出码: {res.returncode}){C_RESET}")
         pause_prompt()
+    elif active_scene:
+        active_scene.refresh_stats()
+        active_scene.save_meta()
+
+
+def submenu_scene_manager(scene_mgr):
+    """标定采样场景与批次分组管理专属子菜单"""
+    import time
+    if not scene_mgr:
+        print(f"{C_RED}[错误] 场景管理器未能正常加载！{C_RESET}")
+        pause_prompt()
+        return
+
+    while True:
+        os.system("cls" if os.name == "nt" else "clear")
+        print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
+        print(f"{C_CYAN}{C_BOLD}       【标定采样场景与批次分组管理系统】(Calibration Scene Management)         {C_RESET}")
+        print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
+        active_id = scene_mgr.get_active_scene_id()
+        scenes = scene_mgr.list_scenes()
+        print(f" 场景总库目录: {C_GRAY}{scene_mgr.scenes_dir}{C_RESET}")
+        print(f" 当前活动场景: {C_BOLD}{C_GREEN}{active_id}{C_RESET}")
+        print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
+        print(f" {C_BOLD}{'序号':<4} {'场景唯一标识 (ID)':<28} {'别名':<14} {'采图':<6} {'平差RMSE':<12} {'生产发布'}{C_RESET}")
+        print(f"{C_GRAY}" + "-" * 79 + f"{C_RESET}")
+        for idx, sc in enumerate(scenes, 1):
+            is_active = (sc.scene_id == active_id)
+            active_marker = f"{C_GREEN}★ [当前活动]{C_RESET}" if is_active else "            "
+            pub_marker = f"{C_GREEN}★已发布{C_RESET}" if sc.is_published else f"{C_GRAY}草稿{C_RESET}"
+            rmse_str = f"{sc.global_rmse_px:.3f} px" if sc.ba_solved else f"{C_GRAY}未求解{C_RESET}"
+            color = C_GREEN if is_active else C_RESET
+            print(f" {color}[{idx:02d}]{C_RESET} {color}{sc.scene_id:<28}{C_RESET} {sc.name:<14} {sc.image_count:<6} {rmse_str:<12} {pub_marker} {active_marker}")
+        print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
+        print(f"   {C_GREEN}[S]{C_RESET} 切换活动场景                    {C_GREEN}[N]{C_RESET} 新建采样工况场景")
+        print(f"   {C_GREEN}[C]{C_RESET} 克隆当前场景作为对比实验        {C_GREEN}[P]{C_RESET} 将当前活动场景一键发布至生产环境")
+        print(f"   {C_RED}[D]{C_RESET} 安全删除指定废弃场景            {C_YELLOW}[B]{C_RESET} 返回标定专区")
+        print(f"{C_CYAN}==============================================================================={C_RESET}")
+        sub_ch = input(f"请输入操作指令 [S, N, C, P, D, B 或 场景序号 1-{len(scenes)}]: ").strip().upper()
+
+        if sub_ch in ('B', 'Q', ''):
+            break
+        elif sub_ch.isdigit():
+            idx = int(sub_ch)
+            if 1 <= idx <= len(scenes):
+                target_sc = scenes[idx - 1]
+                scene_mgr.set_active_scene(target_sc.scene_id)
+                print(f"\n{C_GREEN}[成功] 活动场景已切换为: {target_sc.scene_id}{C_RESET}")
+                time.sleep(0.6)
+            else:
+                print(f"{C_RED}[!] 序号超出范围{C_RESET}")
+                time.sleep(0.8)
+        elif sub_ch == 'S':
+            sid = input(f"请输入要切换的目标场景 ID (或序号): ").strip()
+            if sid.isdigit() and 1 <= int(sid) <= len(scenes):
+                target_sc = scenes[int(sid) - 1]
+                scene_mgr.set_active_scene(target_sc.scene_id)
+                print(f"\n{C_GREEN}[成功] 活动场景已切换为: {target_sc.scene_id}{C_RESET}")
+            elif any(s.scene_id == sid for s in scenes):
+                scene_mgr.set_active_scene(sid)
+                print(f"\n{C_GREEN}[成功] 活动场景已切换为: {sid}{C_RESET}")
+            else:
+                print(f"{C_RED}[!] 目标场景不存在{C_RESET}")
+            time.sleep(1)
+        elif sub_ch == 'N':
+            alias = input(f"请输入新场景别名 (英文/拼音/数字，如 bench_high): ").strip()
+            if not alias:
+                print(f"{C_YELLOW}[提示] 别名不能为空，操作已取消。{C_RESET}")
+                time.sleep(0.8)
+                continue
+            desc = input(f"请输入场景说明备注 (可选): ").strip()
+            new_sc = scene_mgr.create_scene(alias=alias, description=desc)
+            print(f"\n{C_GREEN}[成功] 已创建并激活新场景: {new_sc.scene_id}{C_RESET}")
+            pause_prompt()
+        elif sub_ch == 'C':
+            curr = scene_mgr.get_active_scene()
+            new_alias = input(f"请输入克隆场景新别名 (基于当前 {curr.name}): ").strip()
+            if not new_alias:
+                print(f"{C_YELLOW}[提示] 别名不能为空，操作已取消。{C_RESET}")
+                time.sleep(0.8)
+                continue
+            cloned = scene_mgr.clone_scene(curr.scene_id, new_alias=new_alias)
+            if cloned:
+                print(f"\n{C_GREEN}[成功] 已成功克隆并激活新场景: {cloned.scene_id}{C_RESET}")
+            else:
+                print(f"{C_RED}[失败] 克隆场景失败！{C_RESET}")
+            pause_prompt()
+        elif sub_ch == 'P':
+            curr = scene_mgr.get_active_scene()
+            print(f"\n{C_YELLOW}[确认] 准备将场景 [{curr.scene_id}] 的三维地图发布覆盖至全局生产环境 (config/tags_map.yaml)...{C_RESET}")
+            confirm = input(f"确认发布？(Y/N): ").strip().upper()
+            if confirm == 'Y':
+                ok, msg = scene_mgr.publish_to_production(curr.scene_id)
+                if ok:
+                    print(f"{C_GREEN}[成功] {msg}{C_RESET}")
+                else:
+                    print(f"{C_RED}[失败] {msg}{C_RESET}")
+                pause_prompt()
+        elif sub_ch == 'D':
+            del_id = input(f"请输入要删除的废弃场景 ID (严禁删除当前活动场景): ").strip()
+            if del_id.isdigit() and 1 <= int(del_id) <= len(scenes):
+                del_id = scenes[int(del_id) - 1].scene_id
+            if del_id:
+                confirm = input(f"警告：该操作将永久物理删除场景 [{del_id}] 及其所有图片！确认删除？(Y/N): ").strip().upper()
+                if confirm == 'Y':
+                    ok, msg = scene_mgr.delete_scene(del_id)
+                    if ok:
+                        print(f"{C_GREEN}[成功] {msg}{C_RESET}")
+                    else:
+                        print(f"{C_RED}[失败] {msg}{C_RESET}")
+                    pause_prompt()
 
 
 def submenu_calibration_suite():
@@ -584,25 +769,26 @@ def submenu_calibration_suite():
     while True:
         status = check_env_status()
         print_calibration_banner(status)
-        choice = input(f"请输入工序编号 [S, 1-8, W, V, D, C, M, O, P, B]: ").strip().upper()
+        choice = input(f"请输入工序编号 [0, S, 1-8, W, V, D, C, M, O, P, B]: ").strip().upper()
         
-        if choice in ('S', 'STUDIO'):
-            run_offline_studio()
+        if choice in ('0', 'SCENE', 'SCENES'):
+            submenu_scene_manager(status.get('scene_mgr'))
+        elif choice in ('S', 'STUDIO'):
+            run_offline_studio(status)
         elif choice == '1':
             run_generate_tags()
-
         elif choice == '2':
-            run_tag_capture_wizard()
+            run_tag_capture_wizard(status)
         elif choice == '3':
-            run_tag_super_extractor()
+            run_tag_super_extractor(status)
         elif choice in ('4', 'O'):
             print(f"\n{C_GREEN}[提示]{C_RESET} 原工序4（审核画板）已全面融入升级为【[S] 离线标定综合工作站 (Offline Studio)】！")
             print(f"正在直接为您唤起 Offline Studio...")
-            run_offline_studio()
+            run_offline_studio(status)
         elif choice in ('5', 'M'):
-            run_build_tag_map()
+            run_build_tag_map(status)
         elif choice in ('6', 'P'):
-            run_offline_verifier()
+            run_offline_verifier(status)
         elif choice == '7':
             run_tag_calibration_verifier()
         elif choice == '8':
@@ -610,16 +796,16 @@ def submenu_calibration_suite():
         elif choice == 'W':
             run_tag_whitelist_manager()
         elif choice == 'V':
-            run_open_visualized_dir()
+            run_open_visualized_dir(status)
         elif choice == 'D':
             run_diagnose_tag_frame()
         elif choice == 'C':
-            run_clear_calib_dataset()
-        elif choice in ('B', '0'):
+            run_clear_calib_dataset(status)
+        elif choice in ('B', 'Q'):
             break
         else:
             print(f"{C_RED}[!] 无效选项，请重新输入{C_RESET}")
-            pause_prompt()
+
 
 
 # ===================== 自动化测试专区功能 =====================
