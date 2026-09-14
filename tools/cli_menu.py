@@ -152,7 +152,7 @@ def print_calibration_banner(status):
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
     print(f"{C_CYAN}{C_BOLD}       【手眼标定与 AprilTag 空间建图专区】(Calibration & Tag Mapping)         {C_RESET}")
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
-    print(f" 标准工序: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[4 交互审核]{C_RESET} -> {C_YELLOW}[5 BA平差]{C_RESET} -> {C_YELLOW}[6 离线体检]{C_RESET} -> {C_YELLOW}[7 在线AR验证]{C_RESET}")
+    print(f" 标准流水线: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio (审核/平差/体检)]{C_RESET} -> {C_YELLOW}[7 在线AR验证]{C_RESET}")
     map_status_str = f"{C_GREEN}已生成 (config/tags_map.yaml){C_RESET}" if status['has_tag_map'] else f"{C_YELLOW}未生成 (请执行 1~5 依次解算){C_RESET}"
     if not status.get('valid_tag_ids'):
         wl_status_str = f"{C_CYAN}全量探索 (放行所有标靶 0~29){C_RESET}"
@@ -174,11 +174,11 @@ def print_calibration_banner(status):
     print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (1080P @ 8fps 丝滑轻量采图，空格一键连拍)")
     print("")
     print(f"{C_BOLD} [ 三、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
-    print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 旗舰一站式集成工作台{C_RESET}")
+    print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 旗舰一站式交互平台{C_RESET}")
+    print(f"       {C_GRAY}(整合样本交互审核、高精BA平差解算、热力覆盖率分析与全局体检闭环){C_RESET}")
     print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (16级阈值网格+双尺度CLAHE+0.01px亚像素精修)")
-    print(f"   {C_GREEN}[4]{C_RESET} 标靶观测样本交互审核画板              (单靶/整帧剔除，拓扑连通把关) {C_GRAY}[快捷键: O]{C_RESET}")
-    print(f"   {C_GREEN}[5]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，全局误差优化) {C_GRAY}[快捷键: M]{C_RESET}")
-    print(f"   {C_GREEN}[6]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (全量留一盲测批处理，残差矢量，门限放行) {C_GRAY}[快捷键: P]{C_RESET}")
+    print(f"   {C_GREEN}[5]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，命令行静默求解) {C_GRAY}[快捷键: M]{C_RESET}")
+    print(f"   {C_GREEN}[6]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (全量留一盲测批处理，残差矢量评估) {C_GRAY}[快捷键: P]{C_RESET}")
 
     print("")
     print(f"{C_BOLD} [ 四、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
@@ -596,7 +596,9 @@ def submenu_calibration_suite():
         elif choice == '3':
             run_tag_super_extractor()
         elif choice in ('4', 'O'):
-            run_open_observations_manifest()
+            print(f"\n{C_GREEN}[提示]{C_RESET} 原工序4（审核画板）已全面融入升级为【[S] 离线标定综合工作站 (Offline Studio)】！")
+            print(f"正在直接为您唤起 Offline Studio...")
+            run_offline_studio()
         elif choice in ('5', 'M'):
             run_build_tag_map()
         elif choice in ('6', 'P'):

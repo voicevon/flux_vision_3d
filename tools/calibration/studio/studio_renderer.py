@@ -517,89 +517,150 @@ class StudioUIRenderer:
         img_pts = []
         valid_obs = []
 
+        # 1. 第一阶段：绘制实测观测标注（有效标靶记录用于 PnP，剔除标靶绘制红叉审核标记）
+        obs_map = {}
         for obs in observations:
             tid = obs["tag_id"]
+            obs_map[tid] = obs
             pts = np.array(obs["corners"], dtype=np.int32).reshape((-1, 2))
             keep = obs.get("keep", True) and not is_frame_excluded
 
-            # 1. 剔除状态下在标靶上绘制鲜红显著的大叉号 (打叉审核模式)
+            # 剔除状态下在标靶实测位置绘制鲜红显著的大叉号 (打叉审核模式)
             if not keep:
                 cv2.line(disp_frame, (pts[0][0], pts[0][1]), (pts[2][0], pts[2][1]), (0, 0, 235), 3, cv2.LINE_AA)
                 cv2.line(disp_frame, (pts[1][0], pts[1][1]), (pts[3][0], pts[3][1]), (0, 0, 235), 3, cv2.LINE_AA)
                 cv2.polylines(disp_frame, [pts], isClosed=True, color=(40, 40, 180), thickness=2, lineType=cv2.LINE_AA)
                 cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
                 cv2.putText(disp_frame, f"Tag #{tid} [EXCL]", (cx - 42, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 0, 240), 2, cv2.LINE_AA)
-                continue
-
-            # 2. 收集参与三维解算的已知标靶
-            w_c = studio.get_tag_world_corners(tid)
-            if w_c is not None:
-                obj_pts.append(w_c)
-                img_pts.append(np.array(obs["corners"], dtype=np.float64))
-                valid_obs.append(obs)
+            else:
+                # 收集参与三维相机位姿解算的已知有效标靶
+                w_c = studio.get_tag_world_corners(tid)
+                if w_c is not None:
+                    obj_pts.append(w_c)
+                    img_pts.append(np.array(obs["corners"], dtype=np.float64))
+                    valid_obs.append(obs)
 
         rendered_tids = set()
 
-        # 3. 3D 棱柱与残差矢量投影 (当至少有 1 个已知标靶且 PnP 成功时)
+        # 2. 第二阶段：解算当前相机位姿 (PnP)
+        rvec = None
+        tvec = None
+        success = False
         if len(obj_pts) >= 1:
             obj_flat = np.concatenate(obj_pts, axis=0)
             img_flat = np.concatenate(img_pts, axis=0)
             rvec, tvec, success = studio.engine.solve_pnp(obj_flat, img_flat)
-            if success:
-                need_3d = (ba_mode == "3d" or obs_mode == "3d")
-                if need_3d:
-                    for obs in valid_obs:
-                        tid = obs["tag_id"]
-                        T_w_t = studio.get_tag_transform(tid)
 
-                        # 计算 BA 理论世界位姿 (翡翠绿)
-                        r_tag, t_tag = None, None
-                        if ba_mode == "3d" and T_w_t is not None:
-                            R_c_w, _ = cv2.Rodrigues(rvec)
-                            T_c_w = np.eye(4, dtype=np.float64)
-                            T_c_w[:3, :3] = R_c_w
-                            T_c_w[:3, 3] = tvec.flatten()
-                            T_c_t = T_c_w @ T_w_t
-                            r_tag, _ = cv2.Rodrigues(T_c_t[:3, :3])
-                            t_tag = T_c_t[:3, 3].reshape((3, 1))
+        # 若当前无足够有效点 (如标靶全被剔除)，尝试复用 meta 缓存的相机外参
+        if not success and meta is not None:
+            rvec_c = meta.get("rvec")
+            tvec_c = meta.get("tvec")
+            if rvec_c is not None and tvec_c is not None:
+                rvec = np.array(rvec_c, dtype=np.float64)
+                tvec = np.array(tvec_c, dtype=np.float64)
+                success = True
 
-                        # 计算单标靶本地实测位姿 (用于科技天蓝 OBS 棱柱)
-                        obs_r, obs_t = None, None
+        # 3. 第三阶段：3D 棱柱与残差立体渲染 (无论标靶是否被剔除，只要开启 ba_mode=='3d'，绿色 BA 理论棱柱全量呈现！)
+        if success:
+            R_c_w, _ = cv2.Rodrigues(rvec)
+            T_c_w = np.eye(4, dtype=np.float64)
+            T_c_w[:3, :3] = R_c_w
+            T_c_w[:3, 3] = tvec.flatten()
+
+            need_3d = (ba_mode == "3d" or obs_mode == "3d")
+            if need_3d:
+                # 收集候选标靶：
+                # (a) 当前帧观测到的所有标靶 (不论保留还是已剔除)
+                # (b) 如果开启了 ba_mode == "3d"，还包含地图中已建图的其余已知标靶
+                candidate_tids = list(obs_map.keys())
+                if ba_mode == "3d":
+                    tags_dict = getattr(studio, "tags_map_data", {}).get("tags", {})
+                    if not tags_dict and hasattr(studio, "data_mgr"):
+                        tags_dict = studio.data_mgr.tags_map_data.get("tags", {})
+                    for m_tid in tags_dict.keys():
+                        if m_tid not in obs_map:
+                            candidate_tids.append(m_tid)
+
+                h_f, w_f = disp_frame.shape[:2]
+                for tid in candidate_tids:
+                    T_w_t = studio.get_tag_transform(tid)
+                    if T_w_t is None:
+                        continue
+
+                    # 计算标靶在当前相机系下的理论位姿
+                    T_c_t = T_c_w @ T_w_t
+                    t_tag_center = T_c_t[:3, 3]
+
+                    # 标靶必须位于相机正前方
+                    if t_tag_center[2] <= 50.0:
+                        continue
+
+                    # 理论 BA 位姿 (翡翠绿)
+                    r_tag, t_tag = None, None
+                    if ba_mode == "3d":
+                        r_tag, _ = cv2.Rodrigues(T_c_t[:3, :3])
+                        t_tag = t_tag_center.reshape((3, 1))
+
+                    obs = obs_map.get(tid)
+                    obs_r, obs_t = None, None
+                    c_arr = None
+                    succ_single = False
+                    is_kept = False
+
+                    if obs is not None:
                         c_arr = np.array(obs["corners"], dtype=np.float64).reshape((4, 2))
-                        succ_single = False
-                        if obs_mode == "3d":
+                        is_kept = obs.get("keep", True) and not is_frame_excluded
+                        # 仅在有效保留且 obs_mode=='3d' 下才计算并显示实测蓝色棱柱
+                        if is_kept and obs_mode == "3d":
                             succ_single, obs_r, obs_t = studio.engine.solve_single_tag_pnp(c_arr)
 
-                        err_mm = 0.0
-                        if t_tag is not None and succ_single and obs_t is not None:
-                            err_mm = float(np.linalg.norm(t_tag - obs_t))
-                        err_px = (meta or {}).get("tag_errors", {}).get(tid, 0.2)
+                    # 如果既不画理论绿色棱柱，也不画实测蓝色棱柱，跳过
+                    if r_tag is None and obs_r is None:
+                        continue
 
-                        studio.visualizer.render_tag_dual_prisms(
-                            img=disp_frame,
-                            ba_rvec=r_tag if ba_mode == "3d" else None,
-                            ba_tvec=t_tag if ba_mode == "3d" else None,
-                            obs_rvec=obs_r if (obs_mode == "3d" and succ_single) else None,
-                            obs_tvec=obs_t if (obs_mode == "3d" and succ_single) else None,
-                            tag_id=tid,
-                            err_px=err_px,
-                            err_mm=err_mm,
-                            observed_corners=c_arr
-                        )
-                        rendered_tids.add(tid)
+                    # 若当前标靶未检出 (纯理论)，检查理论中心是否在像面可视范围内
+                    if obs is None and r_tag is not None:
+                        p_center, _ = cv2.projectPoints(np.array([[0.0, 0.0, 0.0]]), r_tag, t_tag, studio.engine.camera_matrix, studio.engine.dist_coeffs)
+                        cu, cv = p_center.reshape(-1)
+                        if not (-80 <= cu <= w_f + 80 and -80 <= cv <= h_f + 80):
+                            continue
 
-                # 4. 2D 理论重投影框与残差矢量
+                    err_mm = 0.0
+                    if t_tag is not None and succ_single and obs_t is not None:
+                        err_mm = float(np.linalg.norm(t_tag - obs_t))
+                    err_px = (meta or {}).get("tag_errors", {}).get(tid, 0.2)
+
+                    # 状态提示文案
+                    status_hint = None
+                    if obs is not None and not is_kept:
+                        status_hint = "[BA理论:实测已剔除]"
+                    elif obs is None:
+                        status_hint = "[BA理论:未检出/遮挡]"
+
+                    studio.visualizer.render_tag_dual_prisms(
+                        img=disp_frame,
+                        ba_rvec=r_tag if ba_mode == "3d" else None,
+                        ba_tvec=t_tag if ba_mode == "3d" else None,
+                        obs_rvec=obs_r if (obs_mode == "3d" and succ_single) else None,
+                        obs_tvec=obs_t if (obs_mode == "3d" and succ_single) else None,
+                        tag_id=tid,
+                        err_px=err_px,
+                        err_mm=err_mm,
+                        observed_corners=c_arr,
+                        tag_status_hint=status_hint
+                    )
+                    rendered_tids.add(tid)
+
+            # 4. 2D 理论重投影框与残差矢量
+            if ba_mode == "2d" and len(valid_obs) > 0:
                 proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, studio.engine.camera_matrix, studio.engine.dist_coeffs)
                 proj_flat = proj_pts.reshape((-1, 2))
+                for i in range(len(valid_obs)):
+                    p4 = proj_flat[i * 4:(i + 1) * 4].astype(np.int32)
+                    cv2.polylines(disp_frame, [p4], isClosed=True, color=(0, 210, 255), thickness=1, lineType=cv2.LINE_AA)
 
-                if ba_mode == "2d":
-                    for i in range(len(valid_obs)):
-                        p4 = proj_flat[i * 4:(i + 1) * 4].astype(np.int32)
-                        cv2.polylines(disp_frame, [p4], isClosed=True, color=(0, 210, 255), thickness=1, lineType=cv2.LINE_AA)
-
-                if (ba_mode != "off" and obs_mode != "off") and (ba_mode == "2d" or obs_mode == "2d"):
-                    if hasattr(studio.visualizer, "draw_reprojection_vectors"):
-                        studio.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
+                if obs_mode == "2d" and hasattr(studio.visualizer, "draw_reprojection_vectors"):
+                    studio.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
 
         # 4. 保底渲染：对所有提取到但未被 3D 棱柱覆盖的有效保留标靶，保底绘制 2D 实测角点多边形与编号标签
         if obs_mode != "off":

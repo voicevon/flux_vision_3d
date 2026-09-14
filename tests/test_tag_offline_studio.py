@@ -556,7 +556,64 @@ class TestTagOfflineStudio(unittest.TestCase):
         self.studio.undo_prune_results()
         self.assertIsNone(self.studio.prune_settlement_data)
 
+    def test_excluded_tag_ba_green_prism_still_renders(self):
+        """测试即使标靶在当前帧被剔除，BA 理论绿色棱柱仍必须坚挺显示且蓝色实测棱柱隐藏"""
+        disp_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        
+        # 构造包含 2 个标靶的观测: Tag 0(有效保留) 和 Tag 18(被剔除)
+        observations = [
+            {
+                "tag_id": 0,
+                "corners": [[900, 500], [950, 500], [950, 550], [900, 550]],
+                "keep": True
+            },
+            {
+                "tag_id": 18,
+                "corners": [[1100, 500], [1150, 500], [1150, 550], [1100, 550]],
+                "keep": False  # 明确标记剔除！
+            }
+        ]
+
+        # 模拟记录 visualizer.render_tag_dual_prisms 的调用参数
+        render_calls = []
+        original_render_prisms = self.studio.visualizer.render_tag_dual_prisms
+        def mock_render_prisms(*args, **kwargs):
+            render_calls.append(kwargs)
+            return original_render_prisms(*args, **kwargs)
+
+        self.studio.visualizer.render_tag_dual_prisms = mock_render_prisms
+        self.studio.ba_view_mode = "3d"
+        self.studio.obs_view_mode = "3d"
+
+        # 执行视口叠加绘制
+        self.studio.ui_renderer.overlay_visual_elements(
+            studio=self.studio,
+            disp_frame=disp_frame,
+            observations=observations,
+            is_frame_excluded=False,
+            meta={"rvec": [0.1, 0.2, 0.3], "tvec": [10.0, 20.0, 800.0]}
+        )
+
+        # 恢复原方法
+        self.studio.visualizer.render_tag_dual_prisms = original_render_prisms
+
+        # 检查是否对 Tag 18 进行了 3D 棱柱绘制调用
+        tag18_calls = [c for c in render_calls if c.get("tag_id") == 18]
+        self.assertTrue(len(tag18_calls) > 0, "被剔除的 Tag 18 必须调用 3D 棱柱绘制逻辑！")
+
+        call_18 = tag18_calls[0]
+        # 核心断言：
+        # 1. 绿色的 BA 理论位姿必须存在（ba_rvec, ba_tvec 非 None）
+        self.assertIsNotNone(call_18.get("ba_rvec"), "被剔除的 Tag 18 其绿色理论棱柱 ba_rvec 必须存在！")
+        self.assertIsNotNone(call_18.get("ba_tvec"), "被剔除的 Tag 18 其绿色理论棱柱 ba_tvec 必须存在！")
+        # 2. 蓝色的实测位姿必须隐藏（obs_rvec, obs_tvec 必须为 None）
+        self.assertIsNone(call_18.get("obs_rvec"), "被剔除的 Tag 18 其蓝色实测棱柱 obs_rvec 必须被隐藏！")
+        self.assertIsNone(call_18.get("obs_tvec"), "被剔除的 Tag 18 其蓝色实测棱柱 obs_tvec 必须被隐藏！")
+        # 3. 标签应明确提示已剔除实测
+        self.assertEqual(call_18.get("tag_status_hint"), "[BA理论:实测已剔除]")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

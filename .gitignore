@@ -2,8 +2,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# 运行时数据与快照
-data/
+# 调试临时切片与大文件
+data/crops_debug/
+data/rejected_debug/
 *.npy
 *.bag
 

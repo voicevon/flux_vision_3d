@@ -820,10 +820,8 @@ class TagCalibrationVerifier:
                         self.start_batch_collection()
                     elif btn_id == "EXPORT":
                         self.export_report()
-                    elif btn_id == "OPEN_REVIEWER":
-                        self.open_reviewer()
-                    elif btn_id == "OPEN_OFFLINE_VERIFIER":
-                        self.open_offline_verifier()
+                    elif btn_id == "OPEN_OFFLINE_STUDIO":
+                        self.open_offline_studio()
                     elif btn_id == "CLEAR_BLIND":
                         self.blind_target_tag_id = None
                         self.set_toast("已清除盲测，恢复全量解算 (ALL)")
@@ -859,74 +857,27 @@ class TagCalibrationVerifier:
                             self.set_toast(f"已选定 Tag #{tid} 为盲测验证目标 (PnP中已主动屏蔽)")
                         return
 
-    def open_reviewer(self):
-        """唤起人工审核画板 (Reviewer)，支持带入当前盲测 Tag 靶向直达，关闭后自动触发 BA 求解与热重载"""
-        from tools.calibration.tag_manifest_reviewer import TagManifestReviewer
-        manifest_file = os.path.join(CALIB_IMAGES_DIR, "tag_observations.yaml")
-        if not os.path.exists(manifest_file):
-            self.set_toast(f"未找到观测清单: {manifest_file}")
-            return
-
-        focus_tid = self.blind_target_tag_id
-        tid_str = f"Tag #{focus_tid}" if focus_tid is not None else "全量"
-        self.set_toast(f"正在唤起审核画板 (定向排查: {tid_str})...")
-        print(f"\n[*] [HANDSHAKE] 正在呼出人工审核画板 (focus_tag_id={focus_tid})...")
+    def open_offline_studio(self):
+        """唤起 AprilTag 离线标定综合工作站 (Offline Studio)，支持剪枝平差、样本审核与深度体检闭环"""
+        from tools.calibration.tag_offline_studio import TagOfflineStudio
+        self.set_toast("正在呼出 AprilTag 离线标定综合工作站 (Offline Studio)...")
+        print(f"\n[*] [HANDSHAKE] 正在呼出离线标定综合工作站...")
 
         try:
-            reviewer = TagManifestReviewer(manifest_path=manifest_file, focus_tag_id=focus_tid)
-            reviewer.run()
+            studio = TagOfflineStudio(map_path=self.map_path, image_dir=CALIB_IMAGES_DIR)
+            studio.run()
 
-            # 画板退出后，重新强夺验证器窗口焦点
+            # 工作站退出后，重新强夺验证器窗口焦点
             window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
             if force_window_focus:
                 force_window_focus(window_name)
 
-            # 检查画板是否请求了自动重新平差验证或发生了任何修改
-            if reviewer.trigger_verify_and_ba or getattr(reviewer, "has_modified_manifest", False) or reviewer.has_unsaved_changes:
-                self.set_toast("已载入画板最新修改，正在自动启动 BA 全局平差优化...")
-                self.start_async_bundle_adjustment()
-            else:
-                self.set_toast("已从审核画板返回验证器")
-        except Exception as e:
-            self.set_toast(f"呼出审核画板失败: {e}")
-            print(f"[ERROR] 唤起审核画板异常: {e}")
-
-    def open_offline_verifier(self):
-        """唤起离线标定精度体检工作台 (TagOfflineVerifier)，完成后热重载地图并恢复 AR 验证"""
-        from tools.calibration.tag_offline_verifier import TagOfflineVerifier
-        self.set_toast("正在进入离线标定体检工作台...")
-        print("\n[*] [HANDSHAKE] 正在呼出离线标定精度体检工作台...")
-
-        try:
-            # 临时销毁 AR 窗口，避免 OpenCV 全局按键广播冲突
-            cv2.destroyAllWindows()
-            verifier = TagOfflineVerifier(
-                map_path=self.map_path,
-                image_dir=CALIB_IMAGES_DIR,
-                marker_size_mm=self.marker_size_mm,
-                source="auto",
-                caller_ar_instance=self
-            )
-            verifier.run_gui()
-
-            # 从体检工作台返回后，地图可能在体检中执行了 BA 平差，执行热重载
+            # 热重载最新地图
             self._load_tags_map()
-
-            # 重建 AR 验证器窗口并重夺焦点
-            window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(window_name, self.win_w, self.win_h)
-            cv2.setMouseCallback(window_name, self._on_mouse)
-            if force_window_focus:
-                force_window_focus(window_name)
-            self.set_toast("已从离线体检工作台返回 AR 验证器 (地图已热重载)")
+            self.set_toast("已从 Offline Studio 同步最新地图并完成热重载！")
         except Exception as e:
-            self.set_toast(f"呼出离线体检失败: {e}")
-            print(f"[ERROR] 唤起离线体检工作台异常: {e}")
-            window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(window_name, self.win_w, self.win_h)
-            cv2.setMouseCallback(window_name, self._on_mouse)
+            self.set_toast(f"唤起 Offline Studio 异常: {e}")
+            print(f"[!] 唤起 Offline Studio 异常: {e}")
 
     def run(self):
         window_name = "AprilTag SCARA AR & Precision Verifier (Integrated Edition)"
@@ -944,19 +895,18 @@ class TagCalibrationVerifier:
         print("   - 【乒乓开关】[Tab/M] 在【实时动态 (LIVE)】与【静态滤波锁定 (STATIC LOCKED)】之间一键切换；")
         print("   - 【基准凝固】在静态模式下采足 30/60 帧后一次性去噪并绝对锁死位姿，抖动严格 0.00mm；")
         print("   - 【留一盲测】在顶栏直接点击 Tag 编号，由其余标靶反推 3D 棱柱并评估残差；")
-        print("   - 【一键平差】在 Verify 中直接按 [B] 键即可异步执行全局 BA 优化，地图自动热重载；")
-        print("   - 【HUD 终端】按 [H] 键随时展开/折叠黑晶高科技诊断报告控制台，U/J 滚动翻页。")
+        print("   - 【离线Studio】按 [S] 键直达 AprilTag 离线综合工作站，退回后自动热重载最新地图；")
+        print("   - 【HUD 终端】按 [H] 键随时展开/折叠黑晶诊断终端，U/J 翻页。")
         print(" [快捷键指南]   :")
-        print("   - [O]             : 【呼出人工审核画板，带入当前盲测 Tag 定向排查】；")
-        print("   - [P]             : 【呼出离线标定体检工作台，全局指标排查与闭环重算】；")
-        print("   - [B]             : 【一键异步求解 BA 全局平差并热更新地图】；")
-        print("   - [H]             : 【展开/折叠 HUD 诊断报告控制台终端】；")
-        print("   - [U] / [J]       : HUD 终端向上 / 向下滚动翻页浏览；")
-        print("   - [Tab] / [M]     : 乒乓切换模式 (实时动态 <-> 静态锁定)；")
+        print("   - [S]             : 【一键直达 AprilTag 离线标定综合工作站 (Studio)】；")
+        print("   - [E]             : 【导出当前静态量测质检报告 (.md)】；")
+        print("   - [Tab] / [M]     : 【乒乓切换模式】(实时动态 <-> 静态滤波锁定)；")
+        print("   - [W]             : 【循环切换采样批次深度】(30F <-> 60F)；")
         print("   - [Space] (空格键) : 静态模式下【重新采样并锁定位姿】；实时模式下抓拍单帧；")
-        print("   - [W]             : 切换采样批次深度 (30F / 60F)；")
+        print("   - [H]             : 【展开/折叠 HUD 诊断终端】；")
+        print("   - [U] / [J]       : HUD 终端向上 / 向下滚动翻页浏览；")
         print("   - [T]             : 顺序轮换留一盲测目标 (None -> 18 -> 19 -> 20...)；")
-        print("   - [C]             : 清除盲测目标，恢复全量融合解算；")
+        print("   - [C]             : 清除盲测目标，恢复全量融合解算 (ALL)；")
         print("   - [A] / [D]       : 仿真回放模式下，前后翻页浏览真实采图；")
         print("   - [Q] / [ESC]     : 安全退出验证。")
         print("=" * 80 + "\n")
@@ -1250,52 +1200,42 @@ class TagCalibrationVerifier:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
 
                 mx, my = self.mouse_pos
-                bx = 10
+                bx = 12
                 btn_y_top = by1 + 6
                 btn_y_bot = h_img - 6
 
-                # 按钮 1：【求解 BA】
-                ba_btn_w = 110
-                if self.is_ba_running:
-                    ba_style = "warning"
-                    ba_txt = "求解中..."
-                else:
-                    ba_style = "primary"
-                    ba_txt = "求解BA (B)"
-                draw_styled_button(canvas, (bx, btn_y_top, bx + ba_btn_w, btn_y_bot), ba_txt,
-                                   mouse_pos=(mx, my), btn_type=ba_style)
-                self.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_btn_w, btn_y_bot), "RUN_BA"))
-                bx += ba_btn_w + 6
-
-                # 按钮 2：【诊断报告控制台终端】
+                # 按钮 1：【诊断报告控制台终端 (H)】
                 hud_btn_w = 110
                 hud_style = "primary" if self.show_hud_terminal else "normal"
                 hud_btn_txt = "折叠终端 (H)" if self.show_hud_terminal else "诊断终端 (H)"
                 draw_styled_button(canvas, (bx, btn_y_top, bx + hud_btn_w, btn_y_bot), hud_btn_txt,
                                    mouse_pos=(mx, my), btn_type=hud_style)
                 self.gui_buttons.append(("TOGGLE_HUD", (bx, btn_y_top, bx + hud_btn_w, btn_y_bot), "TOGGLE_HUD"))
-                bx += hud_btn_w + 6
+                bx += hud_btn_w + 8
 
-                # 按钮 3：【核心乒乓开关：实时动态 vs 静态锁定】(分段胶囊控件)
-                mode_btn_w = 175
-                cur_mode_key = "live" if self.live_mode else "locked"
-                mode_options = [("live", "实时动态"), ("locked", "静态锁定")]
-                draw_segmented_toggle(canvas, (bx, btn_y_top, bx + mode_btn_w, btn_y_bot),
-                                      mode_options, mouse_pos=(mx, my), active_key=cur_mode_key, shortcut="Tab")
+                # 按钮 2：【单一乒乓状态开关：实时动态 ⇋ 静态锁定 (Tab/M)】
+                mode_btn_w = 145
+                if self.live_mode:
+                    mode_txt = "模式: 实时动态 (Tab)"
+                    mode_type = "primary"
+                else:
+                    mode_txt = "模式: 静态锁定 (Tab)"
+                    mode_type = "warning"
+                draw_styled_button(canvas, (bx, btn_y_top, bx + mode_btn_w, btn_y_bot), mode_txt,
+                                   mouse_pos=(mx, my), btn_type=mode_type)
                 self.gui_buttons.append(("TOGGLE_MODE", (bx, btn_y_top, bx + mode_btn_w, btn_y_bot), "TOGGLE_MODE"))
-                bx += mode_btn_w + 6
+                bx += mode_btn_w + 8
 
-                # 按钮 4：【采样批次深度切换】(分段胶囊控件)
-                batch_btn_w = 110
-                cur_batch_key = str(self.batch_target_frames)
-                batch_options = [("30", "30F"), ("60", "60F")]
-                draw_segmented_toggle(canvas, (bx, btn_y_top, bx + batch_btn_w, btn_y_bot),
-                                      batch_options, mouse_pos=(mx, my), active_key=cur_batch_key, shortcut="W")
+                # 按钮 3：【采样深度单体循环开关：30F ⇋ 60F (W)】
+                batch_btn_w = 100
+                batch_txt = f"批次: {self.batch_target_frames}F (W)"
+                draw_styled_button(canvas, (bx, btn_y_top, bx + batch_btn_w, btn_y_bot), batch_txt,
+                                   mouse_pos=(mx, my), btn_type="normal")
                 self.gui_buttons.append(("CYCLE_BATCH", (bx, btn_y_top, bx + batch_btn_w, btn_y_bot), "CYCLE_BATCH"))
-                bx += batch_btn_w + 6
+                bx += batch_btn_w + 8
 
-                # 按钮 5：【采样并锁定位姿】
-                sample_btn_w = 145
+                # 按钮 4：【采样并锁定位姿 (Space)】
+                sample_btn_w = 150
                 if self.is_collecting_batch:
                     sample_style = "warning"
                     sample_text = f"采样中 ({self.collected_batch_frames}/{self.batch_target_frames})"
@@ -1305,34 +1245,27 @@ class TagCalibrationVerifier:
                 draw_styled_button(canvas, (bx, btn_y_top, bx + sample_btn_w, btn_y_bot), sample_text,
                                    mouse_pos=(mx, my), btn_type=sample_style)
                 self.gui_buttons.append(("RESAMPLE_LOCK", (bx, btn_y_top, bx + sample_btn_w, btn_y_bot), "RESAMPLE_LOCK"))
-                bx += sample_btn_w + 6
+                bx += sample_btn_w + 8
 
-                # 按钮 6：【导出质检单】
-                exp_btn_w = 80
-                draw_styled_button(canvas, (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "报告导出",
+                # 按钮 5：【跳转旗舰离线工作站 (S)】(替代旧画板与旧体检台)
+                studio_btn_w = 125
+                draw_styled_button(canvas, (bx, btn_y_top, bx + studio_btn_w, btn_y_bot), "离线Studio (S)",
+                                   mouse_pos=(mx, my), btn_type="purple")
+                self.gui_buttons.append(("OPEN_OFFLINE_STUDIO", (bx, btn_y_top, bx + studio_btn_w, btn_y_bot), "OPEN_OFFLINE_STUDIO"))
+                bx += studio_btn_w + 8
+
+                # 按钮 6：【导出静态质检单 (E)】
+                exp_btn_w = 95
+                draw_styled_button(canvas, (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "导出报告 (E)",
                                    mouse_pos=(mx, my), btn_type="normal")
                 self.gui_buttons.append(("EXPORT", (bx, btn_y_top, bx + exp_btn_w, btn_y_bot), "EXPORT"))
-                bx += exp_btn_w + 6
+                bx += exp_btn_w + 8
 
-                # 按钮 7：【呼出人工审核画板】
-                rev_btn_w = 110
-                draw_styled_button(canvas, (bx, btn_y_top, bx + rev_btn_w, btn_y_bot), "审核画板 (O)",
-                                   mouse_pos=(mx, my), btn_type="purple")
-                self.gui_buttons.append(("OPEN_REVIEWER", (bx, btn_y_top, bx + rev_btn_w, btn_y_bot), "OPEN_REVIEWER"))
-                bx += rev_btn_w + 6
-
-                # 按钮 8：【呼出离线标定体检工作台】
-                off_btn_w = 110
-                draw_styled_button(canvas, (bx, btn_y_top, bx + off_btn_w, btn_y_bot), "体检台 (P)",
-                                   mouse_pos=(mx, my), btn_type="primary")
-                self.gui_buttons.append(("OPEN_OFFLINE_VERIFIER", (bx, btn_y_top, bx + off_btn_w, btn_y_bot), "OPEN_OFFLINE_VERIFIER"))
-                bx += off_btn_w + 6
-
-                # 按钮 9：【退出】
-                exit_btn_w = 75
-                draw_styled_button(canvas, (w_img - exit_btn_w - 10, btn_y_top, w_img - 10, btn_y_bot), "退出 (Q)",
+                # 按钮 7：【退出 (Q)】 (居右)
+                exit_btn_w = 80
+                draw_styled_button(canvas, (w_img - exit_btn_w - 12, btn_y_top, w_img - 12, btn_y_bot), "退出 (Q)",
                                    mouse_pos=(mx, my), btn_type="danger")
-                self.gui_buttons.append(("EXIT", (w_img - exit_btn_w - 10, btn_y_top, w_img - 10, btn_y_bot), "EXIT"))
+                self.gui_buttons.append(("EXIT", (w_img - exit_btn_w - 12, btn_y_top, w_img - 12, btn_y_bot), "EXIT"))
 
                 # 3. 左下角仪表盘 (HUD)
                 hud_x, hud_y = 12, h_img - bottom_bar_h - 128
@@ -1438,11 +1371,11 @@ class TagCalibrationVerifier:
                     self.blind_target_tag_id = None
                     self.set_toast("已清除盲测，恢复全量解算 (ALL)")
 
-                elif key in (ord('o'), ord('O')):     # O 键 -> 呼出人工审核画板并定向排查当前盲测 Tag
-                    self.open_reviewer()
+                elif key in (ord('s'), ord('S')):     # S 键 -> 呼出 AprilTag 离线标定综合工作站 (Studio)
+                    self.open_offline_studio()
 
-                elif key in (ord('p'), ord('P')):     # P 键 -> 呼出离线标定体检工作台
-                    self.open_offline_verifier()
+                elif key in (ord('e'), ord('E')):     # E 键 -> 导出当前静态量测质检单
+                    self.export_report()
 
                 elif key in (ord('a'), ord('A'), 81):  # A 键或左方向键
                     if self.mock_mode and self.mock_image_files:

@@ -36,7 +36,8 @@ class VerificationVisualizer:
         tag_id: int,
         err_px: float,
         err_mm: float,
-        observed_corners: Optional[np.ndarray] = None
+        observed_corners: Optional[np.ndarray] = None,
+        tag_status_hint: Optional[str] = None
     ):
 
         """
@@ -139,10 +140,19 @@ class VerificationVisualizer:
             bx = max(10, int(min_x - 10))
             by = max(40, int(min_y - 14))
 
-            is_good = (err_px <= 0.6 and err_mm <= 1.0)
-            status_badge = "[吻合良好]" if is_good else f"[空间偏差 {err_mm:.2f}mm]"
-            border_c = (0, 240, 90) if is_good else (0, 180, 255)
-            label = f"Tag#{tag_id} {status_badge} ({err_px:.2f}px)"
+            if tag_status_hint is not None:
+                status_badge = tag_status_hint
+                border_c = (0, 220, 100)
+                label = f"Tag#{tag_id} {status_badge}"
+            elif obs_rvec is None:
+                status_badge = "[理论位姿(BA)]"
+                border_c = (0, 220, 100)
+                label = f"Tag#{tag_id} {status_badge}"
+            else:
+                is_good = (err_px <= 0.6 and err_mm <= 1.0)
+                status_badge = "[吻合良好]" if is_good else f"[空间偏差 {err_mm:.2f}mm]"
+                border_c = (0, 240, 90) if is_good else (0, 180, 255)
+                label = f"Tag#{tag_id} {status_badge} ({err_px:.2f}px)"
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)
             cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), (16, 22, 28), -1)
             cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), border_c, 1)
