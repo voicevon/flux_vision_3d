@@ -283,3 +283,15 @@ class ManifestRepository:
         with open(output_path, "w", encoding="utf-8") as f:
             yaml.dump(map_data, f, allow_unicode=True, sort_keys=False)
         print(f"[OK] 标靶空间立体地图已成功保存至: {output_path}")
+
+    @classmethod
+    def save_tags_map(cls, *args, **kwargs):
+        """兼容性包装: 支持 save_tags_map(map_data, output_path) 或 save_tags_map(output_path, map_data)"""
+        if len(args) >= 2:
+            if isinstance(args[0], dict) and isinstance(args[1], str):
+                return cls.save_map(args[0], args[1])
+            elif isinstance(args[0], str) and isinstance(args[1], dict):
+                return cls.save_map(args[1], args[0])
+        map_data = kwargs.get("map_data", kwargs.get("tags_map_data", {}))
+        output_path = kwargs.get("output_path", kwargs.get("map_path", "config/tags_map.yaml"))
+        return cls.save_map(map_data, output_path)

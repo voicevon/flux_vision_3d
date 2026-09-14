@@ -449,6 +449,139 @@ class StudioDataManager:
         meta["tvec"] = tvec
         return base_name, is_kept
 
+    def create_manifest_snapshot(self) -> Dict[str, Any]:
+        """创建当前审核清单与地图的状态快照，支持无损撤销"""
+        import copy
+        self._manifest_snapshot = {
+            "manifest_data": copy.deepcopy(self.manifest_data),
+            "tags_map_data": copy.deepcopy(self.tags_map_data),
+            "global_rmse": self.global_rmse,
+            "global_median_mm": self.global_median_mm,
+            "global_mean_mm": self.global_mean_mm,
+            "gate_status": self.gate_status,
+            "topology_status": copy.deepcopy(self.topology_status)
+        }
+        return self._manifest_snapshot
+
+    def restore_manifest_snapshot(self, snapshot: Optional[Dict[str, Any]] = None) -> bool:
+        """从快照恢复审核清单与地图状态"""
+        import copy
+        snap = snapshot or getattr(self, "_manifest_snapshot", None)
+        if not snap:
+            return False
+        self.manifest_data = copy.deepcopy(snap["manifest_data"])
+        self.tags_map_data = copy.deepcopy(snap["tags_map_data"])
+        self.global_rmse = snap["global_rmse"]
+        self.global_median_mm = snap["global_median_mm"]
+        self.global_mean_mm = snap["global_mean_mm"]
+        self.gate_status = snap["gate_status"]
+        self.topology_status = copy.deepcopy(snap["topology_status"])
+
+        self._save_manifest()
+        if self.map_path and os.path.exists(os.path.dirname(self.map_path)):
+            try:
+                with open(self.map_path, "w", encoding="utf-8") as f:
+                    yaml.dump(self.tags_map_data, f, allow_unicode=True, sort_keys=False)
+            except Exception as e:
+                print(f"[WARN] 恢复地图文件异常: {e}")
+        self.refresh_all_frame_metrics()
+        return True
+
+    def find_worst_prunable_observations(
+        self,
+        top_k: int = 2
+    ) -> List[Tuple[str, int, float, float]]:
+        """
+        寻找当前全局残差最大的 Top-K 个有效标靶观测，严格受共视拓扑与最小观测度（>=2次）保护
+        返回: [(image_basename, tag_id, err_px, err_mm)]
+        """
+        from src.calibration.covisibility_graph import CovisibilityGraphAnalyzer
+        import copy
+
+        # 1. 收集全局所有有效观测及其残差
+        candidates = []
+        tag_active_counts: Dict[int, int] = {}
+        for bname, meta in self.frame_metrics_cache.items():
+            if meta.get("is_excluded", False):
+                continue
+            tag_errors = meta.get("tag_errors", {})
+            tag_errors_mm = meta.get("tag_errors_mm", {})
+            for obs in meta.get("observations", []):
+                if not obs.get("keep", True):
+                    continue
+                tid = obs["tag_id"]
+                tag_active_counts[tid] = tag_active_counts.get(tid, 0) + 1
+                err_px = tag_errors.get(tid, 0.0)
+                err_mm = tag_errors_mm.get(tid, 0.0)
+                candidates.append((err_px, err_mm, bname, tid))
+
+        # 按像素残差降序排列
+        candidates.sort(key=lambda item: item[0], reverse=True)
+
+        selected = []
+        sim_manifest = copy.deepcopy(self.manifest_data)
+        sim_counts = dict(tag_active_counts)
+
+        for err_px, err_mm, bname, tid in candidates:
+            if len(selected) >= top_k:
+                break
+            if err_px <= 0.0:
+                continue
+
+            # 守门规则 1: 剔除后该 Tag 的全局观测次数不得 < 2
+            if sim_counts.get(tid, 0) - 1 < 2:
+                continue
+
+            # 守门规则 2: 模拟剔除后用共视拓扑图审查，必须保持单一连通且无孤岛
+            obs_entry = None
+            for o in sim_manifest.get("images", {}).get(bname, {}).get("observations", []):
+                if o.get("tag_id") == tid:
+                    obs_entry = o
+                    break
+            if obs_entry is None:
+                continue
+
+            obs_entry["keep"] = False
+
+            # 正确构建 detections 结构传递给 CovisibilityGraphAnalyzer
+            sim_detections = []
+            sim_names = []
+            for sim_bname, sim_img in sim_manifest.get("images", {}).items():
+                if sim_img.get("excluded", False) or not sim_img.get("enabled", True):
+                    continue
+                d_map = {}
+                for o in sim_img.get("observations", []):
+                    if o.get("keep", True):
+                        d_map[o["tag_id"]] = np.array(o["corners"], dtype=np.float32)
+                if d_map:
+                    sim_detections.append(d_map)
+                    sim_names.append(sim_bname)
+
+            topo_res = CovisibilityGraphAnalyzer.analyze(sim_detections, sim_names)
+            if not topo_res.get("is_valid", False) or topo_res.get("unconnected_tags"):
+                obs_entry["keep"] = True
+                continue
+
+            selected.append((bname, tid, err_px, err_mm))
+            sim_counts[tid] -= 1
+
+        return selected
+
+    def prune_observations(self, prune_list: List[Tuple[str, int, float, float]]) -> int:
+        """批量将指定的观测标靶标记为剔除状态并持久化与更新指标"""
+        count = 0
+        for bname, tid, _, _ in prune_list:
+            img_entry = self.manifest_data.get("images", {}).get(bname, {})
+            for obs in img_entry.get("observations", []):
+                if obs.get("tag_id") == tid and obs.get("keep", True):
+                    obs["keep"] = False
+                    count += 1
+                    break
+        if count > 0:
+            self._save_manifest()
+            self.refresh_all_frame_metrics()
+        return count
+
     def _evaluate_frame_reprojection(
         self,
         observations: List[Dict[str, Any]]

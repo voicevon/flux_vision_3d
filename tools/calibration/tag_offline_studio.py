@@ -86,7 +86,8 @@ class TagOfflineStudio:
         image_dir: str = CALIB_IMAGES_DIR,
         marker_size_mm: float = 50.0,
         win_w: int = 1920,
-        win_h: int = 1080
+        win_h: int = 1080,
+        manifest_path: Optional[str] = None
     ):
         self.map_path = map_path
         self.image_dir = image_dir
@@ -101,7 +102,7 @@ class TagOfflineStudio:
 
         # 2. 相机内参与领域模型装配
         self.camera_matrix, self.dist_coeffs = self._load_camera_intrinsics()
-        self.manifest_path = MANIFEST_PATH
+        self.manifest_path = manifest_path or os.path.join(self.image_dir, "tag_observations.yaml")
         self.manifest_repo = ManifestRepository()
 
         self.engine = OfflineVerificationEngine(
@@ -378,6 +379,18 @@ class TagOfflineStudio:
         self.ba_runner.ba_stage_text = val
 
     @property
+    def is_auto_pruning(self) -> bool:
+        return self.ba_runner.is_auto_pruning
+
+    @property
+    def prune_settlement_data(self) -> Optional[Dict[str, Any]]:
+        return self.ba_runner.prune_settlement_data
+
+    @prune_settlement_data.setter
+    def prune_settlement_data(self, val: Optional[Dict[str, Any]]):
+        self.ba_runner.prune_settlement_data = val
+
+    @property
     def ba_sub_progress(self) -> float:
         return self.ba_runner.ba_sub_progress
 
@@ -490,6 +503,37 @@ class TagOfflineStudio:
             self.is_extracting_all = False
             return res
         return None
+
+    def start_auto_prune_ba(self) -> bool:
+        """启动全自动基于边际收益与共视拓扑守门的残差剪枝平差"""
+        if self.is_ba_running or self.is_extracting_all:
+            self.set_toast("后台任务正在计算中，请稍候...")
+            return False
+        # 联动质检视角: 自动将左侧图像序列切换为【残差降序 (最差优先 ↓)】
+        self.sort_mode = "err_desc"
+        res = self.ba_runner.start_auto_prune(max_rounds=10, min_improvement_px=0.01)
+        if res:
+            # 自动将主视口聚焦至残差最大、最亟待排查的首张图像
+            f_indices = self._get_filtered_indices()
+            if f_indices:
+                self.current_img_idx = f_indices[0]
+        return res
+
+    def accept_prune_results(self):
+        """采纳智能剪枝平差结果并清空结算单"""
+        self.ba_runner.prune_settlement_data = None
+        self.set_toast("已采纳智能剪枝平差结果！可按 [M] 保存为最新地图")
+        print("[*] [STUDIO] 操作员确认采纳智能剪枝平差结果。")
+
+    def undo_prune_results(self):
+        """一键无损撤销智能剪枝，回滚至快照状态"""
+        succ = self.data_mgr.restore_manifest_snapshot()
+        self.ba_runner.prune_settlement_data = None
+        if succ:
+            self.set_toast("已撤销智能剪枝！观测清单与地图已完全恢复至剪枝前状态")
+            print("[*] [STUDIO] 操作员已撤销智能剪枝，状态已无损回滚。")
+        else:
+            self.set_toast("未找到有效快照，撤销未执行")
 
     def reset_map(self) -> bool:
         """一键复位清空空间立体地图 (自动备份为 tags_map.yaml.bak)"""
@@ -676,7 +720,7 @@ class TagOfflineStudio:
         elif btn_id == "EXPORT_REPORT":
             self.export_verification_report()
         elif btn_id == "SAVE_MAP":
-            self.manifest_repo.save_tags_map(self.map_path, self.tags_map_data)
+            ManifestRepository.save_map(self.tags_map_data, self.map_path)
             self.set_toast(f"空间立体地图已成功保存至 {self.map_path}")
         elif btn_id == "TOGGLE_BA_VIEW_DROPDOWN":
             self.active_dropdown = None if self.active_dropdown == "BA_VIEW_DROPDOWN" else "BA_VIEW_DROPDOWN"
@@ -748,6 +792,14 @@ class TagOfflineStudio:
             self.toggle_frame_diagnostics()
         elif btn_id == "LAUNCH_AR":
             self.launch_online_ar_verifier()
+        elif btn_id == "RUN_AUTO_PRUNE_BA":
+            self.start_auto_prune_ba()
+        elif btn_id == "ACCEPT_PRUNE":
+            self.accept_prune_results()
+        elif btn_id == "UNDO_PRUNE":
+            self.undo_prune_results()
+        elif btn_id == "STOP_PRUNE":
+            self.ba_runner.request_stop_pruning()
 
     def toggle_frame_diagnostics(self):
         """唤起/关闭当前选定帧的漏检病因深度切片诊断视图"""
@@ -833,8 +885,25 @@ class TagOfflineStudio:
                     continue
                 key = raw_key & 0xFF
 
+                # 优先拦截结算确认卡片按键交互
+                if self.ba_runner.prune_settlement_data is not None:
+                    if key in (10, 13):  # Enter 键 -> 采纳结果
+                        self.accept_prune_results()
+                        continue
+                    elif key == 27:      # ESC 键 -> 撤销还原
+                        self.undo_prune_results()
+                        continue
+
+                # 运行中支持空格急停
+                if self.ba_runner.is_auto_pruning:
+                    if key == 32:  # 空格键 -> 急停
+                        self.ba_runner.request_stop_pruning()
+                        continue
+
                 if key in (ord('q'), ord('Q'), 27):
                     break
+                elif key in (ord('a'), ord('A')):      # A 键 -> 智能迭代剪枝平差
+                    self.start_auto_prune_ba()
                 elif key in (ord('w'), ord('W'), 82):  # 上一帧 (W / Up)
                     if self.image_files:
                         self.current_img_idx = (self.current_img_idx - 1) % len(self.image_files)

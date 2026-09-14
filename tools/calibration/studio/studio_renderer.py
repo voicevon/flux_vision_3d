@@ -143,8 +143,12 @@ class StudioUIRenderer:
         mid_w = w - studio.left_bar_w - studio.right_bar_w
         self.render_center_viewport(studio, canvas, mid_x1, content_y1, mid_w, content_h)
 
-        # 4. 居中展示异步 BA 运行中或全量超精提取进度卡片
-        if studio.is_ba_running:
+        # 4. 居中展示浮层卡片 (优先级: 结算对比卡片 > 智能剪枝进度卡片 > BA进度卡片 > 超精提取进度卡片)
+        if getattr(studio, "prune_settlement_data", None) is not None:
+            self.render_prune_settlement_card(studio, canvas, w, h)
+        elif getattr(studio, "is_auto_pruning", False):
+            self.render_prune_ba_card(studio, canvas, w, h)
+        elif studio.is_ba_running:
             self.render_ba_loading_card(studio, canvas, w, h)
         elif getattr(studio, "is_extracting_all", False):
             self.render_extract_loading_card(studio, canvas, w, h)
@@ -256,6 +260,16 @@ class StudioUIRenderer:
                            mouse_pos=(mx, my), btn_type=ba_type)
         studio.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_w, btn_y_bot), "RUN_BA"))
         bx += ba_w + 10
+
+        # 3.2. [A] 智能残差剪枝平差
+        prune_w = 135
+        is_prune = getattr(studio, "is_auto_pruning", False)
+        prune_type = "warning" if is_prune else "primary"
+        prune_txt = "正在剪枝..." if is_prune else "剪枝平差 (A)"
+        draw_styled_button(canvas, (bx, btn_y_top, bx + prune_w, btn_y_bot), prune_txt,
+                           mouse_pos=(mx, my), btn_type=prune_type)
+        studio.gui_buttons.append(("RUN_AUTO_PRUNE_BA", (bx, btn_y_top, bx + prune_w, btn_y_bot), "RUN_AUTO_PRUNE_BA"))
+        bx += prune_w + 10
 
         # 3. [M] 保存/发布地图
         s_w = 115
@@ -517,20 +531,16 @@ class StudioUIRenderer:
                 cv2.putText(disp_frame, f"Tag #{tid} [EXCL]", (cx - 42, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 0, 240), 2, cv2.LINE_AA)
                 continue
 
-            # 2. 正常保留状态：根据 obs_view_mode 绘制 2D 实测角点多边形与标牌
-            if obs_mode == "2d":
-                cv2.polylines(disp_frame, [pts], isClosed=True, color=(0, 230, 80), thickness=2, lineType=cv2.LINE_AA)
-                cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
-                cv2.putText(disp_frame, f"Tag #{tid}", (cx - 35, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 230, 80), 2, cv2.LINE_AA)
-
-            # 收集参与三维解算的已知标靶
+            # 2. 收集参与三维解算的已知标靶
             w_c = studio.get_tag_world_corners(tid)
             if w_c is not None:
                 obj_pts.append(w_c)
                 img_pts.append(np.array(obs["corners"], dtype=np.float64))
                 valid_obs.append(obs)
 
-        # 3. 3D 棱柱与残差矢量投影
+        rendered_tids = set()
+
+        # 3. 3D 棱柱与残差矢量投影 (当至少有 1 个已知标靶且 PnP 成功时)
         if len(obj_pts) >= 1:
             obj_flat = np.concatenate(obj_pts, axis=0)
             img_flat = np.concatenate(img_pts, axis=0)
@@ -576,6 +586,7 @@ class StudioUIRenderer:
                             err_mm=err_mm,
                             observed_corners=c_arr
                         )
+                        rendered_tids.add(tid)
 
                 # 4. 2D 理论重投影框与残差矢量
                 proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, studio.engine.camera_matrix, studio.engine.dist_coeffs)
@@ -589,6 +600,21 @@ class StudioUIRenderer:
                 if (ba_mode != "off" and obs_mode != "off") and (ba_mode == "2d" or obs_mode == "2d"):
                     if hasattr(studio.visualizer, "draw_reprojection_vectors"):
                         studio.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
+
+        # 4. 保底渲染：对所有提取到但未被 3D 棱柱覆盖的有效保留标靶，保底绘制 2D 实测角点多边形与编号标签
+        if obs_mode != "off":
+            for obs in observations:
+                if not obs.get("keep", True) or is_frame_excluded:
+                    continue
+                tid = obs["tag_id"]
+                if obs_mode == "2d" or tid not in rendered_tids:
+                    pts = np.array(obs["corners"], dtype=np.int32).reshape((-1, 2))
+                    cv2.polylines(disp_frame, [pts], isClosed=True, color=(0, 230, 80), thickness=2, lineType=cv2.LINE_AA)
+                    cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
+                    in_map = (studio.get_tag_world_corners(tid) is not None)
+                    tag_lbl = f"Tag #{tid}" if in_map else f"Tag #{tid} [未入图]"
+                    cv2.putText(disp_frame, tag_lbl, (cx - 38, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 230, 80), 2, cv2.LINE_AA)
+                    rendered_tids.add(tid)
 
         # 5. 若处于病因切片诊断模式，叠加视野内预测但实测漏检的标靶框 (橙黄色矩形与 Tag 标注)
         if getattr(studio, "show_frame_diagnostics", False):
@@ -676,17 +702,24 @@ class StudioUIRenderer:
                 cv2.putText(canvas, "理论漏检: 无 (全捕获)", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 220, 100), 1, cv2.LINE_AA)
 
         else:
-            # 渲染常规【标靶与残差清单】面板
+            # 渲染常规【标靶与残差清单】面板 (按照残差降序排序: 离差最大排在最上方)
             list_y = y + 62
             cv2.line(canvas, (x + 8, list_y), (x + w - 8, list_y), (45, 48, 58), 1)
             obs_list = meta.get("observations", [])
             tag_errors = meta.get("tag_errors", {})
-            cv2.putText(canvas, f"标靶与残差 ({len(obs_list)})", (x + 8, list_y + 16),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 185, 195), 1, cv2.LINE_AA)
+            cv2.putText(canvas, f"标靶与残差 ({len(obs_list)}) 降序↓", (x + 8, list_y + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 220, 255), 1, cv2.LINE_AA)
+
+            # 按残差降序排序：离差最大的坏标靶置顶优先显示
+            sorted_obs_list = sorted(
+                obs_list,
+                key=lambda o: (tag_errors.get(o.get("tag_id", -1), -1.0), -o.get("tag_id", 0)),
+                reverse=True
+            )
 
             row_y = list_y + 24
             row_h = 24
-            for obs in obs_list:
+            for obs in sorted_obs_list:
                 tid = obs["tag_id"]
                 keep = obs.get("keep", True)
                 err_val = tag_errors.get(tid, 0.0)
@@ -705,7 +738,14 @@ class StudioUIRenderer:
                 cv2.putText(canvas, f"#{tid}", (rx1 + 18, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.38, t_col, 1, cv2.LINE_AA)
 
                 err_str = f"{err_val:.2f}px" if keep else "EXCL"
-                err_c = (120, 120, 120) if not keep else ((0, 200, 255) if err_val > 0.5 else (0, 230, 80))
+                if not keep:
+                    err_c = (120, 120, 120)
+                elif err_val > 1.0:
+                    err_c = (0, 100, 255)  # 离差严重 (>1px) 鲜艳红色
+                elif err_val > 0.5:
+                    err_c = (0, 200, 255)  # 离差偏大 (>0.5px) 醒目金黄
+                else:
+                    err_c = (0, 230, 80)   # 优良 (<=0.5px) 荧光绿
                 (ew, _), _ = cv2.getTextSize(err_str, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
                 cv2.putText(canvas, err_str, (rx2 - ew - 6, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.36, err_c, 1, cv2.LINE_AA)
 
@@ -900,3 +940,255 @@ class StudioUIRenderer:
 
             btn_id = f"DD_SELECT_{studio.active_dropdown}_{opt_key}"
             studio.gui_buttons.append((btn_id, (pop_x1, iy1, pop_x2, iy2), (studio.active_dropdown, opt_key)))
+
+    def render_prune_ba_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
+        """居中展示工序 5-Auto: 迭代残差剪枝平差运行中多轮收敛监控卡片 (集成实时多轮报告列表)"""
+        card_w, card_h = 760, 360
+        cx1, cy1 = (w - card_w) // 2, (h - card_h) // 2
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (18, 20, 26), -1)
+        cv2.addWeighted(overlay, 0.94, canvas, 0.06, 0, canvas)
+        cv2.rectangle(canvas, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (255, 140, 0), 2)
+
+        # 1. 标题与急停按钮
+        r = getattr(studio.ba_runner, "prune_round", 1)
+        max_r = getattr(studio.ba_runner, "max_prune_rounds", 10)
+        title_txt = f"工序 5-Auto: 迭代残差剪枝平差监控 (第 {r}/{max_r} 轮)..."
+        cv2.putText(canvas, title_txt, (cx1 + 20, cy1 + 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+
+        # 急停按钮 (右上角)
+        btn_w, btn_h = 105, 24
+        btn_x1 = cx1 + card_w - btn_w - 18
+        btn_y1 = cy1 + 12
+        btn_x2 = btn_x1 + btn_w
+        btn_y2 = btn_y1 + btn_h
+        draw_styled_button(canvas, (btn_x1, btn_y1, btn_x2, btn_y2), "急停 (Space)",
+                           mouse_pos=studio.mouse_pos, btn_type="danger")
+        studio.gui_buttons.append(("STOP_PRUNE", (btn_x1, btn_y1, btn_x2, btn_y2), "STOP_PRUNE"))
+
+        # 2. 进度条与百分比
+        pct = max(0.0, min(1.0, studio.ba_progress))
+        pct_int = int(round(pct * 100))
+        pct_str = f"{pct_int}%"
+        (pw, _), _ = cv2.getTextSize(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 2)
+        cv2.putText(canvas, pct_str, (btn_x1 - pw - 14, cy1 + 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 180, 0), 2, cv2.LINE_AA)
+
+        bar_x1 = cx1 + 20
+        bar_y1 = cy1 + 42
+        bar_x2 = cx1 + card_w - 20
+        bar_y2 = bar_y1 + 10
+        bar_w = bar_x2 - bar_x1
+
+        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (30, 34, 44), -1)
+        cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), (65, 72, 88), 1)
+
+        fill_w = int(bar_w * pct)
+        if fill_w > 0:
+            cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y2), (255, 140, 0), -1)
+            cv2.line(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y1), (255, 210, 140), 1)
+
+        # 3. 统计指标胶囊栏 (淘汰数、基准RMSE、当前RMSE、累计改善)
+        cap_y1 = cy1 + 58
+        cap_y2 = cap_y1 + 28
+        cv2.rectangle(canvas, (bar_x1, cap_y1), (bar_x2, cap_y2), (25, 28, 36), -1)
+        cv2.rectangle(canvas, (bar_x1, cap_y1), (bar_x2, cap_y2), (48, 54, 68), 1)
+
+        history: List[Dict[str, Any]] = getattr(studio.ba_runner, "prune_history", [])
+        total_pruned = sum(len(item.get("pruned", [])) for item in history)
+        init_rmse = getattr(studio.ba_runner, "initial_rmse", studio.data_mgr.global_rmse)
+        curr_rmse = studio.data_mgr.global_rmse
+        cum_delta = max(0.0, init_rmse - curr_rmse) if init_rmse > 0 else 0.0
+        cum_pct = (cum_delta / init_rmse * 100.0) if init_rmse > 0 else 0.0
+
+        txt_p = f"累计淘汰: {total_pruned} 个"
+        txt_i = f"初始基准: {init_rmse:.2f}px"
+        txt_c = f"当前残差: {curr_rmse:.2f}px"
+        txt_d = f"累计改善: ↓{cum_delta:.2f}px ({cum_pct:.1f}%)"
+
+        cv2.putText(canvas, txt_p, (bar_x1 + 14, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+        cv2.putText(canvas, txt_i, (bar_x1 + 160, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 185, 195), 1, cv2.LINE_AA)
+        cv2.putText(canvas, txt_c, (bar_x1 + 330, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 210, 100), 1, cv2.LINE_AA)
+        cv2.putText(canvas, txt_d, (bar_x1 + 500, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 120), 1, cv2.LINE_AA)
+
+        # 4. 当前运行主阶段与动态细节
+        stg_txt = studio.ba_stage_text or "智能迭代剪枝平差管线推进中..."
+        sub_txt = studio.ba_sub_text or "正在执行全场景 BA 平差与共视安全守门..."
+        cv2.putText(canvas, stg_txt, (cx1 + 20, cy1 + 104), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+        cv2.putText(canvas, sub_txt, (cx1 + 20, cy1 + 122), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 80), 1, cv2.LINE_AA)
+
+        # 5. 【核心实时报告表格】 (Live Settlement Table)
+        tbl_x1 = bar_x1
+        tbl_y1 = cy1 + 134
+        tbl_w = bar_w
+        th_h = 24
+        tr_h = 24
+
+        # 表头
+        cv2.rectangle(canvas, (tbl_x1, tbl_y1), (tbl_x1 + tbl_w, tbl_y1 + th_h), (34, 38, 48), -1)
+        cv2.rectangle(canvas, (tbl_x1, tbl_y1), (tbl_x1 + tbl_w, tbl_y1 + th_h), (55, 62, 78), 1)
+
+        c_round_w = 60
+        c_item_w = 320
+        c_before_w = 110
+        c_after_w = 110
+        c_delta_w = tbl_w - c_round_w - c_item_w - c_before_w - c_after_w
+
+        tx0 = tbl_x1 + 8
+        tx1 = tbl_x1 + c_round_w
+        tx2 = tx1 + c_item_w
+        tx3 = tx2 + c_before_w
+        tx4 = tx3 + c_after_w
+
+        cv2.putText(canvas, "轮次", (tx0, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "淘汰坏样本 (图像 / Tag / 离差)", (tx1 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "平差前残差", (tx2 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "平差后残差", (tx3 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "进步幅度", (tx4 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+
+        # 动态行组合: 历史完成轮次 + 当前正在求解轮次
+        display_rows = []
+        for h_item in history:
+            rnd = f"#{h_item.get('round', 1)}"
+            pruned_info = ", ".join([f"{bn} #{tid} ({err:.1f}px)" for bn, tid, err, _ in h_item.get("pruned", [])])
+            b_rmse = f"{h_item.get('rmse_before', 0.0):.2f}px"
+            a_rmse = f"{h_item.get('rmse_after', 0.0):.2f}px"
+            d_rmse = h_item.get('delta_rmse', 0.0)
+            d_txt = f"↓{d_rmse:+.2f}px" if d_rmse >= 0 else f"{d_rmse:+.2f}px"
+            display_rows.append((rnd, pruned_info, b_rmse, a_rmse, d_txt, False))
+
+        # 当前正在求解的进行中行
+        curr_target = getattr(studio.ba_runner, "current_pruning_target", "")
+        if curr_target:
+            curr_row = (f"#{r}", curr_target, f"{curr_rmse:.2f}px", "--", "求解中...", True)
+            display_rows.append(curr_row)
+
+        # 仅展示最新的 5 行，保证排版整洁
+        rows_to_show = display_rows[-5:] if len(display_rows) > 5 else display_rows
+        max_rows = 5
+        curr_row_y = tbl_y1 + th_h
+
+        if not rows_to_show:
+            cv2.rectangle(canvas, (tbl_x1, curr_row_y), (tbl_x1 + tbl_w, curr_row_y + tr_h * 2), (20, 22, 28), -1)
+            cv2.rectangle(canvas, (tbl_x1, curr_row_y), (tbl_x1 + tbl_w, curr_row_y + tr_h * 2), (45, 50, 62), 1)
+            cv2.putText(canvas, "正在执行首轮共视拓扑分析与基准残差排查，即将生成实时对比明细...",
+                        (tbl_x1 + 18, curr_row_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 150, 165), 1, cv2.LINE_AA)
+            curr_row_y += tr_h * 2
+        else:
+            for idx, (rnd_s, item_s, b_s, a_s, d_s, is_active) in enumerate(rows_to_show):
+                ry1 = curr_row_y + idx * tr_h
+                ry2 = ry1 + tr_h
+                row_bg = (32, 28, 20) if is_active else ((24, 27, 34) if idx % 2 == 0 else (20, 22, 28))
+                row_border = (255, 140, 0) if is_active else (40, 44, 54)
+
+                cv2.rectangle(canvas, (tbl_x1, ry1), (tbl_x1 + tbl_w, ry2), row_bg, -1)
+                cv2.rectangle(canvas, (tbl_x1, ry1), (tbl_x1 + tbl_w, ry2), row_border, 1)
+
+                col_txt = (255, 180, 0) if is_active else (210, 215, 225)
+                delta_col = (0, 240, 120) if not is_active else (255, 200, 80)
+
+                # 限制文字长度避免溢出
+                s_item = item_s if len(item_s) <= 38 else item_s[:35] + "..."
+
+                cv2.putText(canvas, rnd_s, (tx0, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_txt, 1, cv2.LINE_AA)
+                cv2.putText(canvas, s_item, (tx1 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, col_txt, 1, cv2.LINE_AA)
+                cv2.putText(canvas, b_s, (tx2 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (160, 170, 185), 1, cv2.LINE_AA)
+                cv2.putText(canvas, a_s, (tx3 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_txt, 1, cv2.LINE_AA)
+                cv2.putText(canvas, d_s, (tx4 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, delta_col, 1 if is_active else 2, cv2.LINE_AA)
+
+        # 6. 底栏停机说明
+        tip_txt = "收敛准则: 单轮改善 < 0.010 px 触发边际最优收敛 | 共视拓扑守门确保几何不退化 | 随时按 Space 急停"
+        cv2.putText(canvas, tip_txt, (cx1 + 20, cy1 + card_h - 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.34, (130, 140, 155), 1, cv2.LINE_AA)
+
+    def render_prune_settlement_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
+        """居中展示工序 5-Auto: 智能剪枝平差结算单对比卡片 (支持一键采纳或无损撤销)"""
+        s_data = getattr(studio, "prune_settlement_data", None)
+        if not s_data:
+            return
+
+        card_w, card_h = 700, 340
+        cx1, cy1 = (w - card_w) // 2, (h - card_h) // 2
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (18, 22, 28), -1)
+        cv2.addWeighted(overlay, 0.95, canvas, 0.05, 0, canvas)
+        cv2.rectangle(canvas, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (0, 230, 100), 2)
+
+        # 1. 顶部标题与收敛徽章
+        cv2.putText(canvas, "智能残差剪枝平差结算单 (Auto-Prune Settlement)", (cx1 + 22, cy1 + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
+
+        reason = s_data.get("stop_reason", "最优收敛")
+        (rw, _), _ = cv2.getTextSize(f"[{reason}]", cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+        cv2.putText(canvas, f"[{reason}]", (cx1 + card_w - 22 - rw, cy1 + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 180), 1, cv2.LINE_AA)
+
+        cv2.line(canvas, (cx1 + 22, cy1 + 44), (cx1 + card_w - 22, cy1 + 44), (50, 58, 72), 1)
+
+        # 2. 关键前后指标对比
+        init_rmse = s_data.get("initial_rmse", 0.0)
+        final_rmse = s_data.get("final_rmse", 0.0)
+        init_mm = s_data.get("initial_mm", 0.0)
+        final_mm = s_data.get("final_mm", 0.0)
+        rounds = s_data.get("rounds_executed", 0)
+        pruned_cnt = s_data.get("total_pruned_count", 0)
+
+        drop_pct = ((init_rmse - final_rmse) / max(0.001, init_rmse)) * 100.0 if init_rmse > 0 else 0.0
+
+        y_c = cy1 + 72
+        # RMSE 对比
+        cv2.putText(canvas, "全局像面 RMSE:", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 205, 215), 1, cv2.LINE_AA)
+        rmse_str = f"{init_rmse:.3f} px  ->  {final_rmse:.3f} px"
+        cv2.putText(canvas, rmse_str, (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 100), 2, cv2.LINE_AA)
+        cv2.putText(canvas, f"(误差显著降低 {drop_pct:.1f}%)", (cx1 + 445, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 220, 255), 1, cv2.LINE_AA)
+
+        y_c += 28
+        # 物理毫米对比
+        cv2.putText(canvas, "空间物理偏差 (中位):", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 205, 215), 1, cv2.LINE_AA)
+        mm_str = f"{init_mm:.2f} mm  ->  {final_mm:.2f} mm"
+        cv2.putText(canvas, mm_str, (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 100), 2, cv2.LINE_AA)
+
+        y_c += 28
+        # 轮次与剔除汇总
+        cv2.putText(canvas, f"迭代执行: {rounds} 轮", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 185, 195), 1, cv2.LINE_AA)
+        cv2.putText(canvas, f"累计淘汰外点: {pruned_cnt} 个 (已受共视拓扑严格保护)", (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 180, 0), 1, cv2.LINE_AA)
+
+        y_c += 16
+        cv2.line(canvas, (cx1 + 22, y_c), (cx1 + card_w - 22, y_c), (45, 52, 65), 1)
+        y_c += 20
+
+        # 3. 逐轮剔除明细 (最多展示最近 3 轮)
+        cv2.putText(canvas, "各轮剪枝与收敛明细:", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 165, 175), 1, cv2.LINE_AA)
+        y_c += 18
+        hist = s_data.get("history", [])
+        show_hist = hist[-3:] if len(hist) > 3 else hist
+        for h_item in show_hist:
+            r_num = h_item.get("round", 1)
+            p_list = h_item.get("pruned", [])
+            p_str = ", ".join([f"{bname}的#{tid}({err:.2f}px)" for bname, tid, err, _ in p_list])
+            d_rmse = h_item.get("delta_rmse", 0.0)
+            a_rmse = h_item.get("rmse_after", 0.0)
+            log_line = f"轮次 #{r_num}: 淘汰 [{p_str}] -> RMSE降至 {a_rmse:.3f}px (改善: {d_rmse:.3f}px)"
+            cv2.putText(canvas, log_line, (cx1 + 32, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 210, 220), 1, cv2.LINE_AA)
+            y_c += 20
+
+        # 4. 底部决策操作按钮
+        btn_y1 = cy1 + card_h - 48
+        btn_y2 = btn_y1 + 34
+
+        # 采纳按钮 (Enter)
+        b1_w = 230
+        b1_x1 = cx1 + 90
+        b1_x2 = b1_x1 + b1_w
+        draw_styled_button(canvas, (b1_x1, btn_y1, b1_x2, btn_y2), "采纳平差成果 (Enter)",
+                           mouse_pos=studio.mouse_pos, btn_type="success")
+        studio.gui_buttons.append(("ACCEPT_PRUNE", (b1_x1, btn_y1, b1_x2, btn_y2), "ACCEPT_PRUNE"))
+
+        # 撤销还原按钮 (Esc)
+        b2_w = 210
+        b2_x1 = b1_x2 + 70
+        b2_x2 = b2_x1 + b2_w
+        draw_styled_button(canvas, (b2_x1, btn_y1, b2_x2, btn_y2), "撤销还原 (Esc)",
+                           mouse_pos=studio.mouse_pos, btn_type="danger")
+        studio.gui_buttons.append(("UNDO_PRUNE", (b2_x1, btn_y1, b2_x2, btn_y2), "UNDO_PRUNE"))

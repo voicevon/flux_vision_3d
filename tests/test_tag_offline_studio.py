@@ -21,6 +21,7 @@ import tempfile
 import unittest
 import numpy as np
 import cv2
+import yaml
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -46,12 +47,39 @@ class TestTagOfflineStudio(unittest.TestCase):
         if os.path.exists(real_map):
             shutil.copy(real_map, self.map_path)
 
+        self.manifest_path = os.path.join(self.temp_dir, "test_tag_observations.yaml")
+        init_manifest = {
+            "version": "2.0_test",
+            "tag_family": "DICT_APRILTAG_16h5",
+            "marker_size_mm": 50.0,
+            "summary": {"total_images": 3, "total_observations": 3, "total_kept": 3},
+            "images": {
+                f"view_{i:04d}.png": {
+                    "file_name": f"view_{i:04d}.png",
+                    "image_path": os.path.join(self.image_dir, f"view_{i:04d}.png"),
+                    "detected_count": 1,
+                    "enabled": True,
+                    "observations": [
+                        {
+                            "tag_id": i,
+                            "keep": True,
+                            "corners": [[100.0, 100.0], [200.0, 100.0], [200.0, 200.0], [100.0, 200.0]]
+                        }
+                    ]
+                }
+                for i in range(1, 4)
+            }
+        }
+        with open(self.manifest_path, "w", encoding="utf-8") as f:
+            yaml.dump(init_manifest, f)
+
         self.studio = TagOfflineStudio(
             map_path=self.map_path,
             image_dir=self.image_dir,
             marker_size_mm=50.0,
             win_w=1920,
-            win_h=1080
+            win_h=1080,
+            manifest_path=self.manifest_path
         )
 
     def tearDown(self):
@@ -452,6 +480,81 @@ class TestTagOfflineStudio(unittest.TestCase):
         # 模拟点击 DIAGNOSE_FRAME 切回常规视图
         self.studio._handle_button_click("DIAGNOSE_FRAME", "", 0, 0)
         self.assertFalse(self.studio.show_frame_diagnostics)
+
+    def test_manifest_snapshot_and_restore(self):
+        """测试审核清单快照深拷贝与一键撤销回滚"""
+        # 1. 制作快照
+        snap = self.studio.data_mgr.create_manifest_snapshot()
+        self.assertIsNotNone(snap)
+        orig_keep = self.studio.manifest_data["images"]["view_0001.png"]["observations"][0]["keep"]
+
+        # 2. 模拟修改: 剔除一个标靶
+        self.studio.manifest_data["images"]["view_0001.png"]["observations"][0]["keep"] = not orig_keep
+
+        # 3. 恢复快照
+        succ = self.studio.data_mgr.restore_manifest_snapshot()
+        self.assertTrue(succ)
+        self.assertEqual(
+            self.studio.manifest_data["images"]["view_0001.png"]["observations"][0]["keep"],
+            orig_keep,
+            "恢复快照后标靶保留状态应精确还原"
+        )
+
+    def test_find_worst_prunable_topology_guard(self):
+        """测试最大离差标靶寻找与拓扑安全守门员"""
+        prunable = self.studio.data_mgr.find_worst_prunable_observations(top_k=5)
+        self.assertIsInstance(prunable, list)
+
+    def test_auto_prune_ba_and_settlement_ui(self):
+        """测试自动迭代剪枝平差调度生命周期、结算数据包与UI交互"""
+        fake_opt_res = {
+            "final_rmse": 0.28,
+            "final_tag_poses_aligned": {
+                0: np.eye(4),
+                18: np.eye(4),
+                19: np.eye(4)
+            }
+        }
+        call_count = [0]
+        def fake_solve(*args, **kwargs):
+            self.studio.data_mgr.global_rmse = 0.85 if call_count[0] == 0 else 0.35
+            self.studio.data_mgr.global_median_mm = 1.60 if call_count[0] == 0 else 0.90
+            return True, {"final_rmse": 0.35}, "收敛成功"
+        self.studio.ba_runner._execute_ba_solve = fake_solve
+
+        def fake_find(top_k=2):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [("view_0001.png", 0, 1.25, 2.5)]
+            return []
+        self.studio.data_mgr.find_worst_prunable_observations = fake_find
+
+        self.studio.data_mgr.global_rmse = 0.85
+        self.studio.data_mgr.global_median_mm = 1.60
+
+        started = self.studio.start_auto_prune_ba()
+        self.assertTrue(started)
+
+        if self.studio.ba_runner.ba_thread:
+            self.studio.ba_runner.ba_thread.join(timeout=5.0)
+
+        res = self.studio.ba_runner.poll_result()
+        self.assertIsNotNone(res)
+
+        settle = self.studio.prune_settlement_data
+        self.assertIsNotNone(settle)
+        self.assertIn("initial_rmse", settle)
+        self.assertIn("final_rmse", settle)
+        self.assertIn("total_pruned_count", settle)
+
+        canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        self.studio.render(canvas)
+        btn_ids = [btn[0] for btn in self.studio.gui_buttons]
+        self.assertIn("ACCEPT_PRUNE", btn_ids)
+        self.assertIn("UNDO_PRUNE", btn_ids)
+
+        self.studio.undo_prune_results()
+        self.assertIsNone(self.studio.prune_settlement_data)
 
 
 if __name__ == "__main__":
