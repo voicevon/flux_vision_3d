@@ -13,9 +13,14 @@ import glob
 import subprocess
 from datetime import datetime
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+os.chdir(PROJECT_ROOT)
+
 try:
     from src.calibration.scene_manager import CalibrationSceneManager
-except ImportError:
+except Exception as e:
     CalibrationSceneManager = None
 
 # Windows 终端色彩支持
@@ -34,9 +39,6 @@ C_RED = "\033[91m"
 C_BOLD = "\033[1m"
 C_GRAY = "\033[90m"
 C_RESET = "\033[0m"
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-os.chdir(PROJECT_ROOT)
 
 
 def check_env_status():
@@ -661,9 +663,13 @@ def submenu_scene_manager(scene_mgr):
     """标定采样场景与批次分组管理专属子菜单"""
     import time
     if not scene_mgr:
-        print(f"{C_RED}[错误] 场景管理器未能正常加载！{C_RESET}")
-        pause_prompt()
-        return
+        try:
+            from src.calibration.scene_manager import CalibrationSceneManager
+            scene_mgr = CalibrationSceneManager()
+        except Exception as e:
+            print(f"{C_RED}[错误] 场景管理器未能正常加载: {e}{C_RESET}")
+            pause_prompt()
+            return
 
     while True:
         os.system("cls" if os.name == "nt" else "clear")
