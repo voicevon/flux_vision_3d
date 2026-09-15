@@ -325,6 +325,11 @@ class TagSceneHubApp:
             self.state.toggle_toolbox()
             return
 
+        # 点击顶部标题栏【生产运行场景】标签区域：秒级唤出业务机制说明窗 (x: 600~1030, y: 8~42)
+        if 600 <= x <= 1030 and 8 <= y <= 42:
+            self.state.toggle_help_modal()
+            return
+
         # 如果在相机采图全屏模式，点击画面抓拍
         if self.state.mode == HubState.MODE_CAPTURE:
             if 50 < y < 670:
@@ -342,6 +347,12 @@ class TagSceneHubApp:
             scroll_start = max(0, self.state.selected_scene_idx - max_cards + 1)
             target_idx = scroll_start + idx_in_view
             if 0 <= target_idx < len(self.state.scenes):
+                card_cy = 88 + idx_in_view * (card_h + gap)
+                # 检查是否直接点击了右侧的 [活动] 或 ★生产/草稿 交互徽章 (x: 248~326, y: card_cy+4 ~ card_cy+62)
+                if 248 <= x <= 326 and (card_cy + 4 <= y <= card_cy + 62):
+                    self.state.toggle_help_modal()
+                    return
+
                 self.state.selected_scene_idx = target_idx
                 self.state.load_current_scene_images()
             return

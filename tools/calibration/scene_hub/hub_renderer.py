@@ -289,13 +289,38 @@ class HubRenderer:
             ba_col = (0, 220, 100) if sc.ba_solved else self.COLOR_DARK_GRAY
             cv2.putText(canvas, ba_badge, (20, cy + 56), cv2.FONT_HERSHEY_SIMPLEX, 0.38, ba_col, 1, cv2.LINE_AA)
 
-            # 当前活动标记 / 生产发布徽章
+            # 当前活动标记 / 生产发布徽章 (交互式胶囊按钮，支持 hover 高亮与点击弹窗说明)
+            badge_ax, badge_ay, badge_aw, badge_ah = 252, cy + 6, 68, 22
+            a_hover = (badge_ax <= mpos[0] <= badge_ax + badge_aw and badge_ay <= mpos[1] <= badge_ay + badge_ah)
             if is_active:
-                draw_text(canvas, "[活动]", (250, cy + 6), font_size=13, color=(0, 255, 120))
-            if sc.is_published:
-                draw_text(canvas, "★生产", (280, cy + 42), font_size=13, color=self.COLOR_GOLD, bold=True)
+                cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah),
+                              (24, 42, 34) if a_hover else (18, 30, 24), -1)
+                cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah),
+                              (0, 255, 180) if a_hover else (0, 200, 120), 2 if a_hover else 1)
+                draw_text(canvas, "[活动] ?", (badge_ax + 8, badge_ay + 3), font_size=12,
+                          color=(0, 255, 200) if a_hover else (0, 240, 140), bold=True)
             else:
-                draw_text(canvas, "草稿", (285, cy + 42), font_size=12, color=self.COLOR_DARK_GRAY)
+                if a_hover:
+                    cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah), (26, 32, 42), -1)
+                    cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah), (0, 200, 160), 1)
+                    draw_text(canvas, "设活动 ?", (badge_ax + 8, badge_ay + 3), font_size=12, color=(0, 240, 180))
+
+            badge_px, badge_py, badge_pw, badge_ph = 252, cy + 36, 68, 22
+            p_hover = (badge_px <= mpos[0] <= badge_px + badge_pw and badge_py <= mpos[1] <= badge_py + badge_ph)
+            if sc.is_published:
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (36, 40, 26) if p_hover else (26, 28, 18), -1)
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (0, 255, 255) if p_hover else self.COLOR_GOLD, 2 if p_hover else 1)
+                draw_text(canvas, "★生产 ?", (badge_px + 7, badge_py + 3), font_size=12,
+                          color=(100, 255, 255) if p_hover else self.COLOR_GOLD, bold=True)
+            else:
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (32, 36, 44) if p_hover else (22, 25, 32), -1)
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (0, 220, 200) if p_hover else (50, 58, 72), 1)
+                draw_text(canvas, "草稿 ?", (badge_px + 14, badge_py + 3), font_size=12,
+                          color=(0, 220, 200) if p_hover else self.COLOR_DARK_GRAY)
 
         # 分割线
         div_y1 = 380
@@ -645,16 +670,17 @@ class HubRenderer:
                   (mx + 30, footer_y + 12), font_size=13, color=self.COLOR_GOLD)
 
     def _render_help_modal(self, canvas: np.ndarray, state: HubState):
-        """渲染置顶居中的【生效到生产系统业务机制说明窗】(860x490)"""
+        """渲染置顶居中的【场景状态机制解析：活动 (Active) vs 生产 (Production)】深度说明看板 (940x530)"""
         overlay = canvas.copy()
         cv2.rectangle(overlay, (0, 0), (self.canvas_w, self.canvas_h), (8, 10, 14), -1)
         cv2.addWeighted(overlay, 0.78, canvas, 0.22, 0, canvas)
 
-        modal_w, modal_h = 860, 490
+        modal_w, modal_h = 940, 530
         mx = (self.canvas_w - modal_w) // 2
         my = (self.canvas_h - modal_h) // 2
         mpos = (state.mouse_x, state.mouse_y)
 
+        # 底板与多层线框
         cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (20, 24, 32), -1)
         cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (0, 220, 160), 2)
         cv2.rectangle(canvas, (mx + 4, my + 4), (mx + modal_w - 4, my + modal_h - 4), (40, 50, 66), 1)
@@ -664,50 +690,84 @@ class HubRenderer:
         cv2.line(canvas, (mx, my + 54), (mx + modal_w, my + 54), self.COLOR_BORDER, 1)
 
         cv2.circle(canvas, (mx + 24, my + 27), 6, self.COLOR_GOLD, -1)
-        draw_text(canvas, "★ 业务架构解析: 为什么需要【生效到生产系统】？", (mx + 38, my + 15),
+        draw_text(canvas, "★ 工业级场景状态机制解析:【活动 (Active)】与【生产 (Production)】的区别", (mx + 38, my + 15),
                   font_size=17, color=self.COLOR_WHITE, bold=True)
 
         # 右上角 [X] 关闭按钮
         self._draw_button(canvas, (mx + modal_w - 116, my + 11, 100, 32), "[X] 关闭 [H]", mpos)
 
-        # 4 条架构阐释卡片
-        intro_text = "在工业机器视觉与机械臂抓取工程中，标定研发与现场生产实行严格的【沙盒隔离】机制："
-        draw_text(canvas, intro_text, (mx + 30, my + 68), font_size=14, color=(0, 240, 220))
+        # 1. 顶部核心理念
+        intro_text = "核心架构：严格实行【研发实验沙盒】与【车间流水线作业】的物理安全隔离与闭环发布！"
+        draw_text(canvas, intro_text, (mx + 26, my + 66), font_size=14, color=(0, 240, 220), bold=True)
 
-        sections = [
-            ("1. 研发沙盒安全隔离 (Sandbox Isolation)",
-             "每个工况场景（如“1号机台主标定”、“光照对照组”）都是独立沙盒，拥有专属照片集与平差结果。现场实验或测试标定时，绝对不会影响正在作业的机械臂。",
-             (0, 255, 180)),
+        # 2. 左右两大核心对比卡片 (高度 236px)
+        card_y = my + 94
+        card_w = (modal_w - 68) // 2  # 436
 
-            ("2. 全局唯一生产地图 (Global Production Map)",
-             "流水线所有空间定位与手眼协同节点，均默认读取项目根目录的【config/tags_map.yaml】。该文件是全系统运行时的唯一真实几何基准。",
-             (0, 220, 255)),
+        # 2.1 左卡片：【活动】场景 (Active Workspace)
+        cx1 = mx + 26
+        cv2.rectangle(canvas, (cx1, card_y), (cx1 + card_w, card_y + 236), (22, 32, 36), -1)
+        cv2.rectangle(canvas, (cx1, card_y), (cx1 + card_w, card_y + 236), (0, 220, 140), 2)
+        cv2.rectangle(canvas, (cx1, card_y), (cx1 + card_w, card_y + 36), (18, 26, 30), -1)
+        draw_text(canvas, "🟢 【活动】场景 (Active Workspace)", (cx1 + 14, card_y + 8), font_size=15, color=(0, 255, 160), bold=True)
 
-            ("3. 一键安全原子覆盖与自动备份 (Safe Atomic Publish)",
-             "当操作员选中满意场景并按【[P] 生效到生产系统】时，系统自动生成带时间戳的 .bak 历史备份，随后将平差坐标原子写入 config/tags_map.yaml 并记录至 config.yaml。",
-             self.COLOR_GOLD),
-
-            ("4. 实时生效与生产闭环 (Seamless Hot-Reload)",
-             "生效发布后，无需重启生产服务即可读取最新厘米/亚毫米级标定矩阵，实现从“采图 -> 平差 -> 质检 -> 生产发布”的完整闭环，确保流水线作业极致精准！",
-             (160, 255, 120))
+        active_points = [
+            ("概念定义", "当前研发与标定聚焦的操作台沙盒 (类似 Git 本地分支)"),
+            ("连拍归档", "按 [C] 进入相机连拍抓拍的照片，自动保存于此场景"),
+            ("离线平差", "启动 Studio 平差、留一盲测、诊断切片默认载入此数据"),
+            ("如何切换", "在场景列表中按 [Enter] 回车键或点击徽章即可随时切换"),
+            ("安全边界", "完全沙盒隔离！无论如何采图平差，流水线机械臂零影响"),
         ]
-
-        sy = my + 98
-        for title, desc, col in sections:
-            cv2.rectangle(canvas, (mx + 28, sy), (mx + modal_w - 28, sy + 74), (25, 30, 40), -1)
-            cv2.rectangle(canvas, (mx + 28, sy), (mx + modal_w - 28, sy + 74), (44, 52, 68), 1)
-            cv2.rectangle(canvas, (mx + 28, sy), (mx + 32, sy + 74), col, -1)
-
-            draw_text(canvas, title, (mx + 42, sy + 8), font_size=14, color=col, bold=True)
-            d1 = desc[:48]
-            d2 = desc[48:96]
-            draw_text(canvas, d1, (mx + 42, sy + 30), font_size=12, color=self.COLOR_WHITE)
+        py = card_y + 44
+        for label, desc in active_points:
+            draw_text(canvas, f"• {label}:", (cx1 + 14, py), font_size=12, color=(0, 220, 180), bold=True)
+            d1 = desc[:28]
+            d2 = desc[28:]
+            draw_text(canvas, d1, (cx1 + 84, py), font_size=12, color=self.COLOR_WHITE)
             if d2:
-                draw_text(canvas, d2, (mx + 42, sy + 48), font_size=12, color=self.COLOR_GRAY)
-            sy += 82
+                py += 18
+                draw_text(canvas, d2, (cx1 + 84, py), font_size=11, color=self.COLOR_GRAY)
+            py += 24
 
+        # 2.2 右卡片：【★生产】地图 (Production Release)
+        cx2 = cx1 + card_w + 16
+        cv2.rectangle(canvas, (cx2, card_y), (cx2 + card_w, card_y + 236), (32, 28, 20), -1)
+        cv2.rectangle(canvas, (cx2, card_y), (cx2 + card_w, card_y + 236), self.COLOR_GOLD, 2)
+        cv2.rectangle(canvas, (cx2, card_y), (cx2 + card_w, card_y + 36), (24, 20, 14), -1)
+        draw_text(canvas, "★ 【生产】地图 (Production Release)", (cx2 + 14, card_y + 8), font_size=15, color=self.COLOR_GOLD, bold=True)
+
+        prod_points = [
+            ("概念定义", "车间现场机械臂定位唯一信赖的真实世界几何基准"),
+            ("物理路径", "对应项目根目录下的全局唯一文件 config/tags_map.yaml"),
+            ("生效机制", "选中满意场景后，按 [P] 键一键安全原子覆盖发布"),
+            ("历史保护", "发布瞬间自动创建时间戳 .bak 备份文件，确保可追溯"),
+            ("放行标准", "必须经多视角采图平差、RMSE 达标后方可发布 (极优放行)"),
+        ]
+        py = card_y + 44
+        for label, desc in prod_points:
+            draw_text(canvas, f"• {label}:", (cx2 + 14, py), font_size=12, color=self.COLOR_GOLD, bold=True)
+            d1 = desc[:28]
+            d2 = desc[28:]
+            draw_text(canvas, d1, (cx2 + 84, py), font_size=12, color=self.COLOR_WHITE)
+            if d2:
+                py += 18
+                draw_text(canvas, d2, (cx2 + 84, py), font_size=11, color=self.COLOR_GRAY)
+            py += 24
+
+        # 3. 底部完整闭环工作流导引 (y: card_y + 246)
+        flow_y = card_y + 246
+        cv2.rectangle(canvas, (mx + 26, flow_y), (mx + modal_w - 26, flow_y + 92), (20, 25, 34), -1)
+        cv2.rectangle(canvas, (mx + 26, flow_y), (mx + modal_w - 26, flow_y + 92), (40, 55, 75), 1)
+        cv2.rectangle(canvas, (mx + 26, flow_y), (mx + 30, flow_y + 92), (0, 200, 240), -1)
+
+        draw_text(canvas, "💡 工业工程标准作业流 (SOP 黄金闭环):", (mx + 42, flow_y + 8), font_size=14, color=(0, 220, 255), bold=True)
+        draw_text(canvas, "步骤 1: 新建/克隆场景 -> 按 [Enter] 设为【活动】场景 -> 按 [C] 原地抓拍多视角照片 (≥10帧)", (mx + 42, flow_y + 32), font_size=12, color=self.COLOR_WHITE)
+        draw_text(canvas, "步骤 2: 按 [S] 启动 Studio 离线平差工作站 -> 智能残差剪枝 -> 质检评定 RMSE < 0.20px 极优放行", (mx + 42, flow_y + 52), font_size=12, color=(0, 240, 180))
+        draw_text(canvas, "步骤 3: 达到精度指标后，按 [P] 键一键发布为【★生产】地图，现场机械臂秒级热更新！", (mx + 42, flow_y + 72), font_size=12, color=self.COLOR_GOLD, bold=True)
+
+        # 4. 底部关闭操作指引
         footer_y = my + modal_h - 36
-        draw_text(canvas, "快捷提示: 鼠标点击右上角 [X]、点击遮罩或直接按键盘 [ESC / H] 即可秒级关闭！",
+        draw_text(canvas, "★ 提示: 点击左侧卡片上的 [活动] 或 ★生产 徽章、点击 [? Help] 或直接按键盘 [ESC / H] 即可秒级开关！",
                   (mx + 32, footer_y), font_size=13, color=self.COLOR_GRAY)
 
 
