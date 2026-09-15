@@ -1,12 +1,12 @@
 """
-AprilTag 标定采样场景综合管理驾驶舱 (Scene Hub)
+工况与场景综合管理中枢 (Scene Hub)
 ==============================================
 提供现代深色科技风格 GUI 界面：
 - 场景画廊管理 (选择、切换、新建、重命名、克隆、删除)
 - 历史采样照片缩略图流与单帧大图自适应视口 (支持 [F] 键全宽放大)
 - 场景几何健康度与两阶段 BA 平差残差看板
-- 原地无缝 1080P/720P 相机取流与空格连拍自动归档
-- 一键直通离线 Studio 深度平差与原子发布至生产环境
+- 场景数据工作空间与工况生命周期管理
+- 一键直通标定离线 Studio 深度平差与原子发布至生产环境
 - 完美支持中英文场景别名输入与显示
 """
 
@@ -23,8 +23,8 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.calibration.scene_manager import CalibrationSceneManager
-from tools.calibration.scene_hub.hub_state import HubState
-from tools.calibration.scene_hub.hub_renderer import HubRenderer
+from tools.scene_hub.hub_state import HubState
+from tools.scene_hub.hub_renderer import HubRenderer
 
 
 def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
@@ -46,7 +46,7 @@ def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
             return ""
 
 
-class TagSceneHubApp:
+class SceneHubApp:
     """Scene Hub 主应用"""
 
     def __init__(self, force_mock: bool = False):
@@ -94,50 +94,9 @@ class TagSceneHubApp:
                     continue
                 continue
 
-            # =================== 标定工具箱总菜单模式事件 ===================
-            if self.state.is_toolbox_open:
-                # [ESC] 或 [M] 或 [Q]: 关闭工具箱返回主看板
-                if raw_key in (27, ord('q'), ord('Q'), ord('m'), ord('M')):
-                    self.state.is_toolbox_open = False
-                    self.state.set_toast("已关闭标定工具箱。")
-                    continue
-
-                # 工具快捷键直达
-                if key in (ord('s'), ord('S')):
-                    self.state.is_toolbox_open = False
-                    self._launch_offline_studio()
-                    continue
-                elif key in (ord('a'), ord('A')):
-                    self.state.is_toolbox_open = False
-                    self._launch_ar_verifier()
-                    continue
-                elif key in (ord('l'), ord('L')):
-                    self.state.is_toolbox_open = False
-                    self._launch_offline_verifier()
-                    continue
-                elif key in (ord('d'), ord('D')):
-                    self.state.is_toolbox_open = False
-                    self._launch_image_diagnostics()
-                    continue
-                elif key in (ord('t'), ord('T')):
-                    self.state.is_toolbox_open = False
-                    self._launch_tag_generator()
-                    continue
-                elif key in (ord('w'), ord('W')):
-                    self.state.is_toolbox_open = False
-                    self._handle_tag_whitelist()
-                    continue
-
-                continue
-
-            # [ESC] 或 [Q] 退出逻辑 (非工具箱与说明模式)
+            # [ESC] 或 [Q] 退出逻辑 (非说明模式)
             if raw_key in (27, ord('q'), ord('Q')):
                 break
-
-            # [M] 切换标定综合工具箱菜单
-            if key in (ord('m'), ord('M')):
-                self.state.toggle_toolbox()
-                continue
 
             # [H] 切换生产机制解析说明窗
             if key in (ord('h'), ord('H')):
@@ -309,51 +268,9 @@ class TagSceneHubApp:
                 self.state.set_toast("已关闭说明窗。")
             return
 
-        # =================== 4. 工具箱模式下的鼠标点击 ===================
-        if self.state.is_toolbox_open:
-            modal_w, modal_h = 880, 520
-            mx = (1280 - modal_w) // 2  # 200
-            my = (720 - modal_h) // 2   # 100
-
-            # 点击右上角 [X] 关闭按钮
-            if (mx + modal_w - 120) <= x <= (mx + modal_w - 16) and (my + 10) <= y <= (my + 44):
-                self.state.is_toolbox_open = False
-                self.state.set_toast("已关闭标定工具箱。")
-                return
-
-            # 点击 6 个工具卡片
-            cw, ch = 398, 86
-            col_xs = [mx + 28, mx + 454]
-            row_ys = [my + 96, my + 196, my + 296]
-
-            tool_actions = [
-                self._launch_offline_studio,
-                self._launch_ar_verifier,
-                self._launch_offline_verifier,
-                self._launch_image_diagnostics,
-                self._launch_tag_generator,
-                self._handle_tag_whitelist,
-            ]
-
-            for idx, action in enumerate(tool_actions):
-                col_i = idx % 2
-                row_i = idx // 2
-                bx = col_xs[col_i]
-                by = row_ys[row_i]
-                if bx <= x <= bx + cw and by <= y <= by + ch:
-                    self.state.is_toolbox_open = False
-                    action()
-                    return
-
-            # 点击弹窗外部阴影区域：关闭工具箱
-            if x < mx or x > mx + modal_w or y < my or y > my + modal_h:
-                self.state.is_toolbox_open = False
-                self.state.set_toast("已关闭标定工具箱。")
-            return
-
-        # =================== 5. 正常看板与采图模式下的鼠标点击 ===================
-        # 5.0 顶部标题栏交互
-        # 5.0.1 三段式视图模式切换 Tab (x: 288~532, y: 9~41)
+        # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
+        # 4.0 顶部标题栏交互
+        # 4.0.1 三段式视图模式切换 Tab (x: 288~532, y: 9~41)
         if 9 <= y <= 41:
             if 288 <= x <= 368:
                 self.state.set_view_mode(HubState.VIEW_STANDARD)
@@ -365,23 +282,18 @@ class TagSceneHubApp:
                 self.state.set_view_mode(HubState.VIEW_DASHBOARD)
                 return
 
-        # 5.0.2 生产运行场景标题区域 (x: 546~860, y: 8~42)
-        if 546 <= x <= 860 and 8 <= y <= 42:
+        # 4.0.2 生产运行场景标题区域 (x: 546~930, y: 8~42)
+        if 546 <= x <= 930 and 8 <= y <= 42:
             self.state.toggle_help_modal()
             return
 
-        # 5.0.3 [M] 工具箱菜单按钮 (x: 870~970, y: 8~42)
-        if 870 <= x <= 970 and 8 <= y <= 42:
-            self.state.toggle_toolbox()
-            return
-
-        # 5.0.4 [H] 生产机制说明按钮 (x: 980~1080, y: 8~42)
-        if 980 <= x <= 1080 and 8 <= y <= 42:
+        # 4.0.3 [H] 生产机制说明按钮 (x: 940~1070, y: 8~42)
+        if 940 <= x <= 1070 and 8 <= y <= 42:
             self.state.toggle_help_modal()
             return
 
-        # 5.0.5 [X] 退出按钮 (x: 1090~1265, y: 8~42)
-        if 1090 <= x <= 1265 and 8 <= y <= 42:
+        # 4.0.4 [X] 退出按钮 (x: 1085~1265, y: 8~42)
+        if 1085 <= x <= 1265 and 8 <= y <= 42:
             self._running = False
             return
 
@@ -678,11 +590,11 @@ class TagSceneHubApp:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AprilTag 标定采样场景综合管理驾驶舱 (Scene Hub)")
+    parser = argparse.ArgumentParser(description="工况与场景综合管理中枢 (Scene Hub)")
     parser.add_argument("--mock", action="store_true", help="强制以模拟仿真相机模式运行")
     args = parser.parse_args()
 
-    app = TagSceneHubApp(force_mock=args.mock)
+    app = SceneHubApp(force_mock=args.mock)
     app.run()
 
 

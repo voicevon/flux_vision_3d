@@ -170,9 +170,12 @@ def print_main_banner(status):
     print(f" 环境状态: Python {C_GREEN}{sys.version.split()[0]}{C_RESET} | OpenCV: {cv_str} | NumPy: {np_str} | D435驱动: {rs_str}")
     print(f" 本地数据: snapshots 快照 ({snap_str}) | 建图采图 ({status['calib_image_count']} 帧)")
     print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
+    print(f"{C_BOLD} [ 视觉控制中枢与顶级入口 (Master Dashboard) ]{C_RESET}")
+    print(f"   {C_CYAN}{C_BOLD}[G]{C_RESET} {C_GREEN}{C_BOLD}启动 3D 视觉综合控制中心 (GUI Launcher)  ★ 推荐！1280x720 工业科技大屏{C_RESET}")
+    print(f"   {C_GREEN}{C_BOLD}[2]{C_RESET} {C_CYAN}{C_BOLD}工况与场景综合管理中枢 (Scene Hub)      ★ 核心一级入口！(工况切换/沙盒体检/生产发布){C_RESET}")
+    print("")
     print(f"{C_BOLD} [ 核心生产与工况管理 (Core & Workspace) ]{C_RESET}")
     print(f"   {C_GREEN}[1]{C_RESET} 启动 D435 实时相机查看器与深度探针     (物理硬件模式)")
-    print(f"   {C_GREEN}{C_BOLD}[2]{C_RESET} {C_CYAN}{C_BOLD}工况与场景综合管理中枢 (Scene Hub)      ★ 核心一级入口！(工况切换/沙盒体检/生产发布){C_RESET}")
     print(f"   {C_GREEN}[3]{C_RESET} 解算最顶层芦笋抓取位姿 (实时相机)      (find_top_asparagus.py 单帧采集解算)")
     print(f"   {C_GREEN}[4]{C_RESET} 解算最顶层芦笋抓取位姿 (离线快照)      (自动读取最新本地快照快速验证)")
     print(f"   {C_GREEN}[5]{C_RESET} 快速生成一帧模拟快照至 snapshots       (方便无相机时进行算法验证)")
@@ -671,10 +674,22 @@ def run_offline_studio(status=None):
         active_scene.save_meta()
 
 
+def run_gui_launcher():
+    """启动 3D 视觉综合控制中心 (GUI Launcher)"""
+    print(f"\n{C_CYAN}[控制中心]{C_RESET} 正在启动 3D 视觉综合控制中心 (GUI Launcher)...")
+    cmd = [sys.executable, "tools/gui_launcher.py"]
+    try:
+        res = subprocess.run(cmd)
+        return res.returncode == 0
+    except Exception as e:
+        print(f"\n{C_YELLOW}[提示]{C_RESET} 无法启动 GUI 控制中心 ({e})，返回终端控制台...")
+        return False
+
+
 def run_scene_hub(status=None):
-    """优先启动标定采样场景综合管理 GUI 驾驶舱 (Scene Hub)，异常时优雅回退至命令行菜单"""
-    print(f"\n{C_CYAN}[驾驶舱]{C_RESET} 正在启动标定采样场景综合管理 GUI 驾驶舱 (Scene Hub)...")
-    cmd = [sys.executable, "tools/calibration/tag_scene_hub.py"]
+    """优先启动工况与场景综合管理 GUI 中枢 (Scene Hub)，异常时优雅回退至命令行菜单"""
+    print(f"\n{C_CYAN}[中枢]{C_RESET} 正在启动工况与场景综合管理 GUI 中枢 (Scene Hub)...")
+    cmd = [sys.executable, "-m", "tools.scene_hub"]
     try:
         res = subprocess.run(cmd)
         if res.returncode != 0:
@@ -975,12 +990,34 @@ def run_open_cmd():
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="flux_vision_3d 工业视觉控制终端")
+    parser.add_argument("--cli", action="store_true", help="强制以纯文本字符控制台菜单模式运行")
+    parser.add_argument("--diagnose", action="store_true", help="直接运行系统与驱动环境诊断后退出")
+    args = parser.parse_args()
+
+    if args.diagnose:
+        run_diagnostics()
+        return
+
+    # 默认优先尝试启动 1280x720 工业科技大屏 GUI 控制中心 (如用户未指定 --cli)
+    if not args.cli:
+        # 检测是否可拉起 GUI
+        try:
+            if run_gui_launcher():
+                return
+        except Exception:
+            pass
+
+    # 终端文本交互模式
     while True:
         status = check_env_status()
         print_main_banner(status)
-        choice = input(f"请输入选项编号并按回车 [1-6, H, T, 8, 9, C, 0]: ").strip().upper()
-        
-        if choice == '1':
+        choice = input(f"请输入选项编号并按回车 [G, 1-6, H, T, 8, 9, C, 0]: ").strip().upper()
+
+        if choice in ('G', 'GUI'):
+            run_gui_launcher()
+        elif choice == '1':
             run_tool_d435_real()
         elif choice in ('2', 'HUB', 'SCENE'):
             run_scene_hub(status)

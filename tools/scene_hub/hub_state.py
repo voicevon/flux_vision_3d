@@ -72,9 +72,6 @@ class HubState:
         # 当前视图模式 (默认标准三栏，按 F 键或点击顶部 Tab 循环切换)
         self.view_mode = self.VIEW_STANDARD
 
-        # 标定工具箱总菜单弹层是否打开 (按 M 键或点击呼出)
-        self.is_toolbox_open = False
-
         # 生产系统生效机制 Help 说明弹层 (按 H 键或点击 [? Help] 呼出)
         self.is_help_modal_open = False
 
@@ -273,20 +270,10 @@ class HubState:
         """兼容旧按键/点击调用"""
         self.cycle_view_mode()
 
-    def toggle_toolbox(self):
-        """打开或关闭标定工具箱综合菜单 (按 M 键切换)"""
-        self.is_toolbox_open = not self.is_toolbox_open
-        if self.is_toolbox_open:
-            self.is_help_modal_open = False
-            self.set_toast("已打开标定工具箱总菜单 (按对应字母启动工具，按 ESC/M 关闭)")
-        else:
-            self.set_toast("已关闭工具箱总菜单，返回场景驾驶舱。")
-
     def toggle_help_modal(self):
         """打开或关闭生产系统发布机制说明弹窗 (按 H 键或点击 [? Help] 切换)"""
         self.is_help_modal_open = not self.is_help_modal_open
         if self.is_help_modal_open:
-            self.is_toolbox_open = False
             self.set_toast("已呼出【生效到生产系统】业务说明窗 (按 ESC/H 关闭)")
         else:
             self.set_toast("已关闭说明窗。")

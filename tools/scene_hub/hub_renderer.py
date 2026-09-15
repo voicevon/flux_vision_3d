@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from tools.calibration.scene_hub.hub_state import HubState
+from tools.scene_hub.hub_state import HubState
 
 
 # 字体内存缓存
@@ -120,16 +120,7 @@ class HubRenderer:
                 return "help_close"
             return "help_modal"
 
-        # 3. 工具箱 Modal
-        if state.is_toolbox_open:
-            mw, mh = 880, 520
-            ox = (self.canvas_w - mw) // 2
-            oy = (self.canvas_h - mh) // 2
-            if ox + mw - 120 <= mx <= ox + mw - 16 and oy + 11 <= my <= oy + 43:
-                return "toolbox_close"
-            return "toolbox_modal"
-
-        # 4. 常规看板模式
+        # 3. 常规看板模式
         # 顶部 Header 交互
         if 0 <= my <= 50:
             if 288 <= mx <= 368 and 9 <= my <= 41:
@@ -138,13 +129,11 @@ class HubRenderer:
                 return "tab_expanded"
             if 450 <= mx <= 530 and 9 <= my <= 41:
                 return "tab_dashboard"
-            if 546 <= mx <= 860 and 8 <= my <= 42:
+            if 546 <= mx <= 930 and 8 <= my <= 42:
                 return "header_prod"
-            if 870 <= mx <= 970 and 8 <= my <= 42:
-                return "btn_toolbox"
-            if 980 <= mx <= 1080 and 8 <= my <= 42:
+            if 940 <= mx <= 1070 and 8 <= my <= 42:
                 return "btn_help"
-            if 1090 <= mx <= 1265 and 8 <= my <= 42:
+            if 1085 <= mx <= 1265 and 8 <= my <= 42:
                 return "btn_exit"
 
         # 左侧面板按钮与卡片
@@ -205,7 +194,6 @@ class HubRenderer:
             state.active_scene_id,
             state.selected_image_idx,
             state.image_strip_offset,
-            state.is_toolbox_open,
             state.is_help_modal_open,
             state.context_menu_open,
             state.context_menu_pos if state.context_menu_open else None,
@@ -244,11 +232,7 @@ class HubRenderer:
         # 5. 底部状态与快捷键导航栏 (y: 670~720)
         self._render_footer(canvas, state)
 
-        # 6. 如果打开了标定工具箱总菜单，则渲染置顶半透明浮层
-        if state.is_toolbox_open:
-            self._render_toolbox_modal(canvas, state)
-
-        # 7. 如果打开了生产系统生效机制说明弹窗，则渲染置顶半透明浮层
+        # 6. 如果打开了生产系统生效机制说明弹窗，则渲染置顶半透明浮层
         if state.is_help_modal_open:
             self._render_help_modal(canvas, state)
 
@@ -300,7 +284,7 @@ class HubRenderer:
         act_sc = state.get_active_scene()
         act_name = act_sc.name if act_sc else "未设定"
         act_id = state.active_scene_id or "无"
-        prod_x, prod_w = 546, 314
+        prod_x, prod_w = 546, 380
         is_hover_prod = (prod_x <= mpos[0] <= prod_x + prod_w and 8 <= mpos[1] <= 42)
         if is_hover_prod:
             cv2.rectangle(canvas, (prod_x, 8), (prod_x + prod_w, 42), (24, 34, 44), -1)
@@ -309,14 +293,11 @@ class HubRenderer:
                   font_size=13, color=(0, 255, 180) if is_hover_prod else (0, 240, 140))
 
         # 4. 右上角功能按钮组
-        # [M] 工具箱按钮 (x: 870~970, y: 8~42)
-        self._draw_button(canvas, (870, 8, 100, 34), "[M] 工具箱", mpos, is_active=state.is_toolbox_open)
+        # [H] 业务说明按钮 (x: 940~1070, y: 8~42)
+        self._draw_button(canvas, (940, 8, 130, 34), "[H] 生产机制", mpos, is_active=state.is_help_modal_open)
 
-        # [H] 业务说明按钮 (x: 980~1080, y: 8~42)
-        self._draw_button(canvas, (980, 8, 100, 34), "[H] 生产说明", mpos, is_active=state.is_help_modal_open)
-
-        # [X] 退出按钮 (x: 1090~1265, y: 8~42) - 实体点击与 ESC 退出
-        self._draw_button(canvas, (1090, 8, 175, 34), "[X] 退出 [ESC]", mpos, theme_color=(180, 60, 60))
+        # [X] 退出按钮 (x: 1085~1265, y: 8~42) - 实体点击与 ESC 退出
+        self._draw_button(canvas, (1085, 8, 180, 34), "[X] 退出 [ESC]", mpos, theme_color=(180, 60, 60))
 
     def _draw_button(self, canvas: np.ndarray, rect: tuple[int, int, int, int], text: str,
                      mouse_pos: tuple[int, int], is_active: bool = False,
@@ -783,11 +764,8 @@ class HubRenderer:
             if state.is_help_modal_open:
                 draw_text(canvas, "【生产机制解析】[ESC/H] 关闭说明窗  |  活动场景卡片上点击或按 [P] 可直接生效到生产系统",
                           (20, 686), font_size=14, color=self.COLOR_GOLD, bold=True)
-            elif state.is_toolbox_open:
-                draw_text(canvas, "【标定工具箱】[S] Studio平差  [A] 在线AR  [L] 盲测  [D] 漏检切片  [T] 图纸  [ESC/M] 关闭",
-                          (20, 686), font_size=14, color=(0, 255, 200), bold=True)
             else:
-                draw_text(canvas, "[↑/↓] 选择场景  [⏎] 设为活动  [P] 生效生产  [C] 采图向导  [S] 平差  [F] 视图  [ESC] 退出",
+                draw_text(canvas, "[↑/↓] 选择场景  [⏎] 设为活动  [P] 生效生产  [C] 采图向导  [S] 离线平差  [F] 切换视图  [ESC] 退出",
                           (20, 686), font_size=14, color=(210, 220, 230))
 
         # 2. 右侧 沙盒数据隔离与生产基准胶囊 (x: 930~1265, y: 678~712)
@@ -819,93 +797,6 @@ class HubRenderer:
         cv2.circle(canvas, (cam_x + 16, cam_y + 17), 8, lamp_color, 1)
 
         draw_text(canvas, status_text, (cam_x + 30, cam_y + 8), font_size=13, color=lamp_color, bold=True)
-
-
-    def _render_toolbox_modal(self, canvas: np.ndarray, state: HubState):
-        """渲染中央悬浮置顶的【标定工具箱综合菜单】(880x520)"""
-        overlay = canvas.copy()
-        cv2.rectangle(overlay, (0, 0), (self.canvas_w, self.canvas_h), (8, 10, 14), -1)
-        cv2.addWeighted(overlay, 0.75, canvas, 0.25, 0, canvas)
-
-        modal_w, modal_h = 880, 520
-        mx = (self.canvas_w - modal_w) // 2
-        my = (self.canvas_h - modal_h) // 2
-        mpos = (state.mouse_x, state.mouse_y)
-
-        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (20, 24, 32), -1)
-        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (0, 200, 240), 2)
-        cv2.rectangle(canvas, (mx + 4, my + 4), (mx + modal_w - 4, my + modal_h - 4), (40, 50, 66), 1)
-
-        # 标题栏
-        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + 54), (16, 20, 28), -1)
-        cv2.line(canvas, (mx, my + 54), (mx + modal_w, my + 54), self.COLOR_BORDER, 1)
-
-        cv2.circle(canvas, (mx + 22, my + 27), 6, (0, 240, 220), -1)
-        draw_text(canvas, "★ AprilTag 视觉标定综合工具箱总菜单 (Toolbox Hub)", (mx + 36, my + 15),
-                  font_size=18, color=self.COLOR_WHITE, bold=True)
-
-        # 右上角 [X] 关闭按钮
-        self._draw_button(canvas, (mx + modal_w - 120, my + 11, 104, 32), "[X] 关闭 [ESC]", mpos)
-
-        draw_text(canvas, "一站式极速唤起系统内所有独立 OpenCV 交互式图形化诊断、平差、图纸生成与在线验证工具：",
-                  (mx + 28, my + 66), font_size=13, color=(0, 200, 240))
-
-        tools = [
-            ("[S] 离线 Studio 深度平差工作站",
-             "整合多视角样本网格、两阶段 BA 平差求解、智能残差剪枝与全量质检体检报告",
-             (0, 240, 160), "tag_offline_studio.py"),
-
-            ("[A] 在线 AR 精度体检与 3D 虚实融合",
-             "相机实时高帧率取流、3D坐标轴/立体棱柱空间叠加、多帧平滑毫米级位姿锁定",
-             (0, 220, 255), "tag_calibration_verifier.py"),
-
-            ("[L] 离线留一交叉验证盲测工作台",
-             "对当前场景全量执行留一盲测 (LOO)，绘制残差矢量分布并评估相机外参鲁棒性",
-             self.COLOR_GOLD, "tag_offline_verifier.py"),
-
-            ("[D] 单帧漏检病因深度切片与梯度诊断",
-             "CLAHE 双尺度增强、16级网格自适应阈值，深度切片排查候选四边形淘汰病因",
-             (200, 140, 255), "tag_image_diagnostics.py"),
-
-            ("[T] 标靶图纸生成与 1:1 A4 打印排版",
-             "自动生成 0~29 号高精 AprilTag 矢量图纸及工业 1:1 A4 标定板排版 PDF 文件",
-             (120, 240, 100), "generate_tags_and_docs.py"),
-
-            ("[W] 标靶 ID 白名单管理与探索放行",
-             "查看或指定有效标靶 ID 集合，屏蔽车间杂乱反光外点干扰，锚定空间参考系",
-             (80, 160, 255), "whitelist_manager"),
-        ]
-
-        cw, ch = 398, 86
-        col_xs = [mx + 28, mx + 454]
-        row_ys = [my + 96, my + 196, my + 296]
-
-        for idx, (title, desc, col, script) in enumerate(tools):
-            col_i = idx % 2
-            row_i = idx // 2
-            x = col_xs[col_i]
-            y = row_ys[row_i]
-
-            is_hover = (x <= mpos[0] <= x + cw and y <= mpos[1] <= y + ch)
-            cv2.rectangle(canvas, (x, y), (x + cw, y + ch), (32, 40, 52) if is_hover else (26, 31, 42), -1)
-            cv2.rectangle(canvas, (x, y), (x + cw, y + ch), (0, 255, 180) if is_hover else (44, 52, 70), 2 if is_hover else 1)
-            cv2.rectangle(canvas, (x, y), (x + 4, y + ch), col, -1)
-
-            draw_text(canvas, title, (x + 14, y + 10), font_size=15, color=col, bold=True)
-            desc_line1 = desc[:28]
-            desc_line2 = desc[28:56]
-            draw_text(canvas, desc_line1, (x + 14, y + 36), font_size=12, color=self.COLOR_WHITE)
-            if desc_line2:
-                draw_text(canvas, desc_line2, (x + 14, y + 56), font_size=12, color=self.COLOR_GRAY)
-
-            cv2.rectangle(canvas, (x + cw - 72, y + ch - 22), (x + cw - 8, y + ch - 6), (16, 22, 30), -1)
-            cv2.putText(canvas, "CLICK", (x + cw - 62, y + ch - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.34, col, 1, cv2.LINE_AA)
-
-        footer_y = my + modal_h - 40
-        cv2.line(canvas, (mx + 20, footer_y), (mx + modal_w - 20, footer_y), (36, 44, 58), 1)
-        draw_text(canvas, "★ 操作提示: 鼠标直接点击对应工具卡片，或直接按下键盘快捷键 [S / A / L / D / T / W] 即可秒级拉起！",
-                  (mx + 30, footer_y + 12), font_size=13, color=self.COLOR_GOLD)
 
     def _render_help_modal(self, canvas: np.ndarray, state: HubState):
         """渲染置顶居中的【场景状态机制解析：活动 (Active) vs 生产 (Production)】深度说明看板 (940x530)"""

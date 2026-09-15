@@ -174,7 +174,7 @@ python tools/cli_menu.py
 ```mermaid
 flowchart TD
     S1["<b>工序 1: 标靶准备</b><br>生成 0~29 号矢量标靶与 A4 排版 PDF<br><i>(generate_apriltags.py)</i>"]
-    S2["<b>工序 2: 场景管理 (Scene Hub)</b><br>新建工况沙盒 / 选定当前活动场景<br><i>(tag_scene_hub.py)</i>"]
+    S2["<b>工序 2: 场景管理 (Scene Hub)</b><br>新建工况沙盒 / 选定当前活动场景<br><i>(python -m tools.scene_hub)</i>"]
     S3["<b>工序 3: 图像采集</b><br>多视角连拍或原地交互抓拍<br><i>(tag_capture_wizard.py)</i>"]
     S4["<b>工序 4: 离线超精重提取</b><br>16级网格 + 双尺度 CLAHE + 亚像素精修<br><i>(tag_super_extractor.py)</i>"]
     S5["<b>工序 5: 离线平差与体检 (Studio)</b><br>交互审核 + 两阶段 BA 平差 + LOO 盲测<br><i>(tag_offline_studio.py)</i>"]
@@ -185,8 +185,8 @@ flowchart TD
 
 | 序号 / 键位 | 模块工具 | 核心功能与工程要点 |
 | :---: | :--- | :--- |
-| **`[1]`** | **标靶图纸生成**<br>`generate_apriltags.py` | 自动生成 Tag 0~29 高清矢量 PNG，以及严丝合缝的 1:1 实际尺寸 A4 打印排版 PDF 图纸 |
-| **顶级 `[2]` / `[H]`** | **工况与场景管理中枢 (Scene Hub)**<br>`tag_scene_hub.py` | **1280x720 场景与数据总控台**：场景工作空间/数据容器管理、健康体检大屏、相册大图巡检；彻底解耦相机取流，一键调度下游专用工具 |
+| **顶级 `[G]`** | **3D 视觉综合控制中心 (GUI Launcher)**<br>`gui_launcher.py` | **1280x720 工业科技总控大屏**：常驻硬件探针、卡片网格、右侧动态即时说明大屏 (Live Inspector)，统一调度全系统生产、标定与测试任务 |
+| **顶级 `[2]` / `[H]`** | **工况与场景管理中枢 (Scene Hub)**<br>`tools/scene_hub/` | **1280x720 场景与数据总控台**：场景工作空间/数据容器管理、健康体检大屏、相册大图巡检；直接执行 `python -m tools.scene_hub` 即可启动 |
 | **`[2]`** | **多视角交互采图向导**<br>`tag_capture_wizard.py` | 专职采图工具：交互式指导相机移动至不同高度与俯仰角，按空格连拍，样本自动存入当前场景沙盒 |
 | **`[S]`** | **离线标定工作站 (Studio)**<br>`tag_offline_studio.py` | **一站式离线解算工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
 | **`[4]`** | **超精重提取引擎**<br>`tag_super_extractor.py` | 16 级阈值网格 + 自适应双尺度 CLAHE + 亚像素级角点精修，极限召回暗光/反光/弱对比度标靶 |
@@ -201,7 +201,7 @@ flowchart TD
 
 ### 工况与场景管理中枢 (Scene Hub) 机制与三模态视图
 
-工况与场景管理中枢 (`tools/calibration/tag_scene_hub.py`) 采用 1280×720 深色工业科技风设计，定位为**“工况管理与数据工作空间”**，是连接现场数据采集、离线解算与生产部署的核心中枢。
+工况与场景管理中枢 (`tools/scene_hub.py` / `tools/scene_hub/`) 采用 1280×720 深色工业科技风设计，定位为**“工况管理与数据工作空间”**，是连接现场数据采集、离线解算与生产部署的核心中枢。
 
 #### 1. 架构解耦与核心职责
 - **场景即工作空间 (Workspace)**：场景是数据的容器（包含样本图像 `raw_images/`、元数据 `scene_meta.yaml`、平差地图 `tags_map.yaml` 与质检报告 `reports/`），与具体的相机传感器和标定算法解耦；
@@ -333,14 +333,18 @@ flux_vision_3d/
 │       └── config_guard.py        #      原子配置读写保护与备份保障
 │
 ├── tools/                         # 🔧 运维与顶级应用程序
-│   ├── cli_menu.py                #    交互式统一控制终端总入口
+│   ├── gui_launcher.py            #    ★【顶级控制中心】3D 视觉综合控制大屏 (GUI Launcher 首选入口)
+│   ├── cli_menu.py                #    交互式统一控制终端总入口 (支持 --cli 与无图形回退)
+│   ├── scene_hub/                 #    ★【工况中枢自包含包】(通过 python -m tools.scene_hub 直接启动)
+│   │   ├── __main__.py            #      模块直接执行入口
+│   │   ├── app.py                 #      SceneHubApp 核心驱动逻辑
+│   │   ├── hub_state.py           #      场景状态机与数据沙盒模型
+│   │   └── hub_renderer.py        #      1280x720 三模态科技看板渲染引擎
 │   ├── d435_viewer.py             #    RealSense D435 实时相机视窗与交互探针 (含 --mock)
 │   ├── find_top_asparagus.py      #    单帧抓取位姿解算 (输出 SCARA G-code 与 JSON)
 │   │
 │   └── calibration/               # 🎯 标定与平差全套工具链
-│       ├── scene_hub/             #    Scene Hub GUI 核心组件 (State, Renderer, Stream)
 │       ├── studio/                #    Offline Studio 工作站组件 (BA Runner, Viewport)
-│       ├── tag_scene_hub.py       #    【工序2】标定场景综合管理驾驶舱 (Scene Hub 主入口)
 │       ├── tag_offline_studio.py  #    【工序S】AprilTag 离线标定综合工作站
 │       ├── tag_capture_wizard.py  #    【工序3】多视角交互采图向导
 │       ├── tag_super_extractor.py #    【工序4】离线超精重提取引擎 (16级网格+CLAHE)

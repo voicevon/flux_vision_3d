@@ -13,8 +13,8 @@ import cv2
 
 from src.calibration.scene_manager import CalibrationSceneManager
 from src.calibration.camera_streamer import CameraStreamer
-from tools.calibration.scene_hub.hub_state import HubState
-from tools.calibration.scene_hub.hub_renderer import HubRenderer
+from tools.scene_hub.hub_state import HubState
+from tools.scene_hub.hub_renderer import HubRenderer
 
 
 class TestSceneHub(unittest.TestCase):
@@ -103,26 +103,15 @@ class TestSceneHub(unittest.TestCase):
         canvas_dash = renderer.render(state)
         self.assertEqual(canvas_dash.shape, (720, 1280, 3))
 
-    def test_hub_toolbox_menu(self):
-        """测试标定工具箱总菜单开关与浮层渲染"""
+    def test_hub_header_buttons_layout(self):
+        """测试 Header 顶部按钮布局及 Help 弹窗交互响应"""
         state = HubState(self.scene_mgr, force_mock=True)
         renderer = HubRenderer()
-
-        self.assertFalse(state.is_toolbox_open)
-        # 打开工具箱
-        state.toggle_toolbox()
-        self.assertTrue(state.is_toolbox_open)
-
-        # 渲染带有工具箱的画布
-        canvas_with_toolbox = renderer.render(state)
-        self.assertEqual(canvas_with_toolbox.shape, (720, 1280, 3))
-
-        # 关闭工具箱
-        state.toggle_toolbox()
-        self.assertFalse(state.is_toolbox_open)
+        canvas = renderer.render(state)
+        self.assertEqual(canvas.shape, (720, 1280, 3))
 
     def test_hub_help_modal(self):
-        """测试【生效到生产系统】业务说明弹窗开启、互斥与渲染"""
+        """测试【生效到生产系统】业务说明弹窗开启与渲染"""
         state = HubState(self.scene_mgr, force_mock=True)
         renderer = HubRenderer()
 
@@ -130,7 +119,6 @@ class TestSceneHub(unittest.TestCase):
         # 呼出 Help 弹窗
         state.toggle_help_modal()
         self.assertTrue(state.is_help_modal_open)
-        self.assertFalse(state.is_toolbox_open)
 
         # 渲染带有 Help 弹窗的画布
         canvas_help = renderer.render(state)
@@ -189,8 +177,8 @@ class TestSceneHub(unittest.TestCase):
 
     def test_hub_top_exit_button_click(self):
         """测试点击右上角 [X] 退出按钮能够正常结束主循环"""
-        from tools.calibration.tag_scene_hub import TagSceneHubApp
-        app = TagSceneHubApp(force_mock=True)
+        from tools.scene_hub import SceneHubApp
+        app = SceneHubApp(force_mock=True)
         self.assertTrue(app._running)
 
         # 模拟鼠标点击顶部右上角退出按钮 (x=1150, y=20)
@@ -199,8 +187,8 @@ class TestSceneHub(unittest.TestCase):
 
     def test_hub_footer_camera_and_card_active_action(self):
         """测试 Footer 底部 Camera 状态指示以及卡片点击直接设为活动"""
-        from tools.calibration.tag_scene_hub import TagSceneHubApp
-        app = TagSceneHubApp(force_mock=True)
+        from tools.scene_hub import SceneHubApp
+        app = SceneHubApp(force_mock=True)
         renderer = HubRenderer()
         canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
 
@@ -241,8 +229,8 @@ class TestSceneHub(unittest.TestCase):
 
     def test_three_view_modes_tab_clicks(self):
         """测试鼠标点击顶部三段式 Tab 胶囊直接切换模式"""
-        from tools.calibration.tag_scene_hub import TagSceneHubApp
-        app = TagSceneHubApp(force_mock=True)
+        from tools.scene_hub import SceneHubApp
+        app = SceneHubApp(force_mock=True)
 
         # 点击 Tab 3: 纯净看板 (x=480, y=25)
         app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 480, 25, 0, None)
@@ -258,8 +246,8 @@ class TestSceneHub(unittest.TestCase):
 
     def test_context_menu_open_and_actions(self):
         """测试场景卡片鼠标右键弹出菜单、项执行与渲染稳定性"""
-        from tools.calibration.tag_scene_hub import TagSceneHubApp
-        app = TagSceneHubApp(force_mock=True)
+        from tools.scene_hub import SceneHubApp
+        app = SceneHubApp(force_mock=True)
 
         self.assertFalse(app.state.context_menu_open)
 

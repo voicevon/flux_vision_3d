@@ -1,7 +1,7 @@
 # AprilTag 工况与场景管理中枢 (Scene Hub) 技术与操作指南
 
 > **文档版本**: v2.1 (2026-09)  
-> **适用模块**: `tools/calibration/tag_scene_hub.py` & `src/calibration/scene_manager.py`  
+> **适用模块**: `tools/scene_hub.py` (`tools/scene_hub/`) & `src/calibration/scene_manager.py`  
 > **系统环境**: Windows 10/11 x64, Python 3.11+, OpenCV 4.x
 
 ---
