@@ -109,6 +109,10 @@ class HubRenderer:
         # 5. 底部状态与快捷键导航栏 (y: 670~720)
         self._render_footer(canvas, state)
 
+        # 6. 如果打开了标定工具箱总菜单，则渲染置顶半透明浮层
+        if state.is_toolbox_open:
+            self._render_toolbox_modal(canvas, state)
+
         return canvas
 
     def _render_header(self, canvas: np.ndarray, state: HubState):
@@ -121,19 +125,26 @@ class HubRenderer:
         cv2.putText(canvas, "flux_vision_3d", (36, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_CYAN, 2, cv2.LINE_AA)
         draw_text(canvas, "| 标定场景管理与深度平差驾驶舱 (Scene Hub)", (166, 16), font_size=16, color=self.COLOR_WHITE)
 
-        # 全局生产运行场景信息
+        # 全局生产运行场景信息 (向左挪以腾出工具箱按钮空间)
         act_sc = state.scene_mgr.get_active_scene()
         act_name = act_sc.name if act_sc else "未设定"
         act_id = state.active_scene_id or "无"
-        draw_text(canvas, f"生产运行场景: 【{act_name}】({act_id})", (self.canvas_w - 530, 16),
-                  font_size=15, color=(0, 240, 140))
+        draw_text(canvas, f"生产运行场景: 【{act_name}】({act_id})", (self.canvas_w - 680, 16),
+                  font_size=14, color=(0, 240, 140))
+
+        # [M] 标定工具箱总菜单按钮 (x: 1040~1180, y: 8~42)
+        btn_bg = (32, 48, 64) if state.is_toolbox_open else (22, 28, 38)
+        border_col = (0, 240, 220) if state.is_toolbox_open else (0, 180, 200)
+        cv2.rectangle(canvas, (1040, 8), (1180, 42), btn_bg, -1)
+        cv2.rectangle(canvas, (1040, 8), (1180, 42), border_col, 2 if state.is_toolbox_open else 1)
+        draw_text(canvas, "[M] 综合工具箱", (1050, 16), font_size=14, color=(0, 240, 220), bold=True)
 
         # 相机硬件状态指示
         cam_status = "MOCK" if state.camera_streamer.is_mock else "ONLINE"
         cam_col = (0, 180, 255) if state.camera_streamer.is_mock else (0, 240, 100)
-        cv2.circle(canvas, (self.canvas_w - 58, 25), 5, cam_col, -1)
-        cv2.putText(canvas, f"CAM {cam_status}", (self.canvas_w - 46, 29),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, self.COLOR_GRAY, 1, cv2.LINE_AA)
+        cv2.circle(canvas, (self.canvas_w - 65, 25), 5, cam_col, -1)
+        cv2.putText(canvas, f"CAM {cam_status}", (self.canvas_w - 55, 29),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, self.COLOR_GRAY, 1, cv2.LINE_AA)
 
     def _render_left_panel(self, canvas: np.ndarray, state: HubState):
         """渲染左侧综合导航栏 (x: 0~340, y: 50~670)
@@ -419,10 +430,113 @@ class HubRenderer:
         if state.toast_time > now:
             draw_text(canvas, f"[系统反馈] {state.toast_msg}", (20, 684), font_size=16, color=(0, 255, 200), bold=True)
         else:
-            if state.mode == HubState.MODE_CAPTURE:
+            if state.is_toolbox_open:
+                draw_text(canvas, "【工具箱已激活】[S] Studio平差  [A] 在线AR验证  [L] 盲测体检  [D] 漏检切片  [T] 标靶图纸  [W] 白名单  [ESC / M] 关闭",
+                          (20, 686), font_size=14, color=(0, 255, 200), bold=True)
+            elif state.mode == HubState.MODE_CAPTURE:
                 draw_text(canvas, "[Space] 抓拍存入当前场景   |   [ESC / C] 退出采图返回三栏看板   |   [S] 立即平差",
                           (20, 686), font_size=15, color=self.COLOR_WHITE)
             else:
-                draw_text(canvas, "[N] 新建场景  [R] 改名  [K] 克隆  [↑/↓] 选场景  [Enter] 设活动  [C] 连拍  [S] 平差  [P] 生效生产  [F] 放大  [ESC] 退出",
+                draw_text(canvas, "[M] 工具箱菜单  [N] 新建场景  [R] 改名  [K] 克隆  [↑/↓] 选场景  [Enter] 设活动  [C] 连拍  [S] 平差  [P] 生效生产  [F] 放大",
                           (20, 686), font_size=14, color=self.COLOR_WHITE)
+
+    def _render_toolbox_modal(self, canvas: np.ndarray, state: HubState):
+        """渲染中央悬浮置顶的【标定工具箱综合菜单】(880x520)"""
+        # 1. 半透明暗色毛玻璃遮罩压暗底层
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (0, 0), (self.canvas_w, self.canvas_h), (8, 10, 14), -1)
+        cv2.addWeighted(overlay, 0.75, canvas, 0.25, 0, canvas)
+
+        # 2. 弹窗主体视口
+        modal_w, modal_h = 880, 520
+        mx = (self.canvas_w - modal_w) // 2  # 200
+        my = (self.canvas_h - modal_h) // 2  # 100
+
+        # 弹窗底板与多层科技线框
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (20, 24, 32), -1)
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (0, 200, 240), 2)
+        cv2.rectangle(canvas, (mx + 4, my + 4), (mx + modal_w - 4, my + modal_h - 4), (40, 50, 66), 1)
+
+        # 3. 弹窗标题栏 (my ~ my + 54)
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + 54), (16, 20, 28), -1)
+        cv2.line(canvas, (mx, my + 54), (mx + modal_w, my + 54), self.COLOR_BORDER, 1)
+
+        cv2.circle(canvas, (mx + 22, my + 27), 6, (0, 240, 220), -1)
+        draw_text(canvas, "★ AprilTag 视觉标定综合工具箱总菜单 (Toolbox Hub)", (mx + 36, my + 15),
+                  font_size=18, color=self.COLOR_WHITE, bold=True)
+
+        # 右上角 [X] 关闭按钮 (mx + modal_w - 110 ~ mx + modal_w - 20)
+        cv2.rectangle(canvas, (mx + modal_w - 106, my + 13), (mx + modal_w - 18, my + 41), (28, 32, 44), -1)
+        cv2.rectangle(canvas, (mx + modal_w - 106, my + 13), (mx + modal_w - 18, my + 41), (70, 80, 100), 1)
+        draw_text(canvas, "[X] 关闭 (ESC)", (mx + modal_w - 98, my + 18), font_size=12, color=self.COLOR_GRAY)
+
+        # 副标题说明
+        draw_text(canvas, "一站式极速唤起系统内所有独立 OpenCV 交互式图形化诊断、平差、图纸生成与在线验证工具：",
+                  (mx + 28, my + 66), font_size=13, color=(0, 200, 240))
+
+        # 4. 6 大核心工具交互卡片 (2列 x 3行)
+        tools = [
+            ("[S] 离线 Studio 深度平差工作站",
+             "整合多视角样本网格、两阶段 BA 平差求解、智能残差剪枝与全量质检体检报告",
+             (0, 240, 160), "tag_offline_studio.py"),
+
+            ("[A] 在线 AR 精度体检与 3D 虚实融合",
+             "相机实时高帧率取流、3D坐标轴/立体棱柱空间叠加、多帧平滑毫米级位姿锁定",
+             (0, 220, 255), "tag_calibration_verifier.py"),
+
+            ("[L] 离线留一交叉验证盲测工作台",
+             "对当前场景全量执行留一盲测 (LOO)，绘制残差矢量分布并评估相机外参鲁棒性",
+             self.COLOR_GOLD, "tag_offline_verifier.py"),
+
+            ("[D] 单帧漏检病因深度切片与梯度诊断",
+             "CLAHE 双尺度增强、16级网格自适应阈值，深度切片排查候选四边形淘汰病因",
+             (200, 140, 255), "tag_image_diagnostics.py"),
+
+            ("[T] 标靶图纸生成与 1:1 A4 打印排版",
+             "自动生成 0~29 号高精 AprilTag 矢量图纸及工业 1:1 A4 标定板排版 PDF 文件",
+             (120, 240, 100), "generate_tags_and_docs.py"),
+
+            ("[W] 标靶 ID 白名单管理与探索放行",
+             "查看或指定有效标靶 ID 集合，屏蔽车间杂乱反光外点干扰，锚定空间参考系",
+             (80, 160, 255), "whitelist_manager"),
+        ]
+
+        cw, ch = 398, 86
+        col_xs = [mx + 28, mx + 454]
+        row_ys = [my + 96, my + 196, my + 296]
+
+        for idx, (title, desc, col, script) in enumerate(tools):
+            col_i = idx % 2
+            row_i = idx // 2
+            x = col_xs[col_i]
+            y = row_ys[row_i]
+
+            # 绘制工具卡片底板与边框
+            cv2.rectangle(canvas, (x, y), (x + cw, y + ch), (26, 31, 42), -1)
+            cv2.rectangle(canvas, (x, y), (x + cw, y + ch), (44, 52, 70), 1)
+
+            # 左侧高亮色条
+            cv2.rectangle(canvas, (x, y), (x + 4, y + ch), col, -1)
+
+            # 标题 (带快捷键高亮)
+            draw_text(canvas, title, (x + 14, y + 10), font_size=15, color=col, bold=True)
+
+            # 两行功能描述 (自动换行排版)
+            desc_line1 = desc[:28]
+            desc_line2 = desc[28:56]
+            draw_text(canvas, desc_line1, (x + 14, y + 36), font_size=12, color=self.COLOR_WHITE)
+            if desc_line2:
+                draw_text(canvas, desc_line2, (x + 14, y + 56), font_size=12, color=self.COLOR_GRAY)
+
+            # 右下角点击启动徽章
+            cv2.rectangle(canvas, (x + cw - 72, y + ch - 22), (x + cw - 8, y + ch - 6), (16, 22, 30), -1)
+            cv2.putText(canvas, "CLICK", (x + cw - 62, y + ch - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.34, col, 1, cv2.LINE_AA)
+
+        # 5. 弹窗底部操作指引 (y: my + modal_h - 40)
+        footer_y = my + modal_h - 40
+        cv2.line(canvas, (mx + 20, footer_y), (mx + modal_w - 20, footer_y), (36, 44, 58), 1)
+        draw_text(canvas, "★ 操作提示: 鼠标直接点击对应工具卡片，或直接按下键盘快捷键 [S / A / L / D / T / W] 即可秒级拉起！",
+                  (mx + 30, footer_y + 12), font_size=13, color=self.COLOR_GOLD)
+
 

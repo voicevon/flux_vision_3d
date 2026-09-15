@@ -74,7 +74,43 @@ class TagSceneHubApp:
 
             key = raw_key & 0xFF
 
-            # [ESC] 或 [Q] 退出逻辑
+            # =================== 标定工具箱总菜单模式事件 ===================
+            if self.state.is_toolbox_open:
+                # [ESC] 或 [M] 或 [Q]: 关闭工具箱返回主看板
+                if raw_key in (27, ord('q'), ord('Q'), ord('m'), ord('M')):
+                    self.state.is_toolbox_open = False
+                    self.state.set_toast("已关闭标定工具箱。")
+                    continue
+
+                # 工具快捷键直达
+                if key in (ord('s'), ord('S')):
+                    self.state.is_toolbox_open = False
+                    self._launch_offline_studio()
+                    continue
+                elif key in (ord('a'), ord('A')):
+                    self.state.is_toolbox_open = False
+                    self._launch_ar_verifier()
+                    continue
+                elif key in (ord('l'), ord('L')):
+                    self.state.is_toolbox_open = False
+                    self._launch_offline_verifier()
+                    continue
+                elif key in (ord('d'), ord('D')):
+                    self.state.is_toolbox_open = False
+                    self._launch_image_diagnostics()
+                    continue
+                elif key in (ord('t'), ord('T')):
+                    self.state.is_toolbox_open = False
+                    self._launch_tag_generator()
+                    continue
+                elif key in (ord('w'), ord('W')):
+                    self.state.is_toolbox_open = False
+                    self._handle_tag_whitelist()
+                    continue
+
+                continue
+
+            # [ESC] 或 [Q] 退出逻辑 (非工具箱模式)
             if raw_key in (27, ord('q'), ord('Q')):
                 if self.state.mode == HubState.MODE_CAPTURE:
                     # 仅退出采图视口，返回三栏看板
@@ -85,6 +121,11 @@ class TagSceneHubApp:
                 else:
                     # 退出整个 Scene Hub
                     break
+
+            # [M] 切换标定综合工具箱菜单
+            if key in (ord('m'), ord('M')):
+                self.state.toggle_toolbox()
+                continue
 
             # [C] 切换采图模式
             if key in (ord('c'), ord('C')):
@@ -180,8 +221,56 @@ class TagSceneHubApp:
             self.state.set_toast("已返回三栏看板。")
 
     def _on_mouse_event(self, event, x, y, flags, param):
-        """处理鼠标点击交互：卡片点击、按钮点击、相册选图与大图切换"""
+        """处理鼠标点击交互：工具箱菜单、卡片点击、按钮点击、相册选图与大图切换"""
         if event != cv2.EVENT_LBUTTONDOWN:
+            return
+
+        # =================== 1. 工具箱模式下的鼠标点击 ===================
+        if self.state.is_toolbox_open:
+            modal_w, modal_h = 880, 520
+            mx = (1280 - modal_w) // 2  # 200
+            my = (720 - modal_h) // 2   # 100
+
+            # 点击右上角 [X] 关闭按钮
+            if (mx + modal_w - 110) <= x <= (mx + modal_w - 18) and (my + 10) <= y <= (my + 44):
+                self.state.is_toolbox_open = False
+                self.state.set_toast("已关闭标定工具箱。")
+                return
+
+            # 点击 6 个工具卡片
+            cw, ch = 398, 86
+            col_xs = [mx + 28, mx + 454]
+            row_ys = [my + 96, my + 196, my + 296]
+
+            tool_actions = [
+                self._launch_offline_studio,
+                self._launch_ar_verifier,
+                self._launch_offline_verifier,
+                self._launch_image_diagnostics,
+                self._launch_tag_generator,
+                self._handle_tag_whitelist,
+            ]
+
+            for idx, action in enumerate(tool_actions):
+                col_i = idx % 2
+                row_i = idx // 2
+                bx = col_xs[col_i]
+                by = row_ys[row_i]
+                if bx <= x <= bx + cw and by <= y <= by + ch:
+                    self.state.is_toolbox_open = False
+                    action()
+                    return
+
+            # 点击弹窗外部阴影区域：关闭工具箱
+            if x < mx or x > mx + modal_w or y < my or y > my + modal_h:
+                self.state.is_toolbox_open = False
+                self.state.set_toast("已关闭标定工具箱。")
+            return
+
+        # =================== 2. 正常看板与采图模式下的鼠标点击 ===================
+        # 点击顶部标题栏 [M] 工具箱菜单按钮 (x: 1040~1180, y: 8~42)
+        if 1040 <= x <= 1180 and 8 <= y <= 42:
+            self.state.toggle_toolbox()
             return
 
         # 如果在相机采图全屏模式，点击画面抓拍
@@ -295,27 +384,75 @@ class TagSceneHubApp:
         self.state.refresh_scenes()
         self.state.set_toast(msg)
 
+    def _run_subtool(self, cmd: list, desc: str):
+        """统一子工具拉起执行器：停止当前相机流、销毁主窗、运行子工具、恢复环境与刷新状态"""
+        self.state.set_toast(f"正在唤起 {desc}...")
+        self.state.camera_streamer.stop()
+        cv2.destroyAllWindows()
+
+        try:
+            subprocess.run(cmd)
+        except Exception as e:
+            print(f"[ERROR] 执行工具异常: {e}")
+
+        # 重新创建主窗体并重新绑定鼠标事件
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(self.window_name, 1280, 720)
+        cv2.setMouseCallback(self.window_name, self._on_mouse_event)
+
+        sc = self.state.get_selected_scene()
+        if sc:
+            sc.refresh_stats()
+            sc.save_meta()
+        self.state.refresh_scenes()
+        self.state.load_current_scene_images()
+        self.state.set_toast(f"已完成 {desc} 并返回 Scene Hub，数据已同步！")
+
     def _launch_offline_studio(self):
-        """直通离线 Studio 深度平差并在退出后刷新状态"""
+        """启动 AprilTag 离线 Studio 深度平差"""
         sc = self.state.get_selected_scene()
         if not sc:
             return
-
-        self.state.set_toast(f"正在唤起 Offline Studio 深度平差工作站...")
-        cv2.destroyAllWindows()
-
         cmd = [sys.executable, "tools/calibration/tag_offline_studio.py",
                "--images", sc.raw_images_dir,
                "--map", sc.map_path]
-        subprocess.run(cmd)
+        self._run_subtool(cmd, "Offline Studio 深度平差工作站")
 
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, 1280, 720)
-        sc.refresh_stats()
-        sc.save_meta()
-        self.state.refresh_scenes()
-        self.state.load_current_scene_images()
-        self.state.set_toast(f"已完成 Studio 平差并返回 Scene Hub，数据已最新！")
+    def _launch_ar_verifier(self):
+        """启动在线 AR 精度体验与 3D 虚实融合系统"""
+        sc = self.state.get_selected_scene()
+        map_p = sc.map_path if sc and os.path.exists(sc.map_path) else "config/tags_map.yaml"
+        cmd = [sys.executable, "tools/calibration/tag_calibration_verifier.py",
+               "--map", map_p]
+        if self.state.camera_streamer.is_mock:
+            cmd.append("--mock")
+        self._run_subtool(cmd, "在线 AR 综合验证系统")
+
+    def _launch_offline_verifier(self):
+        """启动离线留一交叉验证 (LOO) 盲测工作台"""
+        sc = self.state.get_selected_scene()
+        if not sc:
+            return
+        cmd = [sys.executable, "tools/calibration/tag_offline_verifier.py",
+               "--map", sc.map_path,
+               "--image_dir", sc.raw_images_dir]
+        self._run_subtool(cmd, "离线精度体检与留一盲测工作台")
+
+    def _launch_image_diagnostics(self):
+        """启动标靶单帧漏检病因深度切片与梯度诊断"""
+        cmd = [sys.executable, "tools/calibration/diagnose_tag_frame.py"]
+        self._run_subtool(cmd, "图像深度病因诊断切片系统")
+
+    def _launch_tag_generator(self):
+        """启动 AprilTag 标靶图纸生成与 1:1 A4 排版"""
+        cmd = [sys.executable, "tools/calibration/generate_apriltags.py"]
+        self._run_subtool(cmd, "标靶高清生成与排版工具")
+
+    def _handle_tag_whitelist(self):
+        """管理当前场景标靶 ID 白名单"""
+        sc = self.state.get_selected_scene()
+        sname = sc.name if sc else "默认场景"
+        self.state.set_toast(f"标靶白名单: 当前场景【{sname}】默认放行所有有效 16h5 标靶")
 
     def _handle_rename_scene(self):
         """修改场景显示名称 (支持中文)"""

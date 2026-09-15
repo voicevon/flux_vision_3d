@@ -97,6 +97,25 @@ class TestSceneHub(unittest.TestCase):
         self.assertEqual(canvas_capture.shape, (720, 1280, 3))
         state.camera_streamer.stop()
 
+    def test_hub_toolbox_menu(self):
+        """测试标定工具箱总菜单开关与浮层渲染"""
+        state = HubState(self.scene_mgr, force_mock=True)
+        renderer = HubRenderer()
+
+        self.assertFalse(state.is_toolbox_open)
+        # 打开工具箱
+        state.toggle_toolbox()
+        self.assertTrue(state.is_toolbox_open)
+
+        # 渲染带有工具箱的画布
+        canvas_with_toolbox = renderer.render(state)
+        self.assertEqual(canvas_with_toolbox.shape, (720, 1280, 3))
+
+        # 关闭工具箱
+        state.toggle_toolbox()
+        self.assertFalse(state.is_toolbox_open)
+
 
 if __name__ == "__main__":
     unittest.main()
+

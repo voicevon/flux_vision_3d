@@ -46,6 +46,9 @@ class HubState:
         # 全宽大图预览模式 (按 F 键切换：全宽占满 vs 并排体检看板)
         self.expanded_preview_mode = False
 
+        # 标定工具箱总菜单弹层是否打开 (按 M 键或点击呼出)
+        self.is_toolbox_open = False
+
         # 空格抓拍白闪动效倒计时
         self.flash_timer = 0.0
 
@@ -205,6 +208,14 @@ class HubState:
         self.expanded_preview_mode = not self.expanded_preview_mode
         mode_desc = "全宽自适应沉浸模式" if self.expanded_preview_mode else "并排体检看板模式"
         self.set_toast(f"已切换预览视图: 【{mode_desc}】 (按 F 键再次切换)")
+
+    def toggle_toolbox(self):
+        """打开或关闭标定工具箱综合菜单 (按 M 键切换)"""
+        self.is_toolbox_open = not self.is_toolbox_open
+        if self.is_toolbox_open:
+            self.set_toast("已打开标定工具箱总菜单 (按对应字母启动工具，按 ESC/M 关闭)")
+        else:
+            self.set_toast("已关闭工具箱总菜单，返回场景驾驶舱。")
 
     def rename_current_scene(self, new_name: str) -> bool:
         """重命名当前选中的场景显示名称 (支持中文)"""
