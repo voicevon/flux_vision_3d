@@ -12,6 +12,7 @@
 
 import os
 import sys
+import json
 import time
 import argparse
 import subprocess
@@ -26,6 +27,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
+
 from src.calibration.scene_manager import CalibrationSceneManager
 from tools.env_utils import check_env_status
 
@@ -33,15 +36,8 @@ from tools.env_utils import check_env_status
 _FONT_CACHE: Dict[Tuple[int, bool], ImageFont.FreeTypeFont] = {}
 
 
-def draw_text(img: np.ndarray, text: str, pos: Tuple[int, int], font_size: int = 16,
-              color: Tuple[int, int, int] = (240, 240, 240), bold: bool = False):
-    """在 OpenCV BGR 图像上绘制高质量抗锯齿矢量文本 (支持中文)"""
-    if not text:
-        return
-    x, y = pos
-    if x >= img.shape[1] or y >= img.shape[0]:
-        return
-
+def get_cached_font(font_size: int = 16, bold: bool = False) -> ImageFont.FreeTypeFont:
+    """获取缓存的 TrueType 中文字体"""
     key = (font_size, bold)
     if key not in _FONT_CACHE:
         font_paths = [
@@ -60,8 +56,19 @@ def draw_text(img: np.ndarray, text: str, pos: Tuple[int, int], font_size: int =
         if font is None:
             font = ImageFont.load_default()
         _FONT_CACHE[key] = font
+    return _FONT_CACHE[key]
 
-    font = _FONT_CACHE[key]
+
+def draw_text(img: np.ndarray, text: str, pos: Tuple[int, int], font_size: int = 16,
+              color: Tuple[int, int, int] = (240, 240, 240), bold: bool = False):
+    """在 OpenCV BGR 图像上绘制高质量抗锯齿矢量文本 (支持中文)"""
+    if not text:
+        return
+    x, y = pos
+    if x >= img.shape[1] or y >= img.shape[0]:
+        return
+
+    font = get_cached_font(font_size, bold)
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     patch_w = tw + 20
@@ -83,6 +90,47 @@ def draw_text(img: np.ndarray, text: str, pos: Tuple[int, int], font_size: int =
     draw.text((0, 0), text, font=font, fill=(color[2], color[1], color[0]))
     res_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     img[y:ry2, x:rx2] = res_bgr
+
+
+def wrap_text_by_width(text: str, font_size: int, max_width: int, bold: bool = False) -> List[str]:
+    """根据像素最大可用宽度对文本进行精确折行（支持中英混合与标点符号）"""
+    if not text or max_width <= 30:
+        return [text] if text else []
+
+    font = get_cached_font(font_size, bold)
+    lines: List[str] = []
+    curr_line = ""
+
+    for char in text:
+        test_line = curr_line + char
+        bbox = font.getbbox(test_line)
+        tw = bbox[2] - bbox[0]
+        if tw > max_width and curr_line:
+            lines.append(curr_line)
+            curr_line = char
+        else:
+            curr_line = test_line
+
+    if curr_line:
+        lines.append(curr_line)
+
+    return lines
+
+
+def draw_multiline_text(img: np.ndarray, text: str, pos: Tuple[int, int], max_width: int,
+                        font_size: int = 16, color: Tuple[int, int, int] = (240, 240, 240),
+                        line_spacing: int = 4, bold: bool = False, max_lines: int = 99) -> int:
+    """按最大像素宽度折行绘制多行文本，返回下一段可用的起始 y 坐标"""
+    lines = wrap_text_by_width(text, font_size, max_width, bold=bold)
+    if not lines:
+        return pos[1]
+
+    x, y = pos
+    line_h = font_size + line_spacing
+    for idx, line in enumerate(lines[:max_lines]):
+        draw_text(img, line, (x, y + idx * line_h), font_size=font_size, color=color, bold=bold)
+
+    return y + min(len(lines), max_lines) * line_h
 
 
 class ToolCardMeta:
@@ -534,7 +582,9 @@ class GuiLauncherApp:
     COLOR_ACCENT = (0, 210, 180)        # 科技主强调色 (冰魄冷青)
     COLOR_GOLD = (210, 175, 60)         # 关键生产资产点缀金
 
-    def __init__(self):
+    def __init__(self, settings_file: Optional[str] = None):
+        self._settings_file = settings_file or GUI_SETTINGS_FILE
+        self._is_active = True
         self.canvas_w = 1280
         self.canvas_h = 720
         # 窗口内部 key 标识使用纯英文，通过 Windows API 设定中文标题杜绝乱码
@@ -543,25 +593,76 @@ class GuiLauncherApp:
         self._hwnd = None
         self._last_zoom_action = 0.0
         self._force_ctrl_pressed = False
+        self._need_save = False
+        self._last_resize_time = 0.0
 
         self.scene_mgr = CalibrationSceneManager()
         self.tools = build_tools_catalog()
         self.selected_tool_idx = -1    # 初始无选中，键盘/点击才激活焦点
         self.hover_tool_idx = -1
 
+        # 子工具前台运行与暗化挂起态
+        self.is_subtool_running: bool = False
+        self.running_tool_meta: Optional[ToolCardMeta] = None
+
         # 视口与真矢量放大镜缩放控制 (基准 1280x720)
         self._base_w   = 1280
         self._base_h   = 720
         self.scale_pct = 100   # 缩放百分比 (50% ~ 200%)
 
+        # 加载上次记忆的用户偏好设置 (自动恢复缩放与窗口尺寸)
+        self._load_settings()
+
         self.mouse_x = -1
         self.mouse_y = -1
-        self.toast_msg = "欢迎使用 flux_vision_3d 工业视觉控制中心！按 [1~9] 或点击卡片进入工况中枢。"
-        self.toast_time = time.time() + 4.0
+        if self.scale_pct != 100 or self.canvas_w != self._base_w or self.canvas_h != self._base_h:
+            self.toast_msg = f"已自动恢复偏好设置：放大镜 {self.scale_pct}%，视窗 {self.canvas_w}×{self.canvas_h} (按 Ctrl+0 可随时复位)"
+        else:
+            self.toast_msg = "欢迎使用 flux_vision_3d 工业视觉控制中心！按 [1~9] 或点击卡片进入工况中枢。"
+        self.toast_time = time.time() + 4.5
 
         # 系统状态缓存
         self.system_status = {}
         self.refresh_system_status()
+
+    def _load_settings(self):
+        """从配置文件读取上次记忆的缩放比例与窗口尺寸"""
+        target_file = getattr(self, "_settings_file", GUI_SETTINGS_FILE)
+        if os.path.exists(target_file):
+            try:
+                with open(target_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if "scale_pct" in data:
+                    self.scale_pct = max(50, min(200, int(data["scale_pct"])))
+                s = self.scale_pct / 100.0
+                saved_w = data.get("canvas_w")
+                saved_h = data.get("canvas_h")
+                if saved_w and saved_h and int(saved_w) >= 480 and int(saved_h) >= 270:
+                    self.canvas_w = int(saved_w)
+                    self.canvas_h = int(saved_h)
+                else:
+                    self.canvas_w = max(640, int(self._base_w * s))
+                    self.canvas_h = max(360, int(self._base_h * s))
+            except Exception:
+                pass
+
+    def _save_settings(self):
+        """持久化保存当前缩放比例与窗口尺寸到目标配置文件"""
+        if not getattr(self, "_is_active", False):
+            return
+        try:
+            target_file = getattr(self, "_settings_file", GUI_SETTINGS_FILE)
+            os.makedirs(os.path.dirname(target_file), exist_ok=True)
+            payload = {
+                "scale_pct": self.scale_pct,
+                "canvas_w": self.canvas_w,
+                "canvas_h": self.canvas_h,
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            with open(target_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
 
     def set_toast(self, msg: str, duration: float = 3.5):
         """设置底部提示消息"""
@@ -577,7 +678,7 @@ class GuiLauncherApp:
             self.system_status = {}
 
     def _apply_zoom(self, delta_pct: int, reset: bool = False):
-        """执行全局真矢量放大镜缩放：卡片尺寸、字号、间距等比矢量缩放，无位图拉伸锯齿"""
+        """执行全局真矢量放大镜缩放：卡片尺寸、字号、间距等比矢量缩放，并自动持久化记忆"""
         if reset:
             self.scale_pct = 100
         else:
@@ -592,7 +693,8 @@ class GuiLauncherApp:
             cv2.resizeWindow(self.window_name, rec_w, rec_h)
         except Exception:
             pass
-        self.set_toast(f"矢量放大镜: {self.scale_pct}%  (Ctrl +/- 或 滚轮缩放, Ctrl+0 复位)", duration=2.2)
+        self._save_settings()
+        self.set_toast(f"矢量放大镜: {self.scale_pct}%  (已自动记忆大小，Ctrl+0 复位)", duration=2.2)
 
     def _poll_hardware_zoom(self):
         """利用 Win32 原生 GetAsyncKeyState 硬件物理按键探测，彻底绕过中文输入法拦截"""
@@ -641,6 +743,9 @@ class GuiLauncherApp:
 
     def run(self):
         """主事件循环 (带 Windows 原生标题 Unicode 注入与全屏真矢量动态排版重绘)"""
+        import atexit
+        atexit.register(self._save_settings)
+
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.window_name, self.canvas_w, self.canvas_h)
         cv2.setMouseCallback(self.window_name, self._on_mouse)
@@ -655,7 +760,21 @@ class GuiLauncherApp:
             except Exception:
                 self._hwnd = None
 
+        # 首次呈现并确保窗口尺寸精准生效
+        self._present_canvas()
+        try:
+            cv2.resizeWindow(self.window_name, self.canvas_w, self.canvas_h)
+        except Exception:
+            pass
+
         while self._running:
+            # 0. 窗口关闭检测：若用户直接点击右上角红叉 [X]，安全退出并保存偏好
+            try:
+                if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    break
+            except Exception:
+                break
+
             # 1. 硬件级按键轮询 (绕过中文输入法对加减号的拦截)
             self._poll_hardware_zoom()
 
@@ -667,6 +786,13 @@ class GuiLauncherApp:
                     if cur_w != self.canvas_w or cur_h != self.canvas_h:
                         self.canvas_w = cur_w
                         self.canvas_h = cur_h
+                        self._need_save = True
+                        self._last_resize_time = time.time()
+
+            # 拖拽边框防抖保存：尺寸静止 0.35s 后自动落盘持久化
+            if self._need_save and (time.time() - self._last_resize_time > 0.35):
+                self._save_settings()
+                self._need_save = False
 
             # 3. 呈现真矢量画布 (无任何 cv2.resize 插值，字形完美)
             self._present_canvas()
@@ -683,10 +809,15 @@ class GuiLauncherApp:
             # 键盘选择与启动分发
             self._handle_keyboard(raw_key)
 
+        # 退出前持久化保存最终视口偏好
+        self._save_settings()
         cv2.destroyAllWindows()
 
     def _on_mouse(self, event, x, y, flags, param):
         """鼠标移动、点击与滚轮缩放事件 (与物理坐标 1:1 原生对齐)"""
+        if self.is_subtool_running:
+            return  # 子应用运行期间，主视窗处于安全挂起待命态，屏蔽一切鼠标操作
+
         self.mouse_x = x
         self.mouse_y = y
 
@@ -744,6 +875,9 @@ class GuiLauncherApp:
                 self.selected_tool_idx = card_idx
                 self._launch_tool(self.tools[card_idx])
                 return
+            else:
+                # 点击非卡片区域复位选中状态，返回系统大屏总览
+                self.selected_tool_idx = -1
 
         # 鼠标双击直接启动
         elif event == cv2.EVENT_LBUTTONDBLCLK:
@@ -753,6 +887,14 @@ class GuiLauncherApp:
 
     def _handle_keyboard(self, raw_key: int):
         """键盘快捷键响应 (五分组布局: row0全宽A, row1-2为B4张2×2, row3为C2张, row4为D+E各1张)"""
+        if self.is_subtool_running:
+            return  # 子应用运行期间，主视窗处于安全挂起待命态，屏蔽一切按键操作
+
+        if raw_key == 8:  # Backspace 键复位选中状态
+            self.selected_tool_idx = -1
+            self.hover_tool_idx = -1
+            return
+
         if raw_key in (13, 10):  # 回车
             if 0 <= self.selected_tool_idx < len(self.tools):
                 self._launch_tool(self.tools[self.selected_tool_idx])
@@ -947,30 +1089,37 @@ class GuiLauncherApp:
         return -1
 
     def _launch_tool(self, tool: ToolCardMeta):
-        """执行启动子工具或测试"""
-        self.set_toast(f"正在拉起: 【{tool.title}】...")
+        """执行启动子工具或测试 (支持全屏暗化蒙版与控制权移交挂起浮岛)"""
+        self._save_settings()  # 立即落盘记忆当前大小与比例
+        self.is_subtool_running = True
+        self.running_tool_meta = tool
+        self.set_toast(f"已移交控制权，正在拉起: 【{tool.title}】...")
 
+        # 立即在主窗口渲染暗化挂起画布并强制上屏
         self._present_canvas()
-        cv2.waitKey(20)
+        cv2.waitKey(40)
 
         cmd = tool.command
         try:
             if tool.is_gui:
                 res = subprocess.run(cmd)
-                self.set_toast(f"【{tool.title}】已退出，系统状态已刷新。")
+                self.set_toast(f"【{tool.title}】已安全返回，控制中心已重新就绪。")
             else:
                 if sys.platform == "win32":
                     full_cmd_str = " ".join([f'"{c}"' if " " in c else c for c in cmd])
                     wrapper_cmd = f'cmd.exe /c "{full_cmd_str} & echo. & echo [完成] 请按任意键返回控制中心... & pause > nul"'
                     res = subprocess.run(wrapper_cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
-                    self.set_toast(f"【{tool.title}】执行完毕，控制台已返回。")
+                    self.set_toast(f"【{tool.title}】执行完毕，控制中心已重新就绪。")
                 else:
                     res = subprocess.run(cmd)
-                    self.set_toast(f"【{tool.title}】执行完毕。")
+                    self.set_toast(f"【{tool.title}】执行完毕，控制中心已重新就绪。")
         except Exception as e:
             self.set_toast(f"启动失败: {e}", duration=5.0)
-
-        self.refresh_system_status()
+        finally:
+            self.is_subtool_running = False
+            self.running_tool_meta = None
+            self.refresh_system_status()
+            self._present_canvas()
 
     # ========================== 核心渲染逻辑 ==========================
 
@@ -996,18 +1145,24 @@ class GuiLauncherApp:
         # 3. 左侧工具网格区
         self._render_tools_grid(canvas)
 
-        # 4. 右侧实时说明大屏 (仅在有卡片高亮/选中时渲染)
+        # 4. 右侧实时说明大屏 (有卡片高亮/选中时渲染 Inspector，否则渲染默认环境与硬件总览大屏)
         cur_idx = self.hover_tool_idx if self.hover_tool_idx != -1 else self.selected_tool_idx
         if 0 <= cur_idx < len(self.tools):
             self._render_inspector_panel(canvas, self.tools[cur_idx], split_x)
+        else:
+            self._render_default_overview_panel(canvas, split_x)
 
         # 5. 底部状态与快捷键指引栏
         self._render_footer(canvas)
 
+        # 6. 子工具运行挂起态：整体深度暗化并叠加控制权移交模态浮岛
+        if self.is_subtool_running and self.running_tool_meta:
+            self._render_suspended_modal(canvas, self.running_tool_meta)
+
         return canvas
 
     def _render_top_bar(self, canvas: np.ndarray):
-        """渲染顶部硬件与系统状态常驻监控栏 (真矢量自适应排布)"""
+        """渲染顶部全局标题与当前生产工况胶囊 (真矢量自适应排布，去除底层环境芯片)"""
         s = self.scale_pct / 100.0
         top_h = max(36, int(54 * s))
         cv2.rectangle(canvas, (0, 0), (self.canvas_w, top_h), (17, 20, 26), -1)
@@ -1022,66 +1177,36 @@ class GuiLauncherApp:
         draw_text(canvas, "工业视觉综合控制中心", (max(20, int(40 * s)), max(18, int(28 * s))),
                   font_size=max(9, int(12 * s)), color=(150, 170, 185))
 
-        # 状态探针芯片组 (自适应排布)
-        st = self.system_status
-        py_ver = sys.version.split()[0]
-        cv_ver = st.get("cv_version", cv2.__version__)
-        rs_ok = st.get("has_realsense", False)
-        rs_str = "D435就绪" if rs_ok else "D435未就绪"
-        rs_color = (0, 210, 160) if rs_ok else (130, 140, 150)
-
-        chip_x = max(130, int(230 * s))
-        chip_w = max(260, int(460 * s))
-        chip_y1, chip_y2 = max(6, int(12 * s)), max(24, int(42 * s))
-        cv2.rectangle(canvas, (chip_x, chip_y1), (chip_x + chip_w, chip_y2), (22, 27, 36), -1)
-        cv2.rectangle(canvas, (chip_x, chip_y1), (chip_x + chip_w, chip_y2), (36, 46, 60), 1)
-
-        chip_font = max(9, int(12 * s))
-        cv2.circle(canvas, (chip_x + max(6, int(14 * s)), top_h // 2), max(2, int(4 * s)), (0, 210, 160), -1)
-        draw_text(canvas, f"Py {py_ver}", (chip_x + max(12, int(24 * s)), max(8, int(18 * s))),
-                  font_size=chip_font, color=(190, 205, 220))
-
-        sep1 = chip_x + int(chip_w * 0.22)
-        cv2.line(canvas, (sep1, max(8, int(16 * s))), (sep1, max(20, int(38 * s))), (40, 50, 65), 1)
-        draw_text(canvas, f"CV {cv_ver}", (sep1 + max(6, int(10 * s)), max(8, int(18 * s))),
-                  font_size=chip_font, color=(190, 205, 220))
-
-        sep2 = chip_x + int(chip_w * 0.48)
-        cv2.line(canvas, (sep2, max(8, int(16 * s))), (sep2, max(20, int(38 * s))), (40, 50, 65), 1)
-        cv2.circle(canvas, (sep2 + max(6, int(12 * s)), top_h // 2), max(2, int(4 * s)), rs_color, -1)
-        draw_text(canvas, rs_str, (sep2 + max(12, int(22 * s)), max(8, int(18 * s))),
-                  font_size=chip_font, color=rs_color)
-
-        sep3 = chip_x + int(chip_w * 0.74)
-        cv2.line(canvas, (sep3, max(8, int(16 * s))), (sep3, max(20, int(38 * s))), (40, 50, 65), 1)
-        snaps_c = st.get("snapshot_count", 0)
-        draw_text(canvas, f"快照:{snaps_c}", (sep3 + max(6, int(10 * s)), max(8, int(18 * s))),
-                  font_size=chip_font, color=(190, 205, 220))
-
-        # 当前活动场景胶囊
+        # 当前活动生产场景胶囊 (紧随标题之后，居中/醒目呈现)
         act_sc = self.scene_mgr.get_active_scene()
-        capsule_x = chip_x + chip_w + max(8, int(15 * s))
-        capsule_w = max(int(160 * s), min(int(360 * s), self.canvas_w - capsule_x - int(150 * s)))
-
-        if capsule_x + capsule_w < self.canvas_w - int(140 * s):
-            if act_sc:
-                status_tag = "★生产" if act_sc.is_published else ("已平差" if act_sc.ba_solved else "沙盒")
-                tag_col = self.COLOR_GOLD if act_sc.is_published else ((0, 210, 160) if act_sc.ba_solved else (135, 165, 195))
-                cv2.rectangle(canvas, (capsule_x, max(6, int(10 * s))), (capsule_x + capsule_w, max(24, int(44 * s))), (22, 28, 38), -1)
-                cv2.rectangle(canvas, (capsule_x, max(6, int(10 * s))), (capsule_x + capsule_w, max(24, int(44 * s))), (45, 60, 78), 1)
-                draw_text(canvas, f"【{act_sc.name}】({status_tag})", (capsule_x + max(6, int(10 * s)), max(8, int(17 * s))),
-                          font_size=max(10, int(13 * s)), color=tag_col, bold=True)
-            else:
-                cv2.rectangle(canvas, (capsule_x, max(6, int(10 * s))), (capsule_x + capsule_w, max(24, int(44 * s))), (22, 25, 32), -1)
-                cv2.rectangle(canvas, (capsule_x, max(6, int(10 * s))), (capsule_x + capsule_w, max(24, int(44 * s))), (40, 48, 60), 1)
-                draw_text(canvas, "未选定场景", (capsule_x + max(6, int(10 * s)), max(8, int(17 * s))),
-                          font_size=max(10, int(13 * s)), color=(140, 150, 160))
-
-        # 右上角 [X] 退出按钮 (自适应靠右)
+        capsule_x = max(200, int(330 * s))
         bw = max(80, int(125 * s))
         bh = max(24, int(34 * s))
         bx = self.canvas_w - bw - max(8, int(15 * s))
         by = max(6, int(10 * s))
+
+        capsule_w = max(int(180 * s), min(int(460 * s), bx - capsule_x - max(12, int(20 * s))))
+        if capsule_w > max(120, int(160 * s)):
+            cap_y1, cap_y2 = max(6, int(10 * s)), max(26, int(44 * s))
+            if act_sc:
+                status_tag = "★ 生产环境" if act_sc.is_published else ("已平差" if act_sc.ba_solved else "沙盒草稿")
+                tag_col = self.COLOR_GOLD if act_sc.is_published else ((0, 210, 160) if act_sc.ba_solved else (135, 165, 195))
+                bg_col = (26, 28, 38) if act_sc.is_published else (20, 26, 34)
+                border_col = (85, 70, 30) if act_sc.is_published else (45, 60, 78)
+                cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), bg_col, -1)
+                cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), border_col, 1)
+                cv2.circle(canvas, (capsule_x + max(8, int(14 * s)), (cap_y1 + cap_y2) // 2), max(2, int(4 * s)), tag_col, -1)
+                sc_title = f"当前工况: 【{act_sc.name}】 ({status_tag})"
+                draw_text(canvas, sc_title, (capsule_x + max(14, int(24 * s)), max(8, int(17 * s))),
+                          font_size=max(10, int(13 * s)), color=tag_col, bold=True)
+            else:
+                cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), (20, 24, 30), -1)
+                cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), (38, 46, 56), 1)
+                cv2.circle(canvas, (capsule_x + max(8, int(14 * s)), (cap_y1 + cap_y2) // 2), max(2, int(4 * s)), (120, 130, 140), -1)
+                draw_text(canvas, "当前工况: 【未选定场景】 (请进入场景总控选择)", (capsule_x + max(14, int(24 * s)), max(8, int(17 * s))),
+                          font_size=max(10, int(13 * s)), color=(140, 150, 160))
+
+        # 右上角 [X] 退出按钮 (自适应靠右)
         is_hover_exit = (bx <= self.mouse_x <= bx + bw and by <= self.mouse_y <= by + bh)
         exit_bg = (48, 22, 24) if is_hover_exit else (32, 20, 22)
         exit_border = (210, 60, 60) if is_hover_exit else (95, 36, 40)
@@ -1091,7 +1216,7 @@ class GuiLauncherApp:
                   font_size=max(10, int(13 * s)), color=(220, 170, 170), bold=True)
 
     def _render_tools_grid(self, canvas: np.ndarray):
-        """渲染左侧工具卡片网格 (真矢量自适应缩放)"""
+        """渲染左侧工具卡片网格 (真矢量自适应缩放，无杂乱左侧竖线)"""
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
         CW = max(200, int(370 * s))
@@ -1129,9 +1254,6 @@ class GuiLauncherApp:
             cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), card_bg, -1)
             cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), card_border, border_th)
 
-            # 左侧分组色条
-            cv2.rectangle(canvas, (cx, cy), (cx + max(2, int(4 * s)), cy + ch), tool.tag_color, -1)
-
             # 快捷键徽章
             badge_w = max(18, int(28 * s))
             badge_h = max(14, int(20 * s))
@@ -1159,7 +1281,7 @@ class GuiLauncherApp:
                         cv2.FONT_HERSHEY_SIMPLEX, max(0.24, 0.32 * s), mode_color, 1, cv2.LINE_AA)
 
     def _render_inspector_panel(self, canvas: np.ndarray, tool: ToolCardMeta, split_x: int):
-        """渲染右侧动态即时说明大屏 (自适应全宽与全高，1:1 矢量清晰无模糊)"""
+        """渲染右侧动态即时说明大屏 (自适应全宽与全高，1:1 矢量清晰无模糊，全文本自适应折行)"""
         s = self.scale_pct / 100.0
         px = split_x + max(8, int(15 * s))
         py = max(40, int(66 * s))
@@ -1190,64 +1312,246 @@ class GuiLauncherApp:
         draw_text(canvas, f"类别: {tool.category}   |   模式: {mode_str}",
                   (px + max(36, int(62 * s)), py + max(24, int(40 * s))), font_size=max(9, int(12 * s)), color=self.COLOR_TEXT_SUB)
 
-        # 核心概述 (Summary)
-        curr_y = py + max(48, int(78 * s))
-        draw_text(canvas, "【功能定位与现场痛点】", (px + max(8, int(16 * s)), curr_y),
-                  font_size=max(10, int(13 * s)), color=self.COLOR_ACCENT, bold=True)
-        curr_y += max(16, int(24 * s))
-        draw_text(canvas, tool.summary, (px + max(10, int(20 * s)), curr_y),
-                  font_size=max(10, int(13 * s)), color=(215, 225, 235))
-        curr_y += max(22, int(36 * s))
-
-        # 详细特性清单 (Details)
-        draw_text(canvas, "【工程要点与执行逻辑】", (px + max(8, int(16 * s)), curr_y),
-                  font_size=max(10, int(13 * s)), color=self.COLOR_ACCENT, bold=True)
-        curr_y += max(16, int(24 * s))
-        for d in tool.details:
-            cv2.circle(canvas, (px + max(12, int(24 * s)), curr_y + max(4, int(8 * s))), max(2, int(3 * s)), (0, 190, 160), -1)
-            draw_text(canvas, d, (px + max(18, int(34 * s)), curr_y),
-                      font_size=max(9, int(12 * s)), color=(195, 208, 220))
-            curr_y += max(14, int(22 * s))
-        curr_y += max(6, int(10 * s))
-
-        # 前置依赖与输入 (Inputs)
-        draw_text(canvas, "【前置条件与输入依赖】", (px + max(8, int(16 * s)), curr_y),
-                  font_size=max(10, int(13 * s)), color=(140, 180, 220), bold=True)
-        curr_y += max(14, int(22 * s))
-        for inp in tool.inputs:
-            cv2.circle(canvas, (px + max(12, int(24 * s)), curr_y + max(4, int(8 * s))), max(2, int(3 * s)), (120, 160, 200), -1)
-            draw_text(canvas, inp, (px + max(18, int(34 * s)), curr_y),
-                      font_size=max(9, int(12 * s)), color=(185, 200, 215))
-            curr_y += max(13, int(20 * s))
-        curr_y += max(6, int(10 * s))
-
-        # 输出产物 (Outputs)
-        draw_text(canvas, "【输出产物与持久化路径】", (px + max(8, int(16 * s)), curr_y),
-                  font_size=max(10, int(13 * s)), color=(120, 200, 180), bold=True)
-        curr_y += max(14, int(22 * s))
-        for out in tool.outputs:
-            cv2.circle(canvas, (px + max(12, int(24 * s)), curr_y + max(4, int(8 * s))), max(2, int(3 * s)), (100, 180, 160), -1)
-            draw_text(canvas, out, (px + max(18, int(34 * s)), curr_y),
-                      font_size=max(9, int(12 * s)), color=(180, 215, 205))
-            curr_y += max(13, int(20 * s))
-        curr_y += max(8, int(12 * s))
-
-        # 操作提示 (Quick Tips)
-        tip_h = max(24, int(36 * s))
-        cv2.rectangle(canvas, (px + max(8, int(16 * s)), curr_y), (px + pw - max(8, int(16 * s)), curr_y + tip_h), (22, 28, 36), -1)
-        cv2.rectangle(canvas, (px + max(8, int(16 * s)), curr_y), (px + pw - max(8, int(16 * s)), curr_y + tip_h), (36, 48, 62), 1)
-        draw_text(canvas, tool.quick_tips, (px + max(12, int(24 * s)), curr_y + max(4, int(9 * s))),
-                  font_size=max(9, int(12 * s)), color=self.COLOR_TEXT_SUB)
-
-        # 底部醒目启动卡片按钮
+        # 底部醒目启动卡片按钮预留空间
         btn_h = max(26, int(38 * s))
         btn_y = py + ph - btn_h - max(8, int(12 * s))
+        avail_bottom_y = btn_y - max(6, int(10 * s))
+
+        # 正文内容排版参数
+        avail_w = pw - max(24, int(42 * s))
+        text_x = px + max(10, int(20 * s))
+        curr_y = py + max(48, int(76 * s))
+
+        # 1. 核心概述 (Summary) - 支持自适应折行
+        draw_text(canvas, "【功能定位与现场痛点】", (px + max(8, int(16 * s)), curr_y),
+                  font_size=max(10, int(13 * s)), color=self.COLOR_ACCENT, bold=True)
+        curr_y += max(16, int(23 * s))
+        curr_y = draw_multiline_text(canvas, tool.summary, (text_x, curr_y),
+                                     max_width=avail_w, font_size=max(10, int(13 * s)),
+                                     color=(215, 225, 235), line_spacing=max(3, int(5 * s)))
+        curr_y += max(12, int(16 * s))
+
+        # 2. 详细特性清单 (Details) - 支持每项条目自适应折行
+        draw_text(canvas, "【工程要点与执行逻辑】", (px + max(8, int(16 * s)), curr_y),
+                  font_size=max(10, int(13 * s)), color=self.COLOR_ACCENT, bold=True)
+        curr_y += max(16, int(23 * s))
+        bullet_icon_x = px + max(12, int(22 * s))
+        bullet_text_x = px + max(20, int(34 * s))
+        bullet_w = pw - (bullet_text_x - px) - max(12, int(20 * s))
+
+        for d in tool.details:
+            if curr_y > avail_bottom_y - max(30, int(50 * s)):
+                break
+            cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (0, 190, 160), -1)
+            curr_y = draw_multiline_text(canvas, d, (bullet_text_x, curr_y),
+                                         max_width=bullet_w, font_size=max(9, int(12 * s)),
+                                         color=(195, 208, 220), line_spacing=max(2, int(4 * s)))
+            curr_y += max(3, int(5 * s))
+        curr_y += max(4, int(6 * s))
+
+        # 3. 前置依赖与输入 (Inputs)
+        if curr_y < avail_bottom_y - max(60, int(90 * s)):
+            draw_text(canvas, "【前置条件与输入依赖】", (px + max(8, int(16 * s)), curr_y),
+                      font_size=max(10, int(13 * s)), color=(140, 180, 220), bold=True)
+            curr_y += max(15, int(21 * s))
+            for inp in tool.inputs:
+                if curr_y > avail_bottom_y - max(40, int(60 * s)):
+                    break
+                cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (120, 160, 200), -1)
+                curr_y = draw_multiline_text(canvas, inp, (bullet_text_x, curr_y),
+                                             max_width=bullet_w, font_size=max(9, int(12 * s)),
+                                             color=(185, 200, 215), line_spacing=max(2, int(4 * s)))
+                curr_y += max(3, int(5 * s))
+            curr_y += max(4, int(6 * s))
+
+        # 4. 输出产物 (Outputs)
+        if curr_y < avail_bottom_y - max(50, int(70 * s)):
+            draw_text(canvas, "【输出产物与持久化路径】", (px + max(8, int(16 * s)), curr_y),
+                      font_size=max(10, int(13 * s)), color=(120, 200, 180), bold=True)
+            curr_y += max(15, int(21 * s))
+            for out in tool.outputs:
+                if curr_y > avail_bottom_y - max(30, int(45 * s)):
+                    break
+                cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (100, 180, 160), -1)
+                curr_y = draw_multiline_text(canvas, out, (bullet_text_x, curr_y),
+                                             max_width=bullet_w, font_size=max(9, int(12 * s)),
+                                             color=(180, 215, 205), line_spacing=max(2, int(4 * s)))
+                curr_y += max(3, int(5 * s))
+            curr_y += max(4, int(6 * s))
+
+        # 5. 操作提示 (Quick Tips) - 动态自适应卡片框
+        if curr_y < avail_bottom_y - max(20, int(30 * s)):
+            tip_font_size = max(9, int(12 * s))
+            tip_w = pw - max(16, int(32 * s))
+            tip_lines = wrap_text_by_width(tool.quick_tips, tip_font_size, tip_w - max(16, int(24 * s)))
+            line_h = tip_font_size + max(2, int(4 * s))
+            tip_h = len(tip_lines) * line_h + max(8, int(12 * s))
+
+            if curr_y + tip_h <= avail_bottom_y:
+                tip_box_x = px + max(8, int(16 * s))
+                cv2.rectangle(canvas, (tip_box_x, curr_y), (tip_box_x + tip_w, curr_y + tip_h), (22, 28, 36), -1)
+                cv2.rectangle(canvas, (tip_box_x, curr_y), (tip_box_x + tip_w, curr_y + tip_h), (36, 48, 62), 1)
+                draw_multiline_text(canvas, tool.quick_tips, (tip_box_x + max(8, int(12 * s)), curr_y + max(4, int(6 * s))),
+                                    max_width=tip_w - max(16, int(24 * s)), font_size=tip_font_size,
+                                    color=self.COLOR_TEXT_SUB, line_spacing=max(2, int(4 * s)))
+
+        # 底部醒目启动卡片按钮
         is_hover_btn = (px + max(8, int(16 * s)) <= self.mouse_x <= px + pw - max(8, int(16 * s)) and btn_y <= self.mouse_y <= btn_y + btn_h)
         btn_bg = (0, 190, 145) if is_hover_btn else (0, 155, 120)
         cv2.rectangle(canvas, (px + max(8, int(16 * s)), btn_y), (px + pw - max(8, int(16 * s)), btn_y + btn_h), btn_bg, -1)
-        btn_text = f"▶ 立即启动: 【{tool.title}】 (回车 ⏎ 或 双击卡片)"
+        btn_text = f"【立即启动】 {tool.title}  (按回车 Enter 或 双击卡片)"
         draw_text(canvas, btn_text, (px + max(20, int(35 * s)), btn_y + max(6, int(10 * s))),
                   font_size=max(10, int(14 * s)), color=(10, 18, 22), bold=True)
+
+    def _render_default_overview_panel(self, canvas: np.ndarray, split_x: int):
+        """当焦点未在任何工具卡片上时，在右侧渲染系统环境、库依赖与硬件健康状态大屏总览"""
+        s = self.scale_pct / 100.0
+        px = split_x + max(8, int(15 * s))
+        py = max(40, int(66 * s))
+        pw = max(int(360 * s), self.canvas_w - px - max(10, int(20 * s)))
+        ph = max(int(450 * s), self.canvas_h - max(30, int(50 * s)) - py - max(8, int(15 * s)))
+
+        # 大屏底板
+        cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (18, 22, 28), -1)
+        cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (34, 44, 58), 1)
+
+        # 头部标题带
+        head_h = max(40, int(64 * s))
+        cv2.rectangle(canvas, (px, py), (px + pw, py + head_h), (22, 27, 36), -1)
+        cv2.line(canvas, (px, py + head_h), (px + pw, py + head_h), (40, 52, 68), 1)
+
+        # 标题徽标与文字
+        b_w, b_h = max(24, int(36 * s)), max(20, int(32 * s))
+        cv2.rectangle(canvas, (px + max(8, int(16 * s)), py + max(8, int(16 * s))),
+                      (px + max(8, int(16 * s)) + b_w, py + max(8, int(16 * s)) + b_h), (14, 18, 24), -1)
+        cv2.rectangle(canvas, (px + max(8, int(16 * s)), py + max(8, int(16 * s))),
+                      (px + max(8, int(16 * s)) + b_w, py + max(8, int(16 * s)) + b_h), self.COLOR_ACCENT, 1)
+        draw_text(canvas, "[i]", (px + max(12, int(24 * s)), py + max(12, int(22 * s))),
+                  font_size=max(10, int(14 * s)), color=self.COLOR_ACCENT, bold=True)
+
+        draw_text(canvas, "系统运行环境与硬件健康总览", (px + max(36, int(62 * s)), py + max(8, int(14 * s))),
+                  font_size=max(12, int(18 * s)), color=self.COLOR_TEXT_TITLE, bold=True)
+        draw_text(canvas, "System Environment & Hardware Diagnostics Dashboard",
+                  (px + max(36, int(62 * s)), py + max(24, int(40 * s))), font_size=max(8, int(11 * s)), color=self.COLOR_TEXT_SUB)
+
+        # 数据提取
+        st = self.system_status
+        py_ver = sys.version.split()[0]
+        cv_ver = st.get("cv_version", cv2.__version__)
+        rs_tuple = st.get("realsense", (False, "未检测", False))
+        rs_ok = rs_tuple[2] if len(rs_tuple) > 2 else False
+        rs_msg = rs_tuple[1] if len(rs_tuple) > 1 else str(rs_tuple)
+        snaps_c = st.get("snapshot_count", 0)
+        act_sc = self.scene_mgr.get_active_scene()
+
+        # 正文排版
+        curr_y = py + max(48, int(76 * s))
+        bullet_icon_x = px + max(12, int(22 * s))
+        bullet_text_x = px + max(22, int(36 * s))
+        bullet_w = pw - (bullet_text_x - px) - max(12, int(20 * s))
+
+        # ── 模块 1：底层环境与科学计算库依赖 ──────────────────────────────
+        draw_text(canvas, "【底层运行环境与科学计算依赖】", (px + max(8, int(16 * s)), curr_y),
+                  font_size=max(10, int(13 * s)), color=self.COLOR_ACCENT, bold=True)
+        curr_y += max(16, int(24 * s))
+
+        cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (0, 210, 160), -1)
+        curr_y = draw_multiline_text(canvas, f"Python 解释器: v{py_ver}  ({sys.executable})",
+                                     (bullet_text_x, curr_y), max_width=bullet_w,
+                                     font_size=max(9, int(12 * s)), color=(210, 225, 238), line_spacing=max(2, int(4 * s)))
+        curr_y += max(3, int(5 * s))
+
+        cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (0, 210, 160), -1)
+        curr_y = draw_multiline_text(canvas, f"核心视觉库: OpenCV v{cv_ver}  |  矩阵计算: NumPy v{np.__version__}",
+                                     (bullet_text_x, curr_y), max_width=bullet_w,
+                                     font_size=max(9, int(12 * s)), color=(200, 215, 228), line_spacing=max(2, int(4 * s)))
+        curr_y += max(3, int(5 * s))
+
+        cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (0, 210, 160), -1)
+        curr_y = draw_multiline_text(canvas, f"工程工作空间: {PROJECT_ROOT}",
+                                     (bullet_text_x, curr_y), max_width=bullet_w,
+                                     font_size=max(9, int(12 * s)), color=(170, 185, 200), line_spacing=max(2, int(4 * s)))
+        curr_y += max(12, int(16 * s))
+
+        # ── 模块 2：感知硬件与数据资产 ────────────────────────────────────
+        draw_text(canvas, "【感知层硬件与数据资产】", (px + max(8, int(16 * s)), curr_y),
+                  font_size=max(10, int(13 * s)), color=(140, 180, 220), bold=True)
+        curr_y += max(16, int(24 * s))
+
+        rs_dot_col = (0, 210, 160) if rs_ok else (135, 145, 160)
+        cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), rs_dot_col, -1)
+        curr_y = draw_multiline_text(canvas, f"Intel RealSense D435: {rs_msg}",
+                                     (bullet_text_x, curr_y), max_width=bullet_w,
+                                     font_size=max(9, int(12 * s)), color=(210, 225, 240) if rs_ok else (160, 175, 185),
+                                     line_spacing=max(2, int(4 * s)))
+        curr_y += max(3, int(5 * s))
+
+        cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (120, 160, 200), -1)
+        curr_y = draw_multiline_text(canvas, f"现场工业快照库: 已归档 {snaps_c} 帧 (RGB+Depth+PLY，位于 data/snapshots/)",
+                                     (bullet_text_x, curr_y), max_width=bullet_w,
+                                     font_size=max(9, int(12 * s)), color=(185, 200, 215), line_spacing=max(2, int(4 * s)))
+        curr_y += max(12, int(16 * s))
+
+        # ── 模块 3：当前生产场景与三维标靶地图 ──────────────────────────────
+        draw_text(canvas, "【当前生产场景与标靶地图资产】", (px + max(8, int(16 * s)), curr_y),
+                  font_size=max(10, int(13 * s)), color=self.COLOR_GOLD, bold=True)
+        curr_y += max(16, int(24 * s))
+
+        if act_sc:
+            status_tag = "★ 生产环境 (已正式发布)" if act_sc.is_published else ("已求解全局平差 (BA Solved)" if act_sc.ba_solved else "沙盒草稿 (Sandbox)")
+            sc_color = self.COLOR_GOLD if act_sc.is_published else ((0, 210, 160) if act_sc.ba_solved else (160, 180, 200))
+            cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), sc_color, -1)
+            curr_y = draw_multiline_text(canvas, f"活动工况场景: 【{act_sc.name}】 ({status_tag})",
+                                         (bullet_text_x, curr_y), max_width=bullet_w,
+                                         font_size=max(9, int(12 * s)), color=sc_color, bold=True,
+                                         line_spacing=max(2, int(4 * s)))
+            curr_y += max(3, int(5 * s))
+
+            cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (180, 160, 100), -1)
+            curr_y = draw_multiline_text(canvas, f"场景标定样本: 已采集 {act_sc.image_count} 帧原始图集",
+                                         (bullet_text_x, curr_y), max_width=bullet_w,
+                                         font_size=max(9, int(12 * s)), color=(190, 205, 220), line_spacing=max(2, int(4 * s)))
+            curr_y += max(3, int(5 * s))
+
+            map_status = "已生成 tags_map.yaml (坐标系对齐已锁定)" if act_sc.ba_solved else "未求解 (需执行两阶段平差)"
+            cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (180, 160, 100), -1)
+            curr_y = draw_multiline_text(canvas, f"标靶地图状态: {map_status}",
+                                         (bullet_text_x, curr_y), max_width=bullet_w,
+                                         font_size=max(9, int(12 * s)), color=(190, 205, 220), line_spacing=max(2, int(4 * s)))
+        else:
+            cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (120, 130, 140), -1)
+            curr_y = draw_multiline_text(canvas, "活动工况场景: 未选定场景 (请点击 [1] 场景总控中心新建或切换)",
+                                         (bullet_text_x, curr_y), max_width=bullet_w,
+                                         font_size=max(9, int(12 * s)), color=(150, 160, 170), line_spacing=max(2, int(4 * s)))
+        curr_y += max(12, int(16 * s))
+
+        # ── 模块 4：控制中心快捷操作指南 ──────────────────────────────────
+        btn_h = max(26, int(38 * s))
+        btn_y = py + ph - btn_h - max(8, int(12 * s))
+        avail_bottom_y = btn_y - max(6, int(10 * s))
+
+        if curr_y < avail_bottom_y - max(20, int(30 * s)):
+            tip_w = pw - max(16, int(32 * s))
+            guide_text = "操作小贴士: 鼠标悬停左侧任意卡片即可即时查阅该模块的工程定位与执行逻辑；按键盘 [1~9] 或双击卡片直接拉起对应工具；按 [Ctrl+滚轮] 或 [Ctrl +/-] 可任意缩放控制中心画面。"
+            tip_font_size = max(9, int(12 * s))
+            tip_lines = wrap_text_by_width(guide_text, tip_font_size, tip_w - max(16, int(24 * s)))
+            line_h = tip_font_size + max(2, int(4 * s))
+            box_h = len(tip_lines) * line_h + max(8, int(12 * s))
+            if curr_y + box_h <= avail_bottom_y:
+                tip_box_x = px + max(8, int(16 * s))
+                cv2.rectangle(canvas, (tip_box_x, curr_y), (tip_box_x + tip_w, curr_y + box_h), (22, 28, 36), -1)
+                cv2.rectangle(canvas, (tip_box_x, curr_y), (tip_box_x + tip_w, curr_y + box_h), (36, 48, 62), 1)
+                draw_multiline_text(canvas, guide_text, (tip_box_x + max(8, int(12 * s)), curr_y + max(4, int(6 * s))),
+                                    max_width=tip_w - max(16, int(24 * s)), font_size=tip_font_size,
+                                    color=self.COLOR_TEXT_SUB, line_spacing=max(2, int(4 * s)))
+
+        # 底部状态栏装饰条 (与卡片界面的“立即启动”按钮位置对应，但显示系统状态)
+        cv2.rectangle(canvas, (px + max(8, int(16 * s)), btn_y), (px + pw - max(8, int(16 * s)), btn_y + btn_h), (20, 26, 34), -1)
+        cv2.rectangle(canvas, (px + max(8, int(16 * s)), btn_y), (px + pw - max(8, int(16 * s)), btn_y + btn_h), (38, 52, 68), 1)
+        cv2.circle(canvas, (px + max(20, int(32 * s)), btn_y + btn_h // 2), max(2, int(4 * s)), (0, 210, 160), -1)
+        bottom_hint = "工业控制中心系统总线已就绪 · 点击左侧卡片或按键 [1~9] 启动工具"
+        draw_text(canvas, bottom_hint, (px + max(30, int(46 * s)), btn_y + max(6, int(10 * s))),
+                  font_size=max(9, int(12 * s)), color=(170, 190, 210))
 
     def _render_footer(self, canvas: np.ndarray):
         """渲染底部状态反馈与快捷键指引栏 (自适应贴底)"""
@@ -1274,6 +1578,68 @@ class GuiLauncherApp:
         clock_x = max(int(500 * s), self.canvas_w - clock_w)
         draw_text(canvas, f"{time_str} | FLUX VISION 3D", (clock_x, fy + max(10, int(16 * s))),
                   font_size=f_size, color=self.COLOR_TEXT_MUTED)
+
+    def _render_suspended_modal(self, canvas: np.ndarray, tool: ToolCardMeta):
+        """当子工具/控制台在前台运行时，将主界面整体冷黑深度暗化并呈现挂起模态提示框"""
+        s = self.scale_pct / 100.0
+
+        # 1. 全局画面深度暗化 (降至 ~20% 亮度，呈现沉静只读休眠态)
+        canvas[:] = (canvas.astype(np.float32) * 0.20).astype(np.uint8)
+
+        # 2. 居中模态卡片几何尺寸
+        cx, cy = self.canvas_w // 2, self.canvas_h // 2
+        mw = max(int(460 * s), min(int(650 * s), self.canvas_w - 40))
+        mh = max(int(170 * s), min(int(230 * s), self.canvas_h - 40))
+        x1 = cx - mw // 2
+        y1 = cy - mh // 2
+        x2 = x1 + mw
+        y2 = y1 + mh
+
+        # 模态浮岛背景与外阴影/双层边框
+        cv2.rectangle(canvas, (x1 - 4, y1 - 4), (x2 + 4, y2 + 4), (10, 14, 20), -1)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), (20, 26, 36), -1)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 210, 170), 2)
+
+        # 顶栏装饰条 (冷青指示带)
+        head_h = max(28, int(42 * s))
+        cv2.rectangle(canvas, (x1, y1), (x2, y1 + head_h), (26, 34, 48), -1)
+        cv2.line(canvas, (x1, y1 + head_h), (x2, y1 + head_h), (45, 65, 90), 1)
+
+        # 顶栏标题
+        cv2.circle(canvas, (x1 + max(12, int(20 * s)), y1 + head_h // 2), max(3, int(5 * s)), (0, 220, 180), -1)
+        draw_text(canvas, "控制权已移交 · 控制中心安全待命挂起", (x1 + max(22, int(34 * s)), y1 + max(6, int(10 * s))),
+                  font_size=max(11, int(15 * s)), color=(0, 230, 190), bold=True)
+
+        # 正文内容排版
+        content_y = y1 + head_h + max(12, int(16 * s))
+        text_x = x1 + max(16, int(24 * s))
+
+        # 当前运行子工具
+        mode_label = "独立 GUI 视窗" if tool.is_gui else "交互式控制台"
+        running_title = f"当前前台运行: 【{tool.title}】 ({mode_label})"
+        draw_text(canvas, running_title, (text_x, content_y),
+                  font_size=max(11, int(15 * s)), color=self.COLOR_TEXT_TITLE, bold=True)
+        content_y += max(20, int(28 * s))
+
+        # 说明项 1：安全待命
+        cv2.circle(canvas, (text_x + max(4, int(6 * s)), content_y + max(6, int(8 * s))), max(2, int(3 * s)), (120, 160, 200), -1)
+        draw_text(canvas, "主视窗已进入后台只读待命模式，已自动屏蔽鼠标与键盘交互。",
+                  (text_x + max(12, int(18 * s)), content_y), font_size=max(9, int(12 * s)), color=(185, 200, 215))
+        content_y += max(16, int(22 * s))
+
+        # 说明项 2：唤醒指引
+        cv2.circle(canvas, (text_x + max(4, int(6 * s)), content_y + max(6, int(8 * s))), max(2, int(3 * s)), (120, 160, 200), -1)
+        draw_text(canvas, "请在前台子应用中完成操作；关闭子视窗后，控制中心将自动唤醒并刷新状态。",
+                  (text_x + max(12, int(18 * s)), content_y), font_size=max(9, int(12 * s)), color=(185, 200, 215))
+
+        # 底部提示小胶囊
+        bot_bar_h = max(24, int(32 * s))
+        bot_y1 = y2 - bot_bar_h - max(6, int(10 * s))
+        cv2.rectangle(canvas, (text_x, bot_y1), (x2 - max(16, int(24 * s)), bot_y1 + bot_bar_h), (14, 18, 24), -1)
+        cv2.rectangle(canvas, (text_x, bot_y1), (x2 - max(16, int(24 * s)), bot_y1 + bot_bar_h), (35, 48, 65), 1)
+        draw_text(canvas, "状态: 独占通道就绪 · 等待前台子应用退出信号...",
+                  (text_x + max(10, int(16 * s)), bot_y1 + max(5, int(8 * s))),
+                  font_size=max(8, int(11 * s)), color=(140, 160, 180))
 
 
 def main():

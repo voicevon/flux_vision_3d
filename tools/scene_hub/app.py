@@ -23,6 +23,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.calibration.scene_manager import CalibrationSceneManager
+from src.utils.gui_window_manager import GuiWindowManager
 from tools.scene_hub.hub_state import HubState
 from tools.scene_hub.hub_renderer import HubRenderer
 
@@ -49,30 +50,71 @@ def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
 class SceneHubApp:
     """Scene Hub 主应用"""
 
-    def __init__(self, force_mock: bool = False):
+    def __init__(self, force_mock: bool = False, settings_file: str = None):
         self.force_mock = force_mock
+        self.win_mgr = GuiWindowManager(
+            app_id="scene_hub",
+            base_w=1280,
+            base_h=720,
+            settings_file=settings_file
+        )
         self.scene_mgr = CalibrationSceneManager()
         self.state = HubState(self.scene_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
         self.window_name = "flux_vision_3d | 工况与场景管理中枢 (Scene Hub)"
         self._running = True
 
+        if self.win_mgr.scale_pct != 100 or self.win_mgr.canvas_w != 1280 or self.win_mgr.canvas_h != 720:
+            self.state.set_toast(f"已恢复偏好设置：放大镜 {self.win_mgr.scale_pct}%，视窗 {self.win_mgr.canvas_w}×{self.win_mgr.canvas_h} (Ctrl+0 复位)")
+
     def run(self):
         """主事件循环"""
-        # 使用 WINDOW_NORMAL 支持自由拖动缩放与最大化占满屏幕
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, 1280, 720)
-        cv2.setMouseCallback(self.window_name, self._on_mouse_event)
+        # 使用 GuiWindowManager 挂载原生窗口、记忆尺寸与 Unicode 标题
+        self.win_mgr.setup_window(self.window_name, self._on_mouse_event)
+        self.win_mgr.set_unicode_title(self.window_name)
+
+        try:
+            cv2.resizeWindow(self.window_name, self.win_mgr.canvas_w, self.win_mgr.canvas_h)
+        except Exception:
+            pass
 
         while self._running:
-            # 渲染画面
-            canvas = self.renderer.render(self.state)
-            cv2.imshow(self.window_name, canvas)
+            # 1. 视窗管理器综合轮询 (红叉检测、硬件按键缩放、拖拽防抖持久化)
+            poll_res = self.win_mgr.poll_events()
+            if poll_res.should_quit:
+                break
+            if poll_res.toast_msg:
+                self.state.set_toast(poll_res.toast_msg)
 
-            # 使用 waitKeyEx 兼容 Windows 扩展方向键
+            # 2. 渲染画面并在当前窗口分辨率下自适应居中呈现
+            raw_canvas = self.renderer.render(self.state)
+            if self.win_mgr.canvas_w == 1280 and self.win_mgr.canvas_h == 720:
+                present_canvas = raw_canvas
+            else:
+                present_canvas = np.full((self.win_mgr.canvas_h, self.win_mgr.canvas_w, 3), (18, 20, 24), dtype=np.uint8)
+                scale = min(self.win_mgr.canvas_w / 1280.0, self.win_mgr.canvas_h / 720.0)
+                target_w = int(round(1280 * scale))
+                target_h = int(round(720 * scale))
+                interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LANCZOS4
+                scaled = cv2.resize(raw_canvas, (target_w, target_h), interpolation=interp)
+                pad_x = (self.win_mgr.canvas_w - target_w) // 2
+                pad_y = (self.win_mgr.canvas_h - target_h) // 2
+                present_canvas[pad_y:pad_y + target_h, pad_x:pad_x + target_w] = scaled
+
+            cv2.imshow(self.window_name, present_canvas)
+
+            # 3. 使用 waitKeyEx 兼容 Windows 扩展方向键与业务按键
             raw_key = cv2.waitKeyEx(15)
             if raw_key == -1:
                 continue
+
+            # 处理后备键盘缩放 (若未在物理级截获)
+            fb_changed, fb_toast = self.win_mgr.handle_keyboard_fallback(raw_key)
+            if fb_changed and fb_toast:
+                self.state.set_toast(fb_toast)
+                continue
+
+            key = raw_key & 0xFF
 
             # =================== 场景右键上下文菜单打开时的按键处理 ===================
             if self.state.context_menu_open:
@@ -176,7 +218,24 @@ class SceneHubApp:
         self._run_subtool(cmd, "多视角交互采图向导")
 
     def _on_mouse_event(self, event, x, y, flags, param):
-        """处理鼠标点击、悬浮 Hover 与滚轮切片交互"""
+        """处理鼠标点击、悬浮 Hover 与滚轮切片交互 (支持 Ctrl+滚轮缩放与逻辑坐标映射)"""
+        # 0. 优先拦截 Ctrl + 滚轮缩放 (委托通用视窗管理器)
+        if event == 10:  # cv2.EVENT_MOUSEWHEEL
+            handled, toast = self.win_mgr.handle_mouse_wheel(event, flags)
+            if handled and toast:
+                self.state.set_toast(toast)
+                return
+
+        # 0.1 物理坐标转换回 1280x720 逻辑坐标
+        if self.win_mgr.canvas_w != 1280 or self.win_mgr.canvas_h != 720:
+            scale = min(self.win_mgr.canvas_w / 1280.0, self.win_mgr.canvas_h / 720.0)
+            pad_x = (self.win_mgr.canvas_w - int(1280 * scale)) // 2
+            pad_y = (self.win_mgr.canvas_h - int(720 * scale)) // 2
+            logic_x = int((x - pad_x) / max(1e-6, scale))
+            logic_y = int((y - pad_y) / max(1e-6, scale))
+            x = max(0, min(1279, logic_x))
+            y = max(0, min(719, logic_y))
+
         # 1. 实时跟踪鼠标坐标，支持全部按钮平滑 Hover 高亮
         if event == cv2.EVENT_MOUSEMOVE:
             self.state.mouse_x = x
@@ -197,7 +256,7 @@ class SceneHubApp:
                     return
             return
 
-        # 2. 鼠标滚轮极速翻页/切换场景
+        # 2. 普通滚轮极速翻页/切换场景 (未按 Ctrl 时)
         if event == cv2.EVENT_MOUSEWHEEL:
             delta = -1 if flags > 0 else 1
             if x <= 340 and 80 <= y <= 480:

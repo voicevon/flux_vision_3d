@@ -1,12 +1,9 @@
-# flux_vision_3d 系统运行配置规范
-
 camera:
-  device_serial: ""                  # 为空时自动匹配首个连接的 RealSense 设备
+  device_serial: ''
   color:
     width: 1920
     height: 1080
     fps: 8
-    # 物理 RealSense D435 出厂高精度标定内参 (1080P 模式)
     fx: 1363.68
     fy: 1361.19
     cx: 971.19
@@ -15,87 +12,92 @@ camera:
     width: 848
     height: 480
     fps: 30
-  align_to_color: true               # 是否将深度流逐像素硬件对齐至彩色流
-  visual_preset: 3                   # 3: High Accuracy 高精度模式 (舍弃低置信度噪点)
-  laser_power: 120                   # 红外散斑发射功率 (mW, 默认150, 调降至100-120防湿润反光)
-  
-  # SDK 级硬件后处理滤波链
+  align_to_color: true
+  visual_preset: 3
+  laser_power: 120
   filters:
     decimation:
-      enabled: false                 # 降采样滤波器 (低算力平台可开启)
+      enabled: false
       magnitude: 2
     spatial:
-      enabled: true                  # 空间保边边缘平滑滤波
+      enabled: true
       smooth_alpha: 0.5
       smooth_delta: 20
       magnitude: 2
-      hole_fill: 1                   # 边缘孔洞填补等级
+      hole_fill: 1
     temporal:
-      enabled: true                  # 时间平滑滤波 (传送带停顿拍照时能有效消除离散噪点)
+      enabled: true
       smooth_alpha: 0.4
       smooth_delta: 20
-      persistence_control: 3         # 8/8 帧有效持久度模式
+      persistence_control: 3
     threshold:
-      enabled: true                  # 距离门限滤波器
-      min_distance: 0.40             # 最小截断深度 (米) - 放行 0.40m 以上的近景目标
-      max_distance: 0.70             # 最大截断深度 (米) - 滤除 0.65m 工作台底面以下的杂散背景
-  
-  # 深度可视化色彩映射区间 (米)
+      enabled: true
+      min_distance: 0.4
+      max_distance: 0.7
   colormap:
-    min_distance: 0.48               # 最顶层近距对应暖红色 (~520mm)
-    max_distance: 0.66               # 工作台底面远距对应深蓝色 (~640-650mm)
-    auto_range: false                # 是否开启按当前视野动态自适应拉伸 (按 'A' 键切换)
-
+    min_distance: 0.48
+    max_distance: 0.66
+    auto_range: false
 vision:
-  # 2D/3D 分层分离与形态学参数
-  table_margin_mm: 8.0               # 相对工作台面的最小凸起高度门限 (mm, 排除底板，放行扁平下压笋)
-  min_asparagus_area: 600            # 最小连通域像素面积 (过滤碎渣杂物)
-  min_length_mm: 60.0                # 最小物理长度 (mm, 涵盖短切与端头)
-  max_length_mm: 550.0               # 最大物理长度 (mm, 充分容纳 400~500mm 特长芦笋)
-  min_diam_mm: 5.0                   # 最小物理直径 (mm, 涵盖笋尖)
-  max_diam_mm: 65.0                  # 最大物理直径 (mm, 涵盖大直径特级笋及并排局部接触)
-  min_aspect_ratio: 1.8              # 最小长宽比 (兼顾倾斜投影与局部遮挡)
-
+  table_margin_mm: 8.0
+  min_asparagus_area: 600
+  min_length_mm: 60.0
+  max_length_mm: 550.0
+  min_diam_mm: 5.0
+  max_diam_mm: 65.0
+  min_aspect_ratio: 1.8
 calibration:
-  # 现场物理布置的已知标靶 ID 白名单 (Tag 0 作为 SCARA 原点，以及 18~29 号刚体阵列，共 13 枚物理标靶)
-  # 严格锁定白名单，彻底杜绝复杂机械/背景反光导致的伪造标靶虚警
-  valid_tag_ids: [0, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
-
-  # 世界坐标系原点与 X 轴对齐基准标靶 (杜绝虚假 Tag 1 导致的静默跳过对齐)
-  origin_tag_id: 0                   # SCARA 基座物理旋转中心标靶
-  x_axis_tag_id: 28                  # 世界 +X 轴对齐物理标靶 (位于 +X 侧的阵列基准标靶)
-
-  # AprilTag 多标靶地图定位 (优先级最高，文件不存在时自动跳过)
-  tags_map_path: "config/tags_map.yaml"
-
-  # AprilTag 图像反差与环境光自适应配置 (可由采图向导动态微调并保存)
+  valid_tag_ids:
+  - 0
+  - 18
+  - 19
+  - 20
+  - 21
+  - 22
+  - 23
+  - 24
+  - 25
+  - 26
+  - 27
+  - 28
+  - 29
+  origin_tag_id: 0
+  x_axis_tag_id: 28
+  tags_map_path: config/tags_map.yaml
   tag_detection:
-    contrast_boost: 1.6              # 对比度增强增益 (1.0 为原生, 1.5~2.5 强力拉开低反差)
-    enable_auto_stretch: true        # 动态全动态范围直方图拉伸 (彻底克服发灰/背光)
-    clahe_clip_limit: 4.0            # 局部对比度自适应均衡化强度 (默认 4.0)
-    min_otsu_std_dev: 1.5            # 最小反差标准差门限 (从 5.0 放宽至 1.5，允许微弱灰暗标靶)
-    adaptive_thresh_constant: 3.0    # 自适应二值化常数偏移 (减小偏移提升弱光黑块识别)
-    min_perimeter_rate: 0.006        # 最小标靶周长占比 (覆盖远距微小标靶)
-
-  # 手工 SVD 点触标定矩阵 (AprilTag 不可用时的回退方案)
-  # Eye-to-Hand: 相机坐标系 -> SCARA基座坐标系
-  # 初始单位矩阵，后续由手眼标定工具求解填入
+    contrast_boost: 1.6
+    enable_auto_stretch: true
+    clahe_clip_limit: 4.0
+    min_otsu_std_dev: 1.5
+    adaptive_thresh_constant: 3.0
+    min_perimeter_rate: 0.006
   t_cam_to_scara:
-    - [1.0, 0.0, 0.0, 0.0]
-    - [0.0, 1.0, 0.0, 0.0]
-    - [0.0, 0.0, 1.0, 0.0]
-    - [0.0, 0.0, 0.0, 1.0]
-
+  - - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  - - 0.0
+    - 1.0
+    - 0.0
+    - 0.0
+  - - 0.0
+    - 0.0
+    - 1.0
+    - 0.0
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  active_scene: '20260915_105634_22'
 robot:
-  port: "COM3"                       # SCARA 控制板串口
+  port: COM3
   baudrate: 115200
-  safe_z_mm: 80.0                    # 运动平移安全高度
-  drop_x_mm: 220.0                   # Dealer 落料口 X 坐标
-  drop_y_mm: 0.0                     # Dealer 落料口 Y 坐标
-  drop_z_mm: 50.0                    # Dealer 释放高度
-  feedrate_travel: 4000              # 快速移动速度 (mm/min)
-  feedrate_grip: 1500                # 下探抓取速度 (mm/min)
-
+  safe_z_mm: 80.0
+  drop_x_mm: 220.0
+  drop_y_mm: 0.0
+  drop_z_mm: 50.0
+  feedrate_travel: 4000
+  feedrate_grip: 1500
 dealer:
-  ble_name: "FLUX_DEALER"            # Dealer ESP32 蓝牙广播名
-  target_char_uuid: "0000ff01-0000-1000-8000-00805f9b34fb"
+  ble_name: FLUX_DEALER
+  target_char_uuid: 0000ff01-0000-1000-8000-00805f9b34fb

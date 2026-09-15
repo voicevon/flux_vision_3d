@@ -36,12 +36,14 @@ except ImportError:
 # 导入芦笋特征分析与最顶层判决核心模块
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
+from src.utils.gui_window_manager import GuiWindowManager
 
 
 class D435Viewer:
-    def __init__(self, config_path: str = "config.yaml", mock_mode: bool = False):
+    def __init__(self, config_path: str = "config.yaml", mock_mode: bool = False, settings_file: str = None):
         self.config_path = config_path
         self.mock_mode = mock_mode
+        self.win_mgr = GuiWindowManager(app_id="d435_viewer", base_w=960, base_h=1080, settings_file=settings_file)
         self.load_config()
 
         self.pipeline = None
@@ -270,14 +272,30 @@ class D435Viewer:
         return color_img, depth_img
 
     def on_mouse(self, event, x, y, flags, param):
-        """鼠标移动/点击事件处理 (自适应多种布局模式坐标映射)"""
+        """鼠标移动/点击事件处理 (自适应多种布局模式坐标映射与 Ctrl+滚轮放大镜)"""
+        # 0. 优先拦截 Ctrl + 滚轮缩放 (委托通用管理器)
+        if event == 10:  # cv2.EVENT_MOUSEWHEEL
+            if getattr(self, "win_mgr", None):
+                self.win_mgr.handle_mouse_wheel(event, flags)
+                return
+
         view_mode = getattr(self, "view_mode", "split_v")
         orig_w = getattr(self, "actual_w", 1280)
         orig_h = getattr(self, "actual_h", 720)
 
-        # 获取当前窗口尺寸
+        # 获取当前内部逻辑排版尺寸
         cw = param.get("current_w", 960)
         ch = param.get("current_h", 1080)
+
+        # 若窗口物理分辨率已缩放/拉伸，将当前物理坐标映射回内部逻辑坐标
+        if getattr(self, "win_mgr", None) and (self.win_mgr.canvas_w != cw or self.win_mgr.canvas_h != ch):
+            scale = min(self.win_mgr.canvas_w / float(cw), self.win_mgr.canvas_h / float(ch))
+            pad_x = (self.win_mgr.canvas_w - int(cw * scale)) // 2
+            pad_y = (self.win_mgr.canvas_h - int(ch * scale)) // 2
+            x = int((x - pad_x) / max(1e-6, scale))
+            y = int((y - pad_y) / max(1e-6, scale))
+            x = max(0, min(cw - 1, x))
+            y = max(0, min(ch - 1, y))
 
         u, v = -1, -1
 
@@ -325,10 +343,10 @@ class D435Viewer:
         self.start()
 
         window_name = "RealSense D435 芦笋 3D 视觉智能查看器"
-        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+        self.win_mgr.setup_window(window_name, self.on_mouse)
+        self.win_mgr.set_unicode_title(window_name)
 
         mouse_params = {"current_w": 960, "current_h": 1080}
-        cv2.setMouseCallback(window_name, self.on_mouse, mouse_params)
 
         print("\n" + "=" * 68)
         print(" RealSense D435 实时交互指南 (支持暂停定格与上下/单图放大):")
@@ -541,10 +559,36 @@ class D435Viewer:
                 cv2.rectangle(final_canvas, (0, canvas_h - 32), (canvas_w, canvas_h), (20, 20, 20), -1)
                 cv2.putText(final_canvas, probe_text, (12, canvas_h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 1)
 
-                cv2.imshow(window_name, final_canvas)
+                # 自适应物理窗口分辨率居中呈现 (支持真自由拉伸与记忆)
+                if self.win_mgr.canvas_w == canvas_w and self.win_mgr.canvas_h == canvas_h:
+                    disp_canvas = final_canvas
+                else:
+                    disp_canvas = np.full((self.win_mgr.canvas_h, self.win_mgr.canvas_w, 3), (20, 20, 20), dtype=np.uint8)
+                    sc_fit = min(self.win_mgr.canvas_w / float(canvas_w), self.win_mgr.canvas_h / float(canvas_h))
+                    tw = int(round(canvas_w * sc_fit))
+                    th = int(round(canvas_h * sc_fit))
+                    interp = cv2.INTER_AREA if sc_fit < 1.0 else cv2.INTER_LANCZOS4
+                    scaled = cv2.resize(final_canvas, (tw, th), interpolation=interp)
+                    px = (self.win_mgr.canvas_w - tw) // 2
+                    py = (self.win_mgr.canvas_h - th) // 2
+                    disp_canvas[py:py + th, px:px + tw] = scaled
 
-                # 7. 键盘响应
-                key = cv2.waitKey(1) & 0xFF
+                cv2.imshow(window_name, disp_canvas)
+
+                # 7. 视窗事件与键盘响应
+                poll_res = self.win_mgr.poll_events()
+                if poll_res.should_quit:
+                    break
+
+                raw_key = cv2.waitKeyEx(1)
+                if raw_key == -1:
+                    continue
+
+                fb_changed, _ = self.win_mgr.handle_keyboard_fallback(raw_key)
+                if fb_changed:
+                    continue
+
+                key = raw_key & 0xFF
                 if key in [ord('q'), 27]:
                     break
 
@@ -687,6 +731,8 @@ class D435Viewer:
                         print(f"[ACTION] 红外散斑发射器: {'开启' if self.laser_enabled else '关闭'}")
 
         finally:
+            if hasattr(self, "win_mgr") and self.win_mgr:
+                self.win_mgr.save_settings()
             if self.pipeline:
                 try:
                     self.pipeline.stop()

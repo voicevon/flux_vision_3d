@@ -178,7 +178,7 @@ class TestSceneHub(unittest.TestCase):
     def test_hub_top_exit_button_click(self):
         """测试点击右上角 [X] 退出按钮能够正常结束主循环"""
         from tools.scene_hub import SceneHubApp
-        app = SceneHubApp(force_mock=True)
+        app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
         self.assertTrue(app._running)
 
         # 模拟鼠标点击顶部右上角退出按钮 (x=1150, y=20)
@@ -188,7 +188,7 @@ class TestSceneHub(unittest.TestCase):
     def test_hub_footer_camera_and_card_active_action(self):
         """测试 Footer 底部 Camera 状态指示以及卡片点击直接设为活动"""
         from tools.scene_hub import SceneHubApp
-        app = SceneHubApp(force_mock=True)
+        app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
         renderer = HubRenderer()
         canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
 
@@ -230,7 +230,7 @@ class TestSceneHub(unittest.TestCase):
     def test_three_view_modes_tab_clicks(self):
         """测试鼠标点击顶部三段式 Tab 胶囊直接切换模式"""
         from tools.scene_hub import SceneHubApp
-        app = SceneHubApp(force_mock=True)
+        app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
 
         # 点击 Tab 3: 纯净看板 (x=480, y=25)
         app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 480, 25, 0, None)
@@ -247,7 +247,7 @@ class TestSceneHub(unittest.TestCase):
     def test_context_menu_open_and_actions(self):
         """测试场景卡片鼠标右键弹出菜单、项执行与渲染稳定性"""
         from tools.scene_hub import SceneHubApp
-        app = SceneHubApp(force_mock=True)
+        app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
 
         self.assertFalse(app.state.context_menu_open)
 
@@ -270,6 +270,34 @@ class TestSceneHub(unittest.TestCase):
         # 点击右侧远端空白区域 (x=800, y=500)
         app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 800, 500, 0, None)
         self.assertFalse(app.state.context_menu_open)
+
+    def test_scene_hub_settings_persistence(self):
+        """测试 Scene Hub 窗口尺寸与缩放比例的自动记忆持久化与二次启动恢复"""
+        import tempfile
+        from tools.scene_hub import SceneHubApp
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_cfg = os.path.join(tmpdir, "hub_test_settings.json")
+            # 1. 启动第一实例并缩放到 120%
+            app1 = SceneHubApp(force_mock=True, settings_file=test_cfg)
+            app1.win_mgr.apply_zoom(+20)
+            self.assertEqual(app1.win_mgr.scale_pct, 120)
+
+            # 2. 启动第二实例，验证自动无感恢复
+            app2 = SceneHubApp(force_mock=True, settings_file=test_cfg)
+            self.assertEqual(app2.win_mgr.scale_pct, 120)
+            self.assertEqual(app2.win_mgr.canvas_w, int(1280 * 1.2))
+            self.assertEqual(app2.win_mgr.canvas_h, int(720 * 1.2))
+
+            # 3. 模拟拖拽拉伸窗口改变分辨率，验证自动落盘
+            app2.win_mgr.canvas_w = 1600
+            app2.win_mgr.canvas_h = 900
+            app2.win_mgr.save_settings()
+
+            # 4. 启动第三实例，验证 1600x900 依然被精准记住
+            app3 = SceneHubApp(force_mock=True, settings_file=test_cfg)
+            self.assertEqual(app3.win_mgr.scale_pct, 120)
+            self.assertEqual(app3.win_mgr.canvas_w, 1600)
+            self.assertEqual(app3.win_mgr.canvas_h, 900)
 
 
 if __name__ == "__main__":

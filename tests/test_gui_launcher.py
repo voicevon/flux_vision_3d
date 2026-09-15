@@ -14,7 +14,8 @@ from tools.gui_launcher import GuiLauncherApp, build_tools_catalog, ToolCardMeta
 class TestGuiLauncher(unittest.TestCase):
 
     def setUp(self):
-        self.app = GuiLauncherApp()
+        # 使用隔离虚拟配置文件，确保测试不受用户本机历史记忆影响，也不污染用户真实偏好
+        self.app = GuiLauncherApp(settings_file="__test_isolated_dummy_settings__.json")
 
     def test_tools_catalog_integrity(self):
         """测试工具目录数据结构完整性与快捷键不重复"""
@@ -178,6 +179,102 @@ class TestGuiLauncher(unittest.TestCase):
         self.app._on_mouse(10, 500, 300, -1, None)  # 向下滚
         self.assertEqual(self.app.scale_pct, 100)
 
+    def test_settings_persistence(self):
+        """测试用户缩放比例与窗口尺寸持久化保存与二次启动自动恢复 (隔离环境运行，杜绝污染真实用户偏好)"""
+        import os
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_cfg = os.path.join(tmpdir, "test_gui_settings.json")
+            with patch("tools.gui_launcher.GUI_SETTINGS_FILE", test_cfg):
+                # 1. 模拟缩放到 120%
+                test_app = GuiLauncherApp()
+                test_app.scale_pct = 100
+                test_app._apply_zoom(+20)
+                self.assertEqual(test_app.scale_pct, 120)
+                self.assertTrue(os.path.exists(test_cfg))
+
+                # 2. 模拟新启动一个实例，验证自动记忆恢复
+                new_app = GuiLauncherApp()
+                self.assertEqual(new_app.scale_pct, 120)
+                self.assertEqual(new_app.canvas_w, int(1280 * 1.2))
+                self.assertEqual(new_app.canvas_h, int(720 * 1.2))
+
+                # 3. 模拟拖动拉伸窗口改变分辨率，验证自动落盘
+                new_app.canvas_w = 1600
+                new_app.canvas_h = 900
+                new_app._save_settings()
+
+                # 4. 再次启动新实例验证窗口尺寸保持 1600x900
+                third_app = GuiLauncherApp()
+                self.assertEqual(third_app.scale_pct, 120)
+                self.assertEqual(third_app.canvas_w, 1600)
+                self.assertEqual(third_app.canvas_h, 900)
+
+    def test_text_wrapping_utility(self):
+        """测试文本根据最大像素宽度自适应折行计算"""
+        from tools.gui_launcher import wrap_text_by_width, get_cached_font
+        long_chinese_text = "【核心生产算法】调用物理相机抓拍一帧并解算最上层芦笋空间位姿，输出抓取指令。"
+        lines = wrap_text_by_width(long_chinese_text, font_size=14, max_width=200)
+        self.assertTrue(len(lines) > 1)
+        font = get_cached_font(14)
+        for line in lines:
+            bbox = font.getbbox(line)
+            w = bbox[2] - bbox[0]
+            self.assertLessEqual(w, 200)
+
+    def test_default_overview_panel_rendering(self):
+        """测试无卡片选中/悬停时，右侧默认渲染系统环境与硬件健康总览面板"""
+        self.app.selected_tool_idx = -1
+        self.app.hover_tool_idx = -1
+        canvas = self.app._render_canvas()
+        self.assertEqual(canvas.shape, (720, 1280, 3))
+        # 验证画布非全黑
+        self.assertTrue(np.any(canvas > 0))
+
+    def test_inspector_panel_rendering_with_selection(self):
+        """测试选中卡片时，右侧渲染对应工具的 Inspector 详尽指南与自动折行"""
+        self.app.selected_tool_idx = 2  # tag_studio
+        self.app.hover_tool_idx = -1
+        canvas = self.app._render_canvas()
+        self.assertEqual(canvas.shape, (720, 1280, 3))
+        self.assertTrue(np.any(canvas > 0))
+
+    def test_suspended_modal_rendering_and_darkening(self):
+        """测试子工具启动后主窗口全屏压暗与挂起模态居中展示"""
+        # 正常渲染基准画布
+        self.app.is_subtool_running = False
+        normal_canvas = self.app._render_canvas()
+        normal_mean = float(np.mean(normal_canvas))
+
+        # 开启挂起态
+        self.app.is_subtool_running = True
+        self.app.running_tool_meta = self.app.tools[0]
+        suspended_canvas = self.app._render_canvas()
+
+        self.assertEqual(suspended_canvas.shape, (720, 1280, 3))
+        # 验证暗化蒙版生效：背景区域平均亮度应显著降低（约 20%~30% 水平）
+        suspended_mean = float(np.mean(suspended_canvas))
+        self.assertLess(suspended_mean, normal_mean * 0.5)
+
+    def test_suspended_input_blocking(self):
+        """测试挂起期间对鼠标悬停、点击以及键盘快捷键的 100% 绝对拦截"""
+        self.app.is_subtool_running = True
+        self.app.running_tool_meta = self.app.tools[0]
+        self.app.mouse_x, self.app.mouse_y = 100, 100
+        self.app.selected_tool_idx = 0
+
+        # 模拟鼠标移动到 (500, 500)
+        self.app._on_mouse(0, 500, 500, 0, None)
+        # 坐标与悬停应被直接 return，不得更新
+        self.assertEqual((self.app.mouse_x, self.app.mouse_y), (100, 100))
+
+        # 模拟键盘按键（例如数字键 2，ESC 键）
+        handled = self.app._handle_keyboard(ord('2'))
+        self.assertFalse(handled)
+        self.assertEqual(self.app.selected_tool_idx, 0)  # 未被切换
+
 
 if __name__ == "__main__":
     unittest.main()
+
