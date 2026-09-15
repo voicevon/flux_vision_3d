@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-3D 视觉综合控制中心 (3D Vision Suite GUI Launcher)
+3D 视觉综合控制中心 (Suite Dashboard)
 =================================================
 基于 1280x720 工业科技大屏，统一调度 flux_vision_3d 视觉系统的所有核心应用：
 - 原生 Windows Unicode 窗口标题，杜绝任何乱码
@@ -1643,7 +1643,7 @@ class GuiLauncherApp:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="3D 视觉综合控制中心 (3D Vision Suite GUI Launcher)")
+    parser = argparse.ArgumentParser(description="3D 视觉综合控制中心 (Suite Dashboard)")
     args = parser.parse_args()
 
     app = GuiLauncherApp()

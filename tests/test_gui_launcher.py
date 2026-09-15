@@ -1,7 +1,7 @@
 """
 GUI 控制中心自动化单元测试 (tests/test_gui_launcher.py)
 =====================================================
-验证 3D Vision Suite GUI 控制中心的卡片目录、状态采集、碰撞测试与渲染稳定性
+验证 Suite Dashboard 控制中心的卡片目录、状态采集、碰撞测试与渲染稳定性
 """
 
 import unittest

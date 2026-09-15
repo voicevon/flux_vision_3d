@@ -1,24 +1,6 @@
 {
-  "scale_pct": 130,
-  "canvas_w": 1664,
-  "canvas_h": 936,
-  "updated_at": "2026-09-15 15:50:00",
-  "gui_launcher": {
-    "scale_pct": 110,
-    "canvas_w": 1366,
-    "canvas_h": 705,
-    "updated_at": "2026-09-15 16:36:46"
-  },
-  "scene_hub": {
-    "scale_pct": 100,
-    "canvas_w": 1920,
-    "canvas_h": 1017,
-    "updated_at": "2026-09-15 16:36:43"
-  },
-  "d435_viewer": {
-    "scale_pct": 100,
-    "canvas_w": 960,
-    "canvas_h": 1061,
-    "updated_at": "2026-09-15 16:27:23"
-  }
+  "scale_pct": 120,
+  "canvas_w": 1366,
+  "canvas_h": 705,
+  "updated_at": "2026-09-15 20:32:56"
 }

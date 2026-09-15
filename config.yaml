@@ -88,7 +88,7 @@ calibration:
     - 0.0
     - 0.0
     - 1.0
-  active_scene: '20260915_105634_22'
+  active_scene: 20260915_migrated
 robot:
   port: COM3
   baudrate: 115200
