@@ -260,6 +260,65 @@ class CalibrationSceneManager:
         self.set_active_scene(default_scene_id)
         print(f"[SCENE] 成功构建默认沙盒场景: {default_scene_id}")
 
+    def _migrate_legacy_non_ascii_dir(self, item: str) -> Optional[str]:
+        """将物理路径中包含非 ASCII/中文的历史遗留场景目录，安全原子重命名为纯 ASCII 目录"""
+        old_path = os.path.join(self.scenes_dir, item)
+        if not os.path.isdir(old_path):
+            return None
+
+        # 尝试读取内部元数据或保留友好中文名
+        display_name = item
+        meta_file = os.path.join(old_path, "scene_meta.yaml")
+        meta = {}
+        if os.path.exists(meta_file):
+            try:
+                with open(meta_file, "r", encoding="utf-8") as f:
+                    meta = yaml.safe_load(f) or {}
+                if meta.get("name"):
+                    display_name = meta["name"]
+            except Exception:
+                pass
+
+        # 提取已有 ASCII 前缀 (如 20260915)
+        ascii_parts = "".join(c for c in item if c.isascii() and (c.isalnum() or c in ("_", "-"))).strip("_")
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        if ascii_parts:
+            new_id = f"{ascii_parts}_migrated"
+        else:
+            new_id = f"{timestamp}_scene"
+
+        counter = 1
+        base_id = new_id
+        while os.path.exists(os.path.join(self.scenes_dir, new_id)):
+            new_id = f"{base_id}_{counter}"
+            counter += 1
+
+        new_path = os.path.join(self.scenes_dir, new_id)
+        try:
+            os.rename(old_path, new_path)
+            # 更新内部元数据中的 scene_id 与友好名称
+            meta["scene_id"] = new_id
+            meta["name"] = display_name
+            with open(os.path.join(new_path, "scene_meta.yaml"), "w", encoding="utf-8") as f:
+                yaml.dump(meta, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+            # 若 .active_scene 指向旧目录，同步更新
+            if os.path.exists(self.active_marker_file):
+                try:
+                    with open(self.active_marker_file, "r", encoding="utf-8") as f:
+                        cur_active = f.read().strip()
+                    if cur_active == item:
+                        with open(self.active_marker_file, "w", encoding="utf-8") as f:
+                            f.write(new_id)
+                except Exception:
+                    pass
+
+            print(f"[SCENE] 成功将历史非 ASCII 目录【{item}】安全迁移为【{new_id}】(友好名称仍为: {display_name})")
+            return new_id
+        except Exception as e:
+            print(f"[WARN] 迁移历史目录【{item}】失败: {e}")
+            return None
+
     def list_scenes(self) -> List[CalibrationScene]:
         """枚举所有有效场景，按创建时间降序排序"""
         scenes = []
@@ -271,6 +330,13 @@ class CalibrationSceneManager:
                 continue
             item_path = os.path.join(self.scenes_dir, item)
             if os.path.isdir(item_path):
+                # 检查是否存在非 ASCII 字符 (如遗留中文文件夹)，自动安全迁移
+                if any(ord(c) > 127 for c in item):
+                    migrated_id = self._migrate_legacy_non_ascii_dir(item)
+                    if migrated_id:
+                        item = migrated_id
+                        item_path = os.path.join(self.scenes_dir, item)
+
                 try:
                     scene = CalibrationScene.load(item_path)
                     if scene:

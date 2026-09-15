@@ -15,6 +15,32 @@ from src.calibration.scene_manager import CalibrationSceneManager, CalibrationSc
 from src.calibration.camera_streamer import CameraStreamer
 
 
+def imread_unicode(filepath: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
+    """兼容 Windows 中文/特殊字符物理路径的鲁棒图像读取 (np.fromfile + cv2.imdecode)"""
+    if not os.path.exists(filepath):
+        return None
+    try:
+        data = np.fromfile(filepath, dtype=np.uint8)
+        if data is None or len(data) == 0:
+            return None
+        return cv2.imdecode(data, flags)
+    except Exception:
+        return None
+
+
+def imwrite_unicode(filepath: str, img: np.ndarray) -> bool:
+    """兼容 Windows 中文/特殊字符物理路径的鲁棒图像写入 (cv2.imencode + tofile)"""
+    try:
+        ext = os.path.splitext(filepath)[1]
+        ok, buf = cv2.imencode(ext, img)
+        if ok and buf is not None:
+            buf.tofile(filepath)
+            return True
+        return False
+    except Exception:
+        return False
+
+
 class HubState:
     """Scene Hub 统一状态与缓存管理器"""
 
@@ -141,7 +167,7 @@ class HubState:
             self.thumbnail_cache.move_to_end(key)
             return self.thumbnail_cache[key]
 
-        bgr = cv2.imread(img_path)
+        bgr = imread_unicode(img_path)
         if bgr is None:
             return None
         thumb = cv2.resize(bgr, (tw, th), interpolation=cv2.INTER_AREA)
@@ -161,7 +187,7 @@ class HubState:
             self.preview_cache.move_to_end(key)
             return self.preview_cache[key]
 
-        bgr = cv2.imread(img_path)
+        bgr = imread_unicode(img_path)
         if bgr is None:
             return None
         h, w = bgr.shape[:2]
@@ -193,7 +219,7 @@ class HubState:
         new_idx = max_idx + 1
         filename = f"view_{new_idx:04d}.png"
         filepath = os.path.join(sc.raw_images_dir, filename)
-        cv2.imwrite(filepath, raw_frame)
+        imwrite_unicode(filepath, raw_frame)
 
         # 触发白闪动效
         self.flash_timer = time.time() + 0.08
