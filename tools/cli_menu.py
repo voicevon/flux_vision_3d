@@ -706,9 +706,8 @@ def submenu_scene_manager(scene_mgr):
             rmse_str = f"{sc.global_rmse_px:.3f} px" if sc.ba_solved else f"{C_GRAY}未求解{C_RESET}"
             color = C_GREEN if is_active else C_RESET
             print(f" {color}[{idx:02d}]{C_RESET} {color}{sc.scene_id:<28}{C_RESET} {sc.name:<14} {sc.image_count:<6} {rmse_str:<12} {pub_marker} {active_marker}")
-        print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
         print(f"   {C_GREEN}[S]{C_RESET} 切换活动场景                    {C_GREEN}[N]{C_RESET} 新建采样工况场景 (支持中文)")
-        print(f"   {C_GREEN}[R]{C_RESET} 修改当前场景名称 (支持中文)    {C_GREEN}[P]{C_RESET} 将当前活动场景一键发布至生产环境")
+        print(f"   {C_GREEN}[R]{C_RESET} 修改当前场景名称 (支持中文)    {C_GREEN}[P]{C_RESET} 生效到生产系统 (覆盖全局 config/tags_map.yaml)")
         print(f"   {C_GREEN}[C]{C_RESET} 克隆当前场景作为对比实验        {C_RED}[D]{C_RESET} 安全删除指定废弃场景")
         print(f"   {C_YELLOW}[B]{C_RESET} 返回标定专区")
         print(f"{C_CYAN}==============================================================================={C_RESET}")

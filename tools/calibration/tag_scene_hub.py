@@ -60,6 +60,7 @@ class TagSceneHubApp:
         # 使用 WINDOW_NORMAL 支持自由拖动缩放与最大化占满屏幕
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.window_name, 1280, 720)
+        cv2.setMouseCallback(self.window_name, self._on_mouse_event)
 
         while True:
             # 渲染画面
@@ -76,10 +77,10 @@ class TagSceneHubApp:
             # [ESC] 或 [Q] 退出逻辑
             if raw_key in (27, ord('q'), ord('Q')):
                 if self.state.mode == HubState.MODE_CAPTURE:
-                    # 仅退出采图视口，返回画廊看板
+                    # 仅退出采图视口，返回三栏看板
                     self.state.mode = HubState.MODE_INSPECTOR
                     self.state.camera_streamer.stop()
-                    self.state.set_toast("已退出采图向导，返回场景看板。")
+                    self.state.set_toast("已退出采图向导，返回三栏看板。")
                     continue
                 else:
                     # 退出整个 Scene Hub
@@ -87,16 +88,7 @@ class TagSceneHubApp:
 
             # [C] 切换采图模式
             if key in (ord('c'), ord('C')):
-                if self.state.mode == HubState.MODE_INSPECTOR:
-                    self.state.mode = HubState.MODE_CAPTURE
-                    self.state.camera_streamer.start()
-                    sc = self.state.get_selected_scene()
-                    sid = sc.scene_id if sc else ""
-                    self.state.set_toast(f"已激活实时采图视口 (按空格抓拍，保存至 {sid})")
-                else:
-                    self.state.mode = HubState.MODE_INSPECTOR
-                    self.state.camera_streamer.stop()
-                    self.state.set_toast("已返回场景看板。")
+                self._toggle_capture_mode()
                 continue
 
             # =================== 采图模式下的事件 ===================
@@ -117,7 +109,7 @@ class TagSceneHubApp:
 
                 continue
 
-            # =================== 画廊模式下的事件 ===================
+            # =================== 标准看板模式下的事件 ===================
             # [↑] 上方向键: Windows waitKeyEx code 2490368 或 'w'
             if raw_key in (2490368, ord('w'), ord('W')):
                 self.state.select_scene_by_offset(-1)
@@ -138,7 +130,7 @@ class TagSceneHubApp:
             elif raw_key in (13, 10):
                 self.state.set_current_as_active()
 
-            # [F] 切换单帧大图全宽自适应占满 / 并排看板模式
+            # [F] 切换单帧大图全宽自适应占满 / 标准三栏看板模式
             elif key in (ord('f'), ord('F')):
                 self.state.toggle_expanded_preview()
 
@@ -150,55 +142,158 @@ class TagSceneHubApp:
             elif key in (ord('n'), ord('N')):
                 self._handle_create_scene()
 
-            # [O] 启动 Studio
-            elif key in (ord('o'), ord('O')):
+            # [O] 或 [S] 启动离线 Studio 深度平差
+            elif key in (ord('o'), ord('O'), ord('s'), ord('S')):
                 self._launch_offline_studio()
 
-            # [S] 启动 Studio
-            elif key in (ord('s'), ord('S')):
-                self._launch_offline_studio()
-
-            # [P] 一键发布到生产
+            # [P] 生效为生产运行地图 (覆盖全局 config/tags_map.yaml)
             elif key in (ord('p'), ord('P')):
-                sc = self.state.get_selected_scene()
-                if sc:
-                    ok, msg = self.scene_mgr.publish_to_production(sc.scene_id)
-                    self.state.refresh_scenes()
-                    self.state.set_toast(msg)
+                self._handle_publish_to_production()
 
-            # [K] 克隆场景
+            # [K] 克隆场景副本
             elif key in (ord('k'), ord('K')):
                 self._handle_clone_scene()
 
-            # [V] 打开本地目录
+            # [V] 打开本地场景目录
             elif key in (ord('v'), ord('V')):
-                sc = self.state.get_selected_scene()
-                if sc and os.path.exists(sc.scene_dir):
-                    try:
-                        if sys.platform == "win32":
-                            os.startfile(sc.scene_dir)
-                        elif sys.platform == "darwin":
-                            subprocess.run(["open", sc.scene_dir])
-                        else:
-                            subprocess.run(["xdg-open", sc.scene_dir])
-                        self.state.set_toast(f"已在资源管理器中打开: {sc.scene_id}")
-                    except Exception as e:
-                        self.state.set_toast(f"打开目录异常: {e}")
+                self._handle_open_directory()
 
             # [X] 或 [Delete] 删除场景
             elif raw_key in (ord('x'), ord('X'), 3014656):
-                sc = self.state.get_selected_scene()
-                if sc:
-                    if sc.scene_id == self.state.active_scene_id:
-                        self.state.set_toast("【安全保护】严禁删除当前活动场景！请先切换活动场景。")
-                    else:
-                        ok, msg = self.scene_mgr.delete_scene(sc.scene_id)
-                        self.state.refresh_scenes()
-                        self.state.set_toast(msg)
+                self._handle_delete_scene()
 
         # 退出清理
         self.state.camera_streamer.stop()
         cv2.destroyAllWindows()
+
+    def _toggle_capture_mode(self):
+        """切入或退出相机实时连拍向导"""
+        if self.state.mode == HubState.MODE_INSPECTOR:
+            self.state.mode = HubState.MODE_CAPTURE
+            self.state.camera_streamer.start()
+            sc = self.state.get_selected_scene()
+            sid = sc.name if sc else ""
+            self.state.set_toast(f"已切入相机连拍向导 (按空格抓拍，保存至场景【{sid}】)")
+        else:
+            self.state.mode = HubState.MODE_INSPECTOR
+            self.state.camera_streamer.stop()
+            self.state.set_toast("已返回三栏看板。")
+
+    def _on_mouse_event(self, event, x, y, flags, param):
+        """处理鼠标点击交互：卡片点击、按钮点击、相册选图与大图切换"""
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+
+        # 如果在相机采图全屏模式，点击画面抓拍
+        if self.state.mode == HubState.MODE_CAPTURE:
+            if y > 50 and y < 670:
+                ok, frame = self.state.camera_streamer.read()
+                if ok and frame is not None:
+                    self.state.save_capture_frame(frame)
+            return
+
+        # 1. 点击左侧场景列表卡片 (x: 10~330, y: 88~370)
+        if 10 <= x <= 330 and 88 <= y <= 370:
+            card_h = 66
+            gap = 6
+            idx_in_view = (y - 88) // (card_h + gap)
+            max_cards = 4
+            scroll_start = max(0, self.state.selected_scene_idx - max_cards + 1)
+            target_idx = scroll_start + idx_in_view
+            if 0 <= target_idx < len(self.state.scenes):
+                self.state.selected_scene_idx = target_idx
+                self.state.load_current_scene_images()
+            return
+
+        # 2. 点击左侧场景管理按钮 (y: 414~490)
+        # 按钮 1: 新建场景 [N] (x: 10~165, y: 414~450)
+        if 10 <= x <= 165 and 414 <= y <= 450:
+            self._handle_create_scene()
+            return
+        # 按钮 2: 修改名称 [R] (x: 175~330, y: 414~450)
+        if 175 <= x <= 330 and 414 <= y <= 450:
+            self._handle_rename_scene()
+            return
+        # 按钮 3: 克隆场景 [K] (x: 10~165, y: 456~490)
+        if 10 <= x <= 165 and 456 <= y <= 490:
+            self._handle_clone_scene()
+            return
+        # 按钮 4: 打开目录 [V] (x: 175~330, y: 456~490)
+        if 175 <= x <= 330 and 456 <= y <= 490:
+            self._handle_open_directory()
+            return
+
+        # 3. 点击左侧核心工作流通道 (x: 10~330, y: 536~680)
+        if 10 <= x <= 330:
+            if 536 <= y <= 580:
+                self._toggle_capture_mode()
+                return
+            elif 586 <= y <= 630:
+                self._launch_offline_studio()
+                return
+            elif 636 <= y <= 680:
+                self._handle_publish_to_production()
+                return
+
+        # 4. 点击最右侧相册缩略图 (x: 816~1260, y: 94~156)
+        if not self.state.expanded_preview_mode and 816 <= x <= 1260 and 94 <= y <= 156:
+            tw = 98
+            pad = 8
+            thumb_idx = (x - 816) // (tw + pad)
+            offset = self.state.image_strip_offset
+            target_img_idx = offset + thumb_idx
+            if 0 <= target_img_idx < len(self.state.current_images):
+                self.state.selected_image_idx = target_img_idx
+            return
+
+        # 5. 点击大图预览视口：触发 [F] 模式切换
+        if (not self.state.expanded_preview_mode and 816 <= x <= 1260 and 168 <= y <= 660) or \
+           (self.state.expanded_preview_mode and 340 <= x <= 1280 and 50 <= y <= 670):
+            self.state.toggle_expanded_preview()
+            return
+
+    def _handle_publish_to_production(self):
+        """生效为生产运行地图 (覆盖全局 config/tags_map.yaml)"""
+        sc = self.state.get_selected_scene()
+        if not sc:
+            self.state.set_toast("未选中任何场景，无法生效！")
+            return
+
+        ok, msg = self.scene_mgr.publish_to_production(sc.scene_id)
+        self.state.refresh_scenes()
+        if ok:
+            toast = f"★ 生产生效成功！已将【{sc.name}】高精度地图覆盖发布至: config/tags_map.yaml"
+            self.state.set_toast(toast)
+        else:
+            self.state.set_toast(f"生效失败: {msg}")
+
+    def _handle_open_directory(self):
+        """在系统资源管理器中打开场景目录"""
+        sc = self.state.get_selected_scene()
+        if sc and os.path.exists(sc.scene_dir):
+            try:
+                if sys.platform == "win32":
+                    os.startfile(sc.scene_dir)
+                elif sys.platform == "darwin":
+                    subprocess.run(["open", sc.scene_dir])
+                else:
+                    subprocess.run(["xdg-open", sc.scene_dir])
+                self.state.set_toast(f"已在资源管理器中打开: {sc.name}")
+            except Exception as e:
+                self.state.set_toast(f"打开目录异常: {e}")
+
+    def _handle_delete_scene(self):
+        """删除当前场景"""
+        sc = self.state.get_selected_scene()
+        if not sc:
+            return
+        if sc.scene_id == self.state.active_scene_id:
+            self.state.set_toast("【安全保护】严禁删除当前活动场景！请先切换活动场景。")
+            return
+
+        ok, msg = self.scene_mgr.delete_scene(sc.scene_id)
+        self.state.refresh_scenes()
+        self.state.set_toast(msg)
 
     def _launch_offline_studio(self):
         """直通离线 Studio 深度平差并在退出后刷新状态"""
