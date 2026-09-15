@@ -43,6 +43,9 @@ class HubState:
         self.toast_msg = ""
         self.toast_time = 0.0
 
+        # 全宽大图预览模式 (按 F 键切换：全宽占满 vs 并排体检看板)
+        self.expanded_preview_mode = False
+
         # 空格抓拍白闪动效倒计时
         self.flash_timer = 0.0
 
@@ -196,3 +199,24 @@ class HubState:
     def set_toast(self, msg: str, duration: float = 3.0):
         self.toast_msg = msg
         self.toast_time = time.time() + duration
+
+    def toggle_expanded_preview(self):
+        """切换单帧大图全宽占满/并排体检看板模式"""
+        self.expanded_preview_mode = not self.expanded_preview_mode
+        mode_desc = "全宽自适应沉浸模式" if self.expanded_preview_mode else "并排体检看板模式"
+        self.set_toast(f"已切换预览视图: 【{mode_desc}】 (按 F 键再次切换)")
+
+    def rename_current_scene(self, new_name: str) -> bool:
+        """重命名当前选中的场景显示名称 (支持中文)"""
+        sc = self.get_selected_scene()
+        if not sc:
+            return False
+        clean = new_name.strip()
+        if not clean:
+            return False
+        ok = self.scene_mgr.rename_scene(sc.scene_id, clean)
+        if ok:
+            sc.name = clean
+            self.refresh_scenes()
+            self.set_toast(f"场景名称已成功修改为: 【{clean}】")
+        return ok

@@ -707,11 +707,12 @@ def submenu_scene_manager(scene_mgr):
             color = C_GREEN if is_active else C_RESET
             print(f" {color}[{idx:02d}]{C_RESET} {color}{sc.scene_id:<28}{C_RESET} {sc.name:<14} {sc.image_count:<6} {rmse_str:<12} {pub_marker} {active_marker}")
         print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
-        print(f"   {C_GREEN}[S]{C_RESET} 切换活动场景                    {C_GREEN}[N]{C_RESET} 新建采样工况场景")
-        print(f"   {C_GREEN}[C]{C_RESET} 克隆当前场景作为对比实验        {C_GREEN}[P]{C_RESET} 将当前活动场景一键发布至生产环境")
-        print(f"   {C_RED}[D]{C_RESET} 安全删除指定废弃场景            {C_YELLOW}[B]{C_RESET} 返回标定专区")
+        print(f"   {C_GREEN}[S]{C_RESET} 切换活动场景                    {C_GREEN}[N]{C_RESET} 新建采样工况场景 (支持中文)")
+        print(f"   {C_GREEN}[R]{C_RESET} 修改当前场景名称 (支持中文)    {C_GREEN}[P]{C_RESET} 将当前活动场景一键发布至生产环境")
+        print(f"   {C_GREEN}[C]{C_RESET} 克隆当前场景作为对比实验        {C_RED}[D]{C_RESET} 安全删除指定废弃场景")
+        print(f"   {C_YELLOW}[B]{C_RESET} 返回标定专区")
         print(f"{C_CYAN}==============================================================================={C_RESET}")
-        sub_ch = input(f"请输入操作指令 [S, N, C, P, D, B 或 场景序号 1-{len(scenes)}]: ").strip().upper()
+        sub_ch = input(f"请输入操作指令 [S, N, R, C, P, D, B 或 场景序号 1-{len(scenes)}]: ").strip().upper()
 
         if sub_ch in ('B', 'Q', ''):
             break
@@ -737,15 +738,26 @@ def submenu_scene_manager(scene_mgr):
             else:
                 print(f"{C_RED}[!] 目标场景不存在{C_RESET}")
             time.sleep(1)
+        elif sub_ch == 'R':
+            curr = scene_mgr.get_active_scene()
+            print(f"\n当前选中场景: {curr.name} ({curr.scene_id})")
+            new_name = input(f"请输入新的显示名称/别名 (支持中文，如: 1号机台主标定): ").strip()
+            if new_name:
+                ok = scene_mgr.rename_scene(curr.scene_id, new_name)
+                if ok:
+                    print(f"\n{C_GREEN}[成功] 场景名称已修改为: {new_name}{C_RESET}")
+                else:
+                    print(f"\n{C_RED}[失败] 修改场景名称失败{C_RESET}")
+            pause_prompt()
         elif sub_ch == 'N':
-            alias = input(f"请输入新场景别名 (英文/拼音/数字，如 bench_high): ").strip()
+            alias = input(f"请输入新场景别名 (支持中文、英文、数字，如: 2号机架高位): ").strip()
             if not alias:
                 print(f"{C_YELLOW}[提示] 别名不能为空，操作已取消。{C_RESET}")
                 time.sleep(0.8)
                 continue
             desc = input(f"请输入场景说明备注 (可选): ").strip()
             new_sc = scene_mgr.create_scene(alias=alias, description=desc)
-            print(f"\n{C_GREEN}[成功] 已创建并激活新场景: {new_sc.scene_id}{C_RESET}")
+            print(f"\n{C_GREEN}[成功] 已创建并激活新场景: {new_sc.name} ({new_sc.scene_id}){C_RESET}")
             pause_prompt()
         elif sub_ch == 'C':
             curr = scene_mgr.get_active_scene()

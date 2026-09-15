@@ -383,6 +383,23 @@ class CalibrationSceneManager:
         new_scene.save_meta()
         return new_scene
 
+    def rename_scene(self, scene_id: str, new_name: str, new_description: Optional[str] = None) -> bool:
+        """修改场景友好显示别名 (支持中文、英文、数字)，不破坏底层物理目录与历史引用"""
+        clean_name = new_name.strip()
+        if not clean_name:
+            return False
+
+        target_dir = os.path.join(self.scenes_dir, scene_id)
+        scene = CalibrationScene.load(target_dir)
+        if not scene:
+            return False
+
+        scene.name = clean_name
+        if new_description is not None:
+            scene.description = new_description
+        scene.save_meta()
+        return True
+
     def publish_to_production(self, scene_id: Optional[str] = None) -> Tuple[bool, str]:
         """将指定场景的 tags_map.yaml 安全原子发布覆盖至 config/tags_map.yaml 并记录至 config.yaml"""
         target_id = scene_id or self.get_active_scene_id()

@@ -2,11 +2,12 @@
 AprilTag 标定采样场景综合管理驾驶舱 (Scene Hub)
 ==============================================
 提供现代深色科技风格 GUI 界面：
-- 场景画廊管理 (选择、切换、新建、克隆、删除)
-- 历史采样照片缩略图瀑布流与单帧大图高清视口
+- 场景画廊管理 (选择、切换、新建、重命名、克隆、删除)
+- 历史采样照片缩略图流与单帧大图自适应视口 (支持 [F] 键全宽放大)
 - 场景几何健康度与两阶段 BA 平差残差看板
 - 原地无缝 1080P/720P 相机取流与空格连拍自动归档
 - 一键直通离线 Studio 深度平差与原子发布至生产环境
+- 完美支持中英文场景别名输入与显示
 """
 
 import os
@@ -26,6 +27,25 @@ from tools.calibration.scene_hub.hub_state import HubState
 from tools.calibration.scene_hub.hub_renderer import HubRenderer
 
 
+def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
+    """弹出轻量级原生 Windows 输入框，完美支持中文拼音/五笔输入法"""
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        val = simpledialog.askstring(title, prompt_text, initialvalue=initial, parent=root)
+        root.destroy()
+        return val.strip() if val else ""
+    except Exception:
+        print(f"\n{title}: {prompt_text}")
+        try:
+            return input("请输入: ").strip()
+        except Exception:
+            return ""
+
+
 class TagSceneHubApp:
     """Scene Hub 主应用"""
 
@@ -37,7 +57,9 @@ class TagSceneHubApp:
 
     def run(self):
         """主事件循环"""
-        cv2.namedWindow(self.window_name, cv2.WINDOW_AUTOSIZE)
+        # 使用 WINDOW_NORMAL 支持自由拖动缩放与最大化占满屏幕
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(self.window_name, 1280, 720)
 
         while True:
             # 渲染画面
@@ -116,8 +138,24 @@ class TagSceneHubApp:
             elif raw_key in (13, 10):
                 self.state.set_current_as_active()
 
+            # [F] 切换单帧大图全宽自适应占满 / 并排看板模式
+            elif key in (ord('f'), ord('F')):
+                self.state.toggle_expanded_preview()
+
+            # [R] 重命名当前场景显示名称 (支持中文)
+            elif key in (ord('r'), ord('R')):
+                self._handle_rename_scene()
+
+            # [N] 新建工况场景 (支持弹窗输入中文别名)
+            elif key in (ord('n'), ord('N')):
+                self._handle_create_scene()
+
             # [O] 启动 Studio
             elif key in (ord('o'), ord('O')):
+                self._launch_offline_studio()
+
+            # [S] 启动 Studio
+            elif key in (ord('s'), ord('S')):
                 self._launch_offline_studio()
 
             # [P] 一键发布到生产
@@ -128,24 +166,9 @@ class TagSceneHubApp:
                     self.state.refresh_scenes()
                     self.state.set_toast(msg)
 
-            # [N] 新建工况场景
-            elif key in (ord('n'), ord('N')):
-                self._handle_create_scene()
-
             # [K] 克隆场景
             elif key in (ord('k'), ord('K')):
-                sc = self.state.get_selected_scene()
-                if sc:
-                    cloned = self.scene_mgr.clone_scene(sc.scene_id)
-                    if cloned:
-                        self.state.refresh_scenes()
-                        # 选中刚克隆的场景
-                        for i, s in enumerate(self.state.scenes):
-                            if s.scene_id == cloned.scene_id:
-                                self.state.selected_scene_idx = i
-                                break
-                        self.state.load_current_scene_images()
-                        self.state.set_toast(f"已成功克隆场景: {cloned.scene_id}")
+                self._handle_clone_scene()
 
             # [V] 打开本地目录
             elif key in (ord('v'), ord('V')):
@@ -184,7 +207,6 @@ class TagSceneHubApp:
             return
 
         self.state.set_toast(f"正在唤起 Offline Studio 深度平差工作站...")
-        # 隐藏当前窗口以防焦点冲突
         cv2.destroyAllWindows()
 
         cmd = [sys.executable, "tools/calibration/tag_offline_studio.py",
@@ -192,33 +214,76 @@ class TagSceneHubApp:
                "--map", sc.map_path]
         subprocess.run(cmd)
 
-        # 重新初始化窗口与刷新场景状态
-        cv2.namedWindow(self.window_name, cv2.WINDOW_AUTOSIZE)
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(self.window_name, 1280, 720)
         sc.refresh_stats()
         sc.save_meta()
         self.state.refresh_scenes()
         self.state.load_current_scene_images()
         self.state.set_toast(f"已完成 Studio 平差并返回 Scene Hub，数据已最新！")
 
-    def _handle_create_scene(self):
-        """新建场景快速创建"""
-        # 自动生成递增序号别名，如 bench_a, bench_b ...
-        existing_aliases = [s.name for s in self.state.scenes]
-        idx = 1
-        while True:
-            candidate = f"bench_site{idx}"
-            if candidate not in existing_aliases:
-                break
-            idx += 1
+    def _handle_rename_scene(self):
+        """修改场景显示名称 (支持中文)"""
+        sc = self.state.get_selected_scene()
+        if not sc:
+            return
 
-        new_sc = self.scene_mgr.create_scene(alias=candidate, description=f"工况采样子集 {candidate}")
+        new_name = prompt_input_text(
+            "修改场景名称",
+            f"请输入场景【{sc.name}】的新显示名称\n(支持中文、英文、数字，如: 1号机台主标定):",
+            initial=sc.name
+        )
+        if new_name and new_name != sc.name:
+            self.state.rename_current_scene(new_name)
+
+    def _handle_create_scene(self):
+        """新建工况场景 (支持中文名称弹窗)"""
+        existing_names = [s.name for s in self.state.scenes]
+        idx = len(self.state.scenes) + 1
+        default_alias = f"标定工况_{idx}"
+
+        chosen_name = prompt_input_text(
+            "新建采样工况场景",
+            "请输入新场景名称/别名 (支持中文、英文、数字，如: 2号机架高位):",
+            initial=default_alias
+        )
+        if not chosen_name:
+            self.state.set_toast("已取消新建场景。")
+            return
+
+        new_sc = self.scene_mgr.create_scene(alias=chosen_name, description=f"工况场景 {chosen_name}")
         self.state.refresh_scenes()
         for i, s in enumerate(self.state.scenes):
             if s.scene_id == new_sc.scene_id:
                 self.state.selected_scene_idx = i
                 break
         self.state.load_current_scene_images()
-        self.state.set_toast(f"已新建场景: {new_sc.scene_id}，按 [C] 可立即开始采图！")
+        self.state.set_toast(f"已成功新建场景: 【{new_sc.name}】({new_sc.scene_id})，按 [C] 可立即开始采图！")
+
+    def _handle_clone_scene(self):
+        """克隆场景 (支持中文名称弹窗)"""
+        sc = self.state.get_selected_scene()
+        if not sc:
+            return
+
+        default_clone_name = f"{sc.name}_对照组"
+        chosen_name = prompt_input_text(
+            "克隆场景",
+            f"请输入克隆后的新场景名称 (基于原场景【{sc.name}】):",
+            initial=default_clone_name
+        )
+        if not chosen_name:
+            return
+
+        cloned = self.scene_mgr.clone_scene(sc.scene_id, new_alias=chosen_name)
+        if cloned:
+            self.state.refresh_scenes()
+            for i, s in enumerate(self.state.scenes):
+                if s.scene_id == cloned.scene_id:
+                    self.state.selected_scene_idx = i
+                    break
+            self.state.load_current_scene_images()
+            self.state.set_toast(f"已成功克隆场景: 【{cloned.name}】")
 
 
 def main():
