@@ -54,6 +54,7 @@ class TagSceneHubApp:
         self.state = HubState(self.scene_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
         self.window_name = "flux_vision_3d | AprilTag Scene Hub"
+        self._running = True
 
     def run(self):
         """主事件循环"""
@@ -62,7 +63,7 @@ class TagSceneHubApp:
         cv2.resizeWindow(self.window_name, 1280, 720)
         cv2.setMouseCallback(self.window_name, self._on_mouse_event)
 
-        while True:
+        while self._running:
             # 渲染画面
             canvas = self.renderer.render(self.state)
             cv2.imshow(self.window_name, canvas)
@@ -72,7 +73,12 @@ class TagSceneHubApp:
             if raw_key == -1:
                 continue
 
-            key = raw_key & 0xFF
+            # =================== 场景右键上下文菜单打开时的按键处理 ===================
+            if self.state.context_menu_open:
+                if raw_key in (27, ord('q'), ord('Q')):
+                    self.state.close_context_menu()
+                    self.state.set_toast("已关闭右键菜单。")
+                    continue
 
             # =================== 生产系统机制 Help 弹窗模式事件 ===================
             if self.state.is_help_modal_open:
@@ -189,9 +195,9 @@ class TagSceneHubApp:
             elif raw_key in (13, 10):
                 self.state.set_current_as_active()
 
-            # [F] 切换单帧大图全宽自适应占满 / 标准三栏看板模式
+            # [F] 顺次循环切换三模态视图: 标准三栏 -> 全宽大图 -> 纯净健康大屏
             elif key in (ord('f'), ord('F')):
-                self.state.toggle_expanded_preview()
+                self.state.cycle_view_mode()
 
             # [R] 重命名当前场景显示名称 (支持中文)
             elif key in (ord('r'), ord('R')):
@@ -246,10 +252,24 @@ class TagSceneHubApp:
             self.state.mouse_y = y
             return
 
+        # 1.1 鼠标右键点击卡片：弹出场景专属上下文菜单 (Context Menu)
+        if event == cv2.EVENT_RBUTTONDOWN:
+            if 10 <= x <= 330 and 90 <= y <= 480:
+                card_h = 70
+                gap = 8
+                idx_in_view = (y - 90) // (card_h + gap)
+                max_cards = 5
+                scroll_start = max(0, self.state.selected_scene_idx - max_cards + 1)
+                target_idx = scroll_start + idx_in_view
+                if 0 <= target_idx < len(self.state.scenes):
+                    self.state.open_context_menu(x, y, target_idx)
+                    return
+            return
+
         # 2. 鼠标滚轮极速翻页/切换场景
         if event == cv2.EVENT_MOUSEWHEEL:
             delta = -1 if flags > 0 else 1
-            if x <= 340 and 80 <= y <= 380:
+            if x <= 340 and 80 <= y <= 480:
                 self.state.select_scene_by_offset(delta)
             else:
                 self.state.select_image_by_offset(delta)
@@ -257,6 +277,46 @@ class TagSceneHubApp:
 
         # 后续仅处理鼠标左键点击
         if event != cv2.EVENT_LBUTTONDOWN:
+            return
+
+        # =================== 2.5 场景右键上下文菜单处于激活状态下的点击 ===================
+        if self.state.context_menu_open:
+            menu_w = 216
+            item_h = 32
+            menu_items_count = 6
+            menu_h = 34 + menu_items_count * item_h + 6
+            mx, my = self.state.context_menu_pos
+
+            # 自适应防超出屏幕边界 (与 hub_renderer 保持一致)
+            if mx + menu_w > 1280 - 10:
+                mx = 1280 - menu_w - 10
+            if my + menu_h > 665:
+                my = 665 - menu_h
+            if mx < 10:
+                mx = 10
+            if my < 50:
+                my = 50
+
+            # 判定是否点击在具体菜单项上
+            if mx <= x <= mx + menu_w and (my + 32) <= y <= (my + 32 + menu_items_count * item_h):
+                item_idx = (y - (my + 32)) // item_h
+                self.state.close_context_menu()
+                if item_idx == 0:
+                    self.state.set_current_as_active()
+                elif item_idx == 1:
+                    self._handle_publish_to_production()
+                elif item_idx == 2:
+                    self._handle_rename_scene()
+                elif item_idx == 3:
+                    self._handle_clone_scene()
+                elif item_idx == 4:
+                    self._handle_open_directory()
+                elif item_idx == 5:
+                    self._handle_delete_scene()
+                return
+
+            # 点击菜单外部任意区域：安全关闭菜单
+            self.state.close_context_menu()
             return
 
         # =================== 3. 生产机制 Help 说明窗下的点击 ===================
@@ -320,14 +380,37 @@ class TagSceneHubApp:
             return
 
         # =================== 5. 正常看板与采图模式下的鼠标点击 ===================
-        # 点击顶部标题栏 [M] 工具箱菜单按钮 (x: 1040~1180, y: 8~42)
-        if 1040 <= x <= 1180 and 8 <= y <= 42:
+        # 5.0 顶部标题栏交互
+        # 5.0.1 三段式视图模式切换 Tab (x: 288~532, y: 9~41)
+        if 9 <= y <= 41:
+            if 288 <= x <= 368:
+                self.state.set_view_mode(HubState.VIEW_STANDARD)
+                return
+            elif 369 <= x <= 448:
+                self.state.set_view_mode(HubState.VIEW_EXPANDED)
+                return
+            elif 449 <= x <= 532:
+                self.state.set_view_mode(HubState.VIEW_DASHBOARD)
+                return
+
+        # 5.0.2 生产运行场景标题区域 (x: 546~860, y: 8~42)
+        if 546 <= x <= 860 and 8 <= y <= 42:
+            self.state.toggle_help_modal()
+            return
+
+        # 5.0.3 [M] 工具箱菜单按钮 (x: 870~970, y: 8~42)
+        if 870 <= x <= 970 and 8 <= y <= 42:
             self.state.toggle_toolbox()
             return
 
-        # 点击顶部标题栏【生产运行场景】标签区域：秒级唤出业务机制说明窗 (x: 600~1030, y: 8~42)
-        if 600 <= x <= 1030 and 8 <= y <= 42:
+        # 5.0.4 [H] 生产机制说明按钮 (x: 980~1080, y: 8~42)
+        if 980 <= x <= 1080 and 8 <= y <= 42:
             self.state.toggle_help_modal()
+            return
+
+        # 5.0.5 [X] 退出按钮 (x: 1090~1265, y: 8~42)
+        if 1090 <= x <= 1265 and 8 <= y <= 42:
+            self._running = False
             return
 
         # 如果在相机采图全屏模式，点击画面抓拍
@@ -338,58 +421,58 @@ class TagSceneHubApp:
                     self.state.save_capture_frame(frame)
             return
 
-        # 5.1 点击左侧场景列表卡片 (x: 10~330, y: 88~370)
-        if 10 <= x <= 330 and 88 <= y <= 370:
-            card_h = 66
-            gap = 6
-            idx_in_view = (y - 88) // (card_h + gap)
-            max_cards = 4
+        # 5.1 点击左侧场景列表卡片 (x: 10~330, y: 90~480)
+        if 10 <= x <= 330 and 90 <= y <= 480:
+            card_h = 70
+            gap = 8
+            idx_in_view = (y - 90) // (card_h + gap)
+            max_cards = 5
             scroll_start = max(0, self.state.selected_scene_idx - max_cards + 1)
             target_idx = scroll_start + idx_in_view
             if 0 <= target_idx < len(self.state.scenes):
-                card_cy = 88 + idx_in_view * (card_h + gap)
-                # 检查是否直接点击了右侧的 [活动] 或 ★生产/草稿 交互徽章 (x: 248~326, y: card_cy+4 ~ card_cy+62)
-                if 248 <= x <= 326 and (card_cy + 4 <= y <= card_cy + 62):
-                    self.state.toggle_help_modal()
-                    return
+                target_sc = self.state.scenes[target_idx]
+                card_cy = 90 + idx_in_view * (card_h + gap)
 
+                # 检查是否直接点击了右侧操作胶囊 (x: 226~326)
+                if 226 <= x <= 326:
+                    is_active = (target_sc.scene_id == self.state.active_scene_id)
+                    if is_active:
+                        # 活动场景：上部为 [活动中]，下部为 [P 生效生产] 或 ★生产运行
+                        if card_cy + 36 <= y <= card_cy + 66:
+                            if not target_sc.is_published:
+                                self._handle_publish_to_production()
+                            else:
+                                self.state.toggle_help_modal()
+                            return
+                        elif card_cy + 4 <= y <= card_cy + 30:
+                            self.state.toggle_help_modal()
+                            return
+                    else:
+                        # 非活动场景：上部为 [设为活动 ⏎] 按钮，点击直接激活！
+                        if card_cy + 4 <= y <= card_cy + 32:
+                            self.state.selected_scene_idx = target_idx
+                            self.state.set_current_as_active()
+                            self.state.set_toast(f"已将场景【{target_sc.name}】设为全局活动沙盒！")
+                            return
+
+                # 点击卡片其余区域：选中该场景并载入图像
                 self.state.selected_scene_idx = target_idx
                 self.state.load_current_scene_images()
             return
 
-        # 5.2 点击左侧场景管理按钮 (y: 412~490)
-        # 按钮 1: 新建场景 [N] (x: 10~165, y: 412~450)
-        if 10 <= x <= 165 and 412 <= y <= 450:
+        # 5.2 点击左侧通用全局场景管理按钮 (y: 540~630)
+        # 按钮 1: 新建工况 [N] (x: 10~165, y: 544~580)
+        if 10 <= x <= 165 and 544 <= y <= 580:
             self._handle_create_scene()
             return
-        # 按钮 2: 修改名称 [R] (x: 175~330, y: 412~450)
-        if 175 <= x <= 330 and 412 <= y <= 450:
-            self._handle_rename_scene()
-            return
-        # 按钮 3: 克隆场景 [K] (x: 10~165, y: 452~490)
-        if 10 <= x <= 165 and 452 <= y <= 490:
-            self._handle_clone_scene()
-            return
-        # 按钮 4: 打开目录 [V] (x: 175~330, y: 452~490)
-        if 175 <= x <= 330 and 452 <= y <= 490:
+        # 按钮 2: 打开场景总库目录 [V] (x: 175~330, y: 544~580)
+        if 175 <= x <= 330 and 544 <= y <= 580:
             self._handle_open_directory()
             return
-
-        # 5.3 点击左侧核心工作流通道 (x: 10~330, y: 536~680)
-        if 10 <= x <= 330:
-            if 536 <= y <= 580:
-                self._toggle_capture_mode()
-                return
-            elif 584 <= y <= 628:
-                self._launch_offline_studio()
-                return
-            elif 632 <= y <= 678:
-                # 判断是否点击右侧的专属 [? Help] 按钮 (x: 262~326, y: 638~672)
-                if 260 <= x <= 326 and 636 <= y <= 672:
-                    self.state.toggle_help_modal()
-                else:
-                    self._handle_publish_to_production()
-                return
+        # 按钮 3: 原地相机连拍采图向导 [C] (x: 10~330, y: 588~624)
+        if 10 <= x <= 330 and 588 <= y <= 624:
+            self._toggle_capture_mode()
+            return
 
         # 5.4 全宽大图预览模式下的右上角按钮交互 (x: 340~1280)
         if self.state.expanded_preview_mode:

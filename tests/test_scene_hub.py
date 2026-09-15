@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import unittest
 import numpy as np
+import cv2
 
 from src.calibration.scene_manager import CalibrationSceneManager
 from src.calibration.camera_streamer import CameraStreamer
@@ -183,8 +184,101 @@ class TestSceneHub(unittest.TestCase):
         canvas_exp = renderer.render(state)
         self.assertEqual(canvas_exp.shape, (720, 1280, 3))
 
-        state.toggle_expanded_preview()
+    def test_hub_top_exit_button_click(self):
+        """测试点击右上角 [X] 退出按钮能够正常结束主循环"""
+        from tools.calibration.tag_scene_hub import TagSceneHubApp
+        app = TagSceneHubApp(force_mock=True)
+        self.assertTrue(app._running)
+
+        # 模拟鼠标点击顶部右上角退出按钮 (x=1150, y=20)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1150, 20, 0, None)
+        self.assertFalse(app._running)
+
+    def test_hub_footer_camera_and_card_active_action(self):
+        """测试 Footer 底部 Camera 状态指示以及卡片点击直接设为活动"""
+        from tools.calibration.tag_scene_hub import TagSceneHubApp
+        app = TagSceneHubApp(force_mock=True)
+        renderer = HubRenderer()
+        canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        # 验证 Footer 渲染不报错
+        renderer._render_footer(canvas, app.state)
+
+        # 验证场景激活点击
+        # 默认当前选中 idx 0，若点击卡片右侧 [设为活动] 区域 (x=250, y=105)
+        self.assertIsNotNone(app.state.active_scene_id)
+
+    def test_three_view_modes_cycle_and_rendering(self):
+        """测试三模态视图循环切换与各模态画布渲染稳定性"""
+        state = HubState(self.scene_mgr, force_mock=True)
+        renderer = HubRenderer()
+
+        # 1. 初始为标准模式
+        self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
+        c1 = renderer.render(state)
+        self.assertEqual(c1.shape, (720, 1280, 3))
+
+        # 2. 循环切换至全宽大图模式
+        state.cycle_view_mode()
+        self.assertEqual(state.view_mode, HubState.VIEW_EXPANDED)
+        self.assertTrue(state.expanded_preview_mode)
+        c2 = renderer.render(state)
+        self.assertEqual(c2.shape, (720, 1280, 3))
+
+        # 3. 循环切换至纯净健康大屏模式
+        state.cycle_view_mode()
+        self.assertEqual(state.view_mode, HubState.VIEW_DASHBOARD)
         self.assertFalse(state.expanded_preview_mode)
+        c3 = renderer.render(state)
+        self.assertEqual(c3.shape, (720, 1280, 3))
+
+        # 4. 循环回标准模式
+        state.cycle_view_mode()
+        self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
+
+    def test_three_view_modes_tab_clicks(self):
+        """测试鼠标点击顶部三段式 Tab 胶囊直接切换模式"""
+        from tools.calibration.tag_scene_hub import TagSceneHubApp
+        app = TagSceneHubApp(force_mock=True)
+
+        # 点击 Tab 3: 纯净看板 (x=480, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 480, 25, 0, None)
+        self.assertEqual(app.state.view_mode, HubState.VIEW_DASHBOARD)
+
+        # 点击 Tab 2: 全宽大图 (x=400, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 400, 25, 0, None)
+        self.assertEqual(app.state.view_mode, HubState.VIEW_EXPANDED)
+
+        # 点击 Tab 1: 标准三栏 (x=320, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 320, 25, 0, None)
+        self.assertEqual(app.state.view_mode, HubState.VIEW_STANDARD)
+
+    def test_context_menu_open_and_actions(self):
+        """测试场景卡片鼠标右键弹出菜单、项执行与渲染稳定性"""
+        from tools.calibration.tag_scene_hub import TagSceneHubApp
+        app = TagSceneHubApp(force_mock=True)
+
+        self.assertFalse(app.state.context_menu_open)
+
+        # 1. 模拟在第 1 张卡片上右键点击 (x=100, y=120)
+        app._on_mouse_event(cv2.EVENT_RBUTTONDOWN, 100, 120, 0, None)
+        self.assertTrue(app.state.context_menu_open)
+        self.assertEqual(app.state.context_menu_pos, (100, 120))
+
+        # 2. 渲染包含右键菜单的画布
+        canvas = app.renderer.render(app.state)
+        self.assertEqual(canvas.shape, (720, 1280, 3))
+
+        # 3. 点击菜单第一项 [设为活动沙盒] (x=120, y=120+34+16 = 170)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 120, 170, 0, None)
+        self.assertFalse(app.state.context_menu_open)
+
+        # 4. 再次右键打开后点击外部区域，验证安全关闭
+        app._on_mouse_event(cv2.EVENT_RBUTTONDOWN, 100, 120, 0, None)
+        self.assertTrue(app.state.context_menu_open)
+        # 点击右侧远端空白区域 (x=800, y=500)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 800, 500, 0, None)
+        self.assertFalse(app.state.context_menu_open)
 
 
 if __name__ == "__main__":

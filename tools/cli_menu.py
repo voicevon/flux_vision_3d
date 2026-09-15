@@ -10,6 +10,7 @@ flux_vision_3d 交互式 CLI 控制台与工具导航菜单
 import os
 import sys
 import glob
+import time
 import subprocess
 from datetime import datetime
 
@@ -40,9 +41,18 @@ C_BOLD = "\033[1m"
 C_GRAY = "\033[90m"
 C_RESET = "\033[0m"
 
+# 环境检测缓存 (TTL 30 秒，避免反复阻塞枚举 USB 总线)
+_ENV_STATUS_CACHE = None
+_ENV_CACHE_TIME = 0.0
 
-def check_env_status():
-    """检查系统关键库及硬件、快照信息"""
+
+def check_env_status(force_refresh: bool = False):
+    """检查系统关键库及硬件、快照信息 (带轻量 TTL 缓存，消除反复枚举 USB 的 1.5s 延迟)"""
+    global _ENV_STATUS_CACHE, _ENV_CACHE_TIME
+    now = time.time()
+    if not force_refresh and _ENV_STATUS_CACHE is not None and (now - _ENV_CACHE_TIME < 30.0):
+        return _ENV_STATUS_CACHE
+
     status = {}
     # RealSense 驱动与物理硬件检测
     try:
@@ -140,6 +150,8 @@ def check_env_status():
             pass
     status['valid_tag_ids'] = valid_tag_ids
 
+    _ENV_STATUS_CACHE = status
+    _ENV_CACHE_TIME = time.time()
     return status
 
 
@@ -797,10 +809,15 @@ def submenu_scene_manager(scene_mgr):
                     pause_prompt()
 
 
-def submenu_calibration_suite():
-    """二级子菜单：手眼标定与 AprilTag 空间建图专区"""
+def submenu_calibration_suite(cached_status=None):
+    """二级子菜单：手眼标定与 AprilTag 空间建图专区 (支持传入预检状态秒开进入)"""
+    first_run = True
     while True:
-        status = check_env_status()
+        if first_run and cached_status is not None:
+            status = cached_status
+            first_run = False
+        else:
+            status = check_env_status()
         print_calibration_banner(status)
         choice = input(f"请输入工序编号 [S, 1-8, W, V, D, C, M, P, B]: ").strip().upper()
         
@@ -976,7 +993,7 @@ def main():
         elif choice == '5':
             run_gen_mock_snapshot()
         elif choice in ('H', 'CAL'):
-            submenu_calibration_suite()
+            submenu_calibration_suite(cached_status=status)
         elif choice == 'T':
             submenu_test_suite()
         elif choice == '8':

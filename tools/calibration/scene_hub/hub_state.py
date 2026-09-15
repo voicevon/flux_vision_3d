@@ -47,6 +47,11 @@ class HubState:
     MODE_INSPECTOR = "inspector"  # 场景画廊与体检看板模式
     MODE_CAPTURE = "capture"      # 原地实时相机取流连拍模式
 
+    # 核心视图模式 (标准三栏 / 全宽大图 / 纯净数据看板)
+    VIEW_STANDARD = "standard"    # 模式1: 标准三栏 (左340, 中460, 右480)
+    VIEW_EXPANDED = "expanded"    # 模式2: 全宽大图 (左340, 右940大图铺满)
+    VIEW_DASHBOARD = "dashboard"  # 模式3: 纯净健康看板 (左340固定, 右940大体检看板，无相册无预览)
+
     def __init__(self, scene_mgr: CalibrationSceneManager = None, force_mock: bool = False):
         self.scene_mgr = scene_mgr or CalibrationSceneManager()
         self.mode = self.MODE_INSPECTOR
@@ -69,14 +74,19 @@ class HubState:
         self.toast_msg = ""
         self.toast_time = 0.0
 
-        # 全宽大图预览模式 (按 F 键切换：全宽占满 vs 并排体检看板)
-        self.expanded_preview_mode = False
+        # 当前视图模式 (默认标准三栏，按 F 键或点击顶部 Tab 循环切换)
+        self.view_mode = self.VIEW_STANDARD
 
         # 标定工具箱总菜单弹层是否打开 (按 M 键或点击呼出)
         self.is_toolbox_open = False
 
         # 生产系统生效机制 Help 说明弹层 (按 H 键或点击 [? Help] 呼出)
         self.is_help_modal_open = False
+
+        # 场景卡片右键上下文菜单 (Context Menu) 状态
+        self.context_menu_open = False
+        self.context_menu_pos = (0, 0)
+        self.context_menu_scene_idx = -1
 
         # 当前鼠标悬停坐标 (用于按钮 Hover 高亮效果)
         self.mouse_x = -1
@@ -236,11 +246,36 @@ class HubState:
         self.toast_msg = msg
         self.toast_time = time.time() + duration
 
+    @property
+    def expanded_preview_mode(self) -> bool:
+        """保持向后兼容：当处于全宽大图模式时返回 True"""
+        return self.view_mode == self.VIEW_EXPANDED
+
+    @expanded_preview_mode.setter
+    def expanded_preview_mode(self, val: bool):
+        self.view_mode = self.VIEW_EXPANDED if val else self.VIEW_STANDARD
+
+    def set_view_mode(self, mode: str):
+        """显式设定指定视图模式 (支持三段式 Tab 点击)"""
+        if mode in (self.VIEW_STANDARD, self.VIEW_EXPANDED, self.VIEW_DASHBOARD):
+            self.view_mode = mode
+            names = {
+                self.VIEW_STANDARD: "标准三栏看板",
+                self.VIEW_EXPANDED: "全宽大图沉浸",
+                self.VIEW_DASHBOARD: "纯净健康大屏 (无相册)",
+            }
+            self.set_toast(f"已切换视图模式: 【{names[mode]}】 (按 F 键循环切换)")
+
+    def cycle_view_mode(self):
+        """按 [F] 键顺次循环切换视图模式: 标准 -> 全宽大图 -> 纯净看板 -> 标准..."""
+        modes = [self.VIEW_STANDARD, self.VIEW_EXPANDED, self.VIEW_DASHBOARD]
+        curr_idx = modes.index(self.view_mode) if self.view_mode in modes else 0
+        next_mode = modes[(curr_idx + 1) % len(modes)]
+        self.set_view_mode(next_mode)
+
     def toggle_expanded_preview(self):
-        """切换单帧大图全宽占满/并排体检看板模式"""
-        self.expanded_preview_mode = not self.expanded_preview_mode
-        mode_desc = "全宽自适应沉浸模式" if self.expanded_preview_mode else "并排体检看板模式"
-        self.set_toast(f"已切换预览视图: 【{mode_desc}】 (按 F 键再次切换)")
+        """兼容旧按键/点击调用"""
+        self.cycle_view_mode()
 
     def toggle_toolbox(self):
         """打开或关闭标定工具箱综合菜单 (按 M 键切换)"""
@@ -274,3 +309,17 @@ class HubState:
             self.refresh_scenes()
             self.set_toast(f"场景名称已成功修改为: 【{clean}】")
         return ok
+
+    def open_context_menu(self, x: int, y: int, scene_idx: int):
+        """在指定鼠标坐标处打开场景卡片的右键上下文菜单"""
+        if 0 <= scene_idx < len(self.scenes):
+            self.context_menu_open = True
+            self.context_menu_pos = (x, y)
+            self.context_menu_scene_idx = scene_idx
+            self.selected_scene_idx = scene_idx
+            self.load_current_scene_images()
+
+    def close_context_menu(self):
+        """关闭右键上下文菜单"""
+        self.context_menu_open = False
+        self.context_menu_scene_idx = -1
