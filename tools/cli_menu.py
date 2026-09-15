@@ -170,14 +170,15 @@ def print_main_banner(status):
     print(f" 环境状态: Python {C_GREEN}{sys.version.split()[0]}{C_RESET} | OpenCV: {cv_str} | NumPy: {np_str} | D435驱动: {rs_str}")
     print(f" 本地数据: snapshots 快照 ({snap_str}) | 建图采图 ({status['calib_image_count']} 帧)")
     print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
-    print(f"{C_BOLD} [ 视觉预览与日常解算 (Vision Tools) ]{C_RESET}")
+    print(f"{C_BOLD} [ 核心生产与工况管理 (Core & Workspace) ]{C_RESET}")
     print(f"   {C_GREEN}[1]{C_RESET} 启动 D435 实时相机查看器与深度探针     (物理硬件模式)")
-    print(f"   {C_GREEN}[2]{C_RESET} 启动 D435 仿真模拟可视化查看器         ({C_YELLOW}--mock{C_RESET} 模式，无需物理相机)")
+    print(f"   {C_GREEN}{C_BOLD}[2]{C_RESET} {C_CYAN}{C_BOLD}工况与场景综合管理中枢 (Scene Hub)      ★ 核心一级入口！(工况切换/沙盒体检/生产发布){C_RESET}")
     print(f"   {C_GREEN}[3]{C_RESET} 解算最顶层芦笋抓取位姿 (实时相机)      (find_top_asparagus.py 单帧采集解算)")
-    print(f"   {C_GREEN}[4]{C_RESET} 解算最顶层芦笋抓取位姿 (离线快照)      (自动读取最新本地快照)")
+    print(f"   {C_GREEN}[4]{C_RESET} 解算最顶层芦笋抓取位姿 (离线快照)      (自动读取最新本地快照快速验证)")
     print(f"   {C_GREEN}[5]{C_RESET} 快速生成一帧模拟快照至 snapshots       (方便无相机时进行算法验证)")
+    print(f"   {C_GREEN}[6]{C_RESET} 启动 D435 仿真模拟可视化查看器         ({C_YELLOW}--mock{C_RESET} 模式，无需物理相机)")
     print("")
-    print(f"{C_BOLD} [ 核心向导与自动化专区 (Specialized Suites) ]{C_RESET}")
+    print(f"{C_BOLD} [ 视觉标定与自动化专区 (Specialized Suites) ]{C_RESET}")
     tag_map_info = f"{C_GREEN}(已建图){C_RESET}" if status['has_tag_map'] else f"{C_YELLOW}(未建图){C_RESET}"
     print(f"   {C_GREEN}{C_BOLD}[H]{C_RESET} 进入「SCARA 手眼标定与 AprilTag 空间建图」专区 {tag_map_info}")
     print(f"   {C_GREEN}{C_BOLD}[T]{C_RESET} 进入「自动化测试与算法回归」专区")
@@ -196,7 +197,7 @@ def print_calibration_banner(status):
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
     print(f"{C_CYAN}{C_BOLD}       【手眼标定与 AprilTag 空间建图专区】(Calibration & Tag Mapping)         {C_RESET}")
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
-    print(f" 标准流水线: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 选场景]{C_RESET} -> {C_YELLOW}[3 采图]{C_RESET} -> {C_YELLOW}[4 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio]{C_RESET} -> {C_YELLOW}[7 在线AR验证]{C_RESET}")
+    print(f" 标准流水线: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图向导]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio]{C_RESET} -> {C_YELLOW}[6 在线AR验证]{C_RESET}")
 
     scene = status.get('active_scene')
     if scene:
@@ -211,24 +212,21 @@ def print_calibration_banner(status):
     print(f"{C_BOLD} [ 一、 标靶准备 (Target Preparation) ]{C_RESET}")
     print(f"   {C_GREEN}[1]{C_RESET} AprilTag 标靶图纸生成                  (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
     print("")
-    print(f"{C_BOLD} [ 二、 场景与批次分组管理 (Scene & Batch Management) ]{C_RESET}")
-    print(f"   {C_GREEN}{C_BOLD}[2]{C_RESET} {C_CYAN}{C_BOLD}标定采样场景综合管理驾驶舱 (Scene Hub)  ★ GUI卡片画廊/原地连拍/一键发布{C_RESET}")
-    print(f"       {C_GRAY}(相册缩略图流、空间几何健康度体检看板、无缝实时连拍与发布生产){C_RESET}")
+    print(f"{C_BOLD} [ 二、 图像采集与外部向导 (Image Acquisition) ]{C_RESET}")
+    print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍) {C_GRAY}[快捷键: C]{C_RESET}")
     print("")
-    print(f"{C_BOLD} [ 三、 图像采集 (Image Acquisition) ]{C_RESET}")
-    print(f"   {C_GREEN}[3]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍)")
-    print("")
-    print(f"{C_BOLD} [ 四、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
+    print(f"{C_BOLD} [ 三、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
     print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 自动装载当前活动场景{C_RESET}")
     print(f"       {C_GRAY}(整合样本交互审核、高精BA平差解算、热力覆盖率分析与全局体检闭环){C_RESET}")
-    print(f"   {C_GREEN}[4]{C_RESET} 离线图像诊断调优与超精重提取           (当前场景: 16级阈值网格+双尺度CLAHE+0.01px精修)")
-    print(f"   {C_GREEN}[5]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，命令行静默求解) {C_GRAY}[快捷键: M]{C_RESET}")
-    print(f"   {C_GREEN}[6]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (当前场景全量留一盲测，残差矢量评估) {C_GRAY}[快捷键: P]{C_RESET}")
+    print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (当前场景: 16级阈值网格+双尺度CLAHE+0.01px精修) {C_GRAY}[快捷键: 4]{C_RESET}")
+    print(f"   {C_GREEN}[4]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，命令行静默求解) {C_GRAY}[快捷键: 5/M]{C_RESET}")
+    print(f"   {C_GREEN}[5]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (当前场景全量留一盲测，残差矢量评估) {C_GRAY}[快捷键: 6/P]{C_RESET}")
     print("")
-    print(f"{C_BOLD} [ 五、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
-    print(f"   {C_GREEN}[7]{C_RESET} 标定精度在线 AR 综合实时验证系统      (相机实时取流，3D轴/棱柱虚实融合，静态位姿锁定)")
+    print(f"{C_BOLD} [ 四、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
+    print(f"   {C_GREEN}[6]{C_RESET} 标定精度在线 AR 综合实时验证系统      (相机实时取流，3D轴/棱柱虚实融合，静态位姿锁定) {C_GRAY}[快捷键: 7]{C_RESET}")
     print("")
-    print(f"{C_BOLD} [ 六、 辅助工具与维护通道 (Auxiliary Tools & Maintenance) ]{C_RESET}")
+    print(f"{C_BOLD} [ 五、 辅助工具与维护通道 (Auxiliary Tools & Maintenance) ]{C_RESET}")
+    print(f"   {C_GREEN}[H]{C_RESET} 跳转打开工况与场景管理中枢 (Scene Hub)  (工况沙盒画廊、数据体检与生产生效)")
     print(f"   {C_GREEN}[W]{C_RESET} AprilTag 标靶 ID 白名单管理            (查看当前/一键放行探索/指定有效 ID 列表)")
     print(f"   {C_GREEN}[V]{C_RESET} 浏览当前场景标注与分析目录            (在系统资源管理器中打开当前场景 visualized/)")
     print(f"   {C_GREEN}[D]{C_RESET} 单帧标靶漏检病因深度诊断与切片分析    (分析真图淘汰候选框/尺寸/反差/模糊原因)")
@@ -819,26 +817,26 @@ def submenu_calibration_suite(cached_status=None):
         else:
             status = check_env_status()
         print_calibration_banner(status)
-        choice = input(f"请输入工序编号 [S, 1-8, W, V, D, C, M, P, B]: ").strip().upper()
+        choice = input(f"请输入工序编号 [S, 1-6, H, W, V, D, C, 8, B]: ").strip().upper()
         
         if choice in ('S', 'STUDIO', 'O'):
             run_offline_studio(status)
         elif choice == '1':
             run_generate_tags()
-        elif choice in ('2', '0', 'SCENE', 'SCENES'):
+        elif choice in ('2', 'C', 'CAP'):
+            run_tag_capture_wizard(status)
+        elif choice in ('3', '4'):
+            run_tag_super_extractor(status)
+        elif choice in ('4', '5', 'M'):
+            run_build_tag_map(status)
+        elif choice in ('5', '6', 'P'):
+            run_offline_verifier(status)
+        elif choice in ('6', '7'):
+            run_tag_calibration_verifier()
+        elif choice in ('H', 'HUB', 'SCENE', '0'):
             run_scene_hub(status)
         elif choice in ('CLI', 'TXT'):
             submenu_scene_manager(status.get('scene_mgr'))
-        elif choice == '3':
-            run_tag_capture_wizard(status)
-        elif choice == '4':
-            run_tag_super_extractor(status)
-        elif choice in ('5', 'M'):
-            run_build_tag_map(status)
-        elif choice in ('6', 'P'):
-            run_offline_verifier(status)
-        elif choice == '7':
-            run_tag_calibration_verifier()
         elif choice == '8':
             run_hand_eye_calibration()
         elif choice == 'W':
@@ -980,18 +978,20 @@ def main():
     while True:
         status = check_env_status()
         print_main_banner(status)
-        choice = input(f"请输入选项编号并按回车 [1-5, H, T, 8, 9, C, 0]: ").strip().upper()
+        choice = input(f"请输入选项编号并按回车 [1-6, H, T, 8, 9, C, 0]: ").strip().upper()
         
         if choice == '1':
             run_tool_d435_real()
-        elif choice == '2':
-            run_tool_d435_mock()
+        elif choice in ('2', 'HUB', 'SCENE'):
+            run_scene_hub(status)
         elif choice == '3':
             run_tool_top_real()
         elif choice == '4':
             run_tool_top_offline()
         elif choice == '5':
             run_gen_mock_snapshot()
+        elif choice == '6':
+            run_tool_d435_mock()
         elif choice in ('H', 'CAL'):
             submenu_calibration_suite(cached_status=status)
         elif choice == 'T':

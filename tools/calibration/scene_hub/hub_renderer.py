@@ -17,7 +17,6 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from tools.calibration.scene_hub.hub_state import HubState
-from tools.calibration.scene_hub.hub_capture_stream import HubCaptureStream
 
 
 # 字体内存缓存
@@ -77,7 +76,6 @@ class HubRenderer:
     def __init__(self):
         self.canvas_w = 1280
         self.canvas_h = 720
-        self.capture_stream_renderer = HubCaptureStream()
 
         # 调色板定义 (深色科技风)
         self.COLOR_BG = (18, 20, 24)           # 全局底色
@@ -197,21 +195,11 @@ class HubRenderer:
 
     def render(self, state: HubState) -> np.ndarray:
         """主绘制入口，返回 1280x720 BGR 图像 (带极速帧级缓存，支持高频 60+ FPS Hover)"""
-        # 相机实时连拍向导模式必须每帧实时绘制视频流
-        if state.mode == HubState.MODE_CAPTURE:
-            canvas = np.full((self.canvas_h, self.canvas_w, 3), self.COLOR_BG, dtype=np.uint8)
-            self._render_header(canvas, state)
-            self._render_capture_viewport(canvas, state)
-            self._render_footer(canvas, state)
-            return canvas
-
         hover_key = self._get_interactive_hover_key(state)
         now = time.time()
         toast_active = state.toast_time > now
-        flash_active = state.flash_timer > now
 
         cache_key = (
-            state.mode,
             state.view_mode,
             state.selected_scene_idx,
             state.active_scene_id,
@@ -224,7 +212,6 @@ class HubRenderer:
             state.context_menu_scene_idx if state.context_menu_open else None,
             toast_active,
             state.toast_msg if toast_active else "",
-            flash_active,
             len(state.scenes),
             len(state.current_images),
             hover_key
@@ -282,7 +269,7 @@ class HubRenderer:
         # 1. 系统标题与状态点 (x: 16~390)
         cv2.circle(canvas, (22, 25), 6, (0, 255, 180), -1)
         cv2.putText(canvas, "flux_vision_3d", (36, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_CYAN, 2, cv2.LINE_AA)
-        draw_text(canvas, "| 标定驾驶舱", (166, 16), font_size=15, color=self.COLOR_WHITE)
+        draw_text(canvas, "| 场景管理中枢", (166, 16), font_size=15, color=self.COLOR_WHITE)
 
         # 2. 三段式视图模式切换 Tab 胶囊组件 (Segmented Tabs, x: 290~530, y: 9~41)
         cv2.rectangle(canvas, (288, 9), (532, 41), (20, 25, 34), -1)
@@ -473,7 +460,7 @@ class HubRenderer:
         self._draw_button(canvas, (175, btn1_y, 155, 36), "[V] 场景总目录", mpos)
 
         btn2_y = btn1_y + 44
-        self._draw_button(canvas, (10, btn2_y, 320, 36), "[C] 相机连拍采图向导", mpos, theme_color=(0, 220, 255))
+        self._draw_button(canvas, (10, btn2_y, 320, 36), "[C] 启动采图向导工具", mpos, theme_color=(0, 220, 255))
 
     def _render_center_report_panel(self, canvas: np.ndarray, state: HubState, sc):
         """渲染中间栏：场景综合体检报告与几何健康看板 (x: 340~800, y: 50~670)
@@ -783,14 +770,8 @@ class HubRenderer:
         draw_text(canvas, "【纯净数据看板模式】已隐藏相册缩略图以获得最大信息密度   |   按 [F] 键或点击顶部 Tab 随时返回标准三栏或大图预览",
                   (box_x + 90, box_y + box_h - 22), font_size=13, color=self.COLOR_GRAY)
 
-    def _render_capture_viewport(self, canvas: np.ndarray, state: HubState):
-        """渲染原地相机取流视口 (x: 0~1280, y: 50~670)"""
-        vw, vh = 1280, 620
-        stream_view = self.capture_stream_renderer.render_stream_viewport(state, vw, vh)
-        canvas[50:50 + vh, 0:vw] = stream_view
-
     def _render_footer(self, canvas: np.ndarray, state: HubState):
-        """渲染底部状态与快捷键导航栏 (670~720px) - 包含右下角 Camera 状态指示灯"""
+        """渲染底部状态与快捷键导航栏 (670~720px) - 包含右侧沙盒数据隔离状态"""
         cv2.rectangle(canvas, (0, 670), (self.canvas_w, 720), (12, 14, 18), -1)
         cv2.line(canvas, (0, 670), (self.canvas_w, 670), self.COLOR_BORDER, 1)
 
@@ -805,38 +786,35 @@ class HubRenderer:
             elif state.is_toolbox_open:
                 draw_text(canvas, "【标定工具箱】[S] Studio平差  [A] 在线AR  [L] 盲测  [D] 漏检切片  [T] 图纸  [ESC/M] 关闭",
                           (20, 686), font_size=14, color=(0, 255, 200), bold=True)
-            elif state.mode == HubState.MODE_CAPTURE:
-                draw_text(canvas, "[Space] 抓拍存入当前场景   |   [ESC / C] 退出采图返回三栏看板   |   [S] 立即平差",
-                          (20, 686), font_size=15, color=self.COLOR_WHITE)
             else:
-                draw_text(canvas, "[↑/↓] 选择场景  [⏎] 设为活动  [P] 生效生产  [C] 连拍  [S] 平差  [F] 放大  [ESC] 退出",
+                draw_text(canvas, "[↑/↓] 选择场景  [⏎] 设为活动  [P] 生效生产  [C] 采图向导  [S] 平差  [F] 视图  [ESC] 退出",
                           (20, 686), font_size=14, color=(210, 220, 230))
 
-        # 2. 右侧 Camera 状态指示胶囊 (x: 930~1265, y: 678~712)
-        cs = state.camera_streamer
+        # 2. 右侧 沙盒数据隔离与生产基准胶囊 (x: 930~1265, y: 678~712)
+        sc = state.get_selected_scene()
         cam_x, cam_y, cam_w, cam_h = 930, 678, 335, 34
 
-        if cs.is_mock:
-            status_text = f"CAM: MOCK (仿真流) {cs.fps:.1f} FPS"
-            lamp_color = (0, 220, 255)  # 亮青色
-            bg_box = (18, 28, 36)
-            border_box = (30, 60, 80)
-        elif cs.is_running:
-            desc_sub = cs.stream_desc[:12] if hasattr(cs, "stream_desc") else "D435"
-            status_text = f"CAM: ONLINE ({desc_sub}) {cs.fps:.1f} FPS"
-            lamp_color = (0, 255, 140)  # 亮绿色
+        if sc and sc.is_published:
+            status_text = "SANDBOX: ★ 生产运行基准"
+            lamp_color = (0, 255, 255)  # 金黄
+            bg_box = (26, 28, 16)
+            border_box = (60, 68, 30)
+        elif sc and sc.ba_solved:
+            status_text = f"SANDBOX: 已平差 ({sc.image_count}帧, {sc.global_rmse_px:.2f}px)"
+            lamp_color = (0, 255, 140)  # 亮绿
             bg_box = (16, 32, 24)
             border_box = (20, 80, 50)
         else:
-            status_text = "CAM: STANDBY (硬件待机就绪)"
-            lamp_color = (130, 150, 170)  # 灰青待机
-            bg_box = (20, 22, 28)
-            border_box = (40, 48, 58)
+            img_c = sc.image_count if sc else 0
+            status_text = f"SANDBOX: 草稿沙盒 ({img_c} 帧样本)"
+            lamp_color = (140, 180, 220)  # 浅蓝
+            bg_box = (20, 24, 34)
+            border_box = (35, 48, 68)
 
         cv2.rectangle(canvas, (cam_x, cam_y), (cam_x + cam_w, cam_y + cam_h), bg_box, -1)
         cv2.rectangle(canvas, (cam_x, cam_y), (cam_x + cam_w, cam_y + cam_h), border_box, 1)
 
-        # 呼吸灯指示圆点与外发光环
+        # 状态指示圆点与外发光环
         cv2.circle(canvas, (cam_x + 16, cam_y + 17), 5, lamp_color, -1)
         cv2.circle(canvas, (cam_x + 16, cam_y + 17), 8, lamp_color, 1)
 

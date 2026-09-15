@@ -12,7 +12,6 @@ import cv2
 import numpy as np
 
 from src.calibration.scene_manager import CalibrationSceneManager, CalibrationScene
-from src.calibration.camera_streamer import CameraStreamer
 
 
 def imread_unicode(filepath: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
@@ -42,10 +41,7 @@ def imwrite_unicode(filepath: str, img: np.ndarray) -> bool:
 
 
 class HubState:
-    """Scene Hub 统一状态与缓存管理器"""
-
-    MODE_INSPECTOR = "inspector"  # 场景画廊与体检看板模式
-    MODE_CAPTURE = "capture"      # 原地实时相机取流连拍模式
+    """工况与场景管理中枢 (Scene Hub) 统一状态与缓存模型"""
 
     # 核心视图模式 (标准三栏 / 全宽大图 / 纯净数据看板)
     VIEW_STANDARD = "standard"    # 模式1: 标准三栏 (左340, 中460, 右480)
@@ -54,7 +50,6 @@ class HubState:
 
     def __init__(self, scene_mgr: CalibrationSceneManager = None, force_mock: bool = False):
         self.scene_mgr = scene_mgr or CalibrationSceneManager()
-        self.mode = self.MODE_INSPECTOR
 
         self.scenes: list[CalibrationScene] = []
         self.active_scene_id = ""
@@ -91,12 +86,6 @@ class HubState:
         # 当前鼠标悬停坐标 (用于按钮 Hover 高亮效果)
         self.mouse_x = -1
         self.mouse_y = -1
-
-        # 空格抓拍白闪动效倒计时
-        self.flash_timer = 0.0
-
-        # 相机取流器句柄
-        self.camera_streamer = CameraStreamer(force_mock=force_mock)
 
         # 初始加载场景
         self.refresh_scenes()

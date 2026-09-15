@@ -50,10 +50,11 @@ class TagSceneHubApp:
     """Scene Hub 主应用"""
 
     def __init__(self, force_mock: bool = False):
+        self.force_mock = force_mock
         self.scene_mgr = CalibrationSceneManager()
         self.state = HubState(self.scene_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
-        self.window_name = "flux_vision_3d | AprilTag Scene Hub"
+        self.window_name = "flux_vision_3d | 工况与场景管理中枢 (Scene Hub)"
         self._running = True
 
     def run(self):
@@ -131,15 +132,7 @@ class TagSceneHubApp:
 
             # [ESC] 或 [Q] 退出逻辑 (非工具箱与说明模式)
             if raw_key in (27, ord('q'), ord('Q')):
-                if self.state.mode == HubState.MODE_CAPTURE:
-                    # 仅退出采图视口，返回三栏看板
-                    self.state.mode = HubState.MODE_INSPECTOR
-                    self.state.camera_streamer.stop()
-                    self.state.set_toast("已退出采图向导，返回三栏看板。")
-                    continue
-                else:
-                    # 退出整个 Scene Hub
-                    break
+                break
 
             # [M] 切换标定综合工具箱菜单
             if key in (ord('m'), ord('M')):
@@ -151,27 +144,9 @@ class TagSceneHubApp:
                 self.state.toggle_help_modal()
                 continue
 
-            # [C] 切换采图模式
+            # [C] 启动外部专属多视角交互采图向导
             if key in (ord('c'), ord('C')):
-                self._toggle_capture_mode()
-                continue
-
-            # =================== 采图模式下的事件 ===================
-            if self.state.mode == HubState.MODE_CAPTURE:
-                # [Space] 空格抓拍
-                if raw_key == 32:
-                    ok, frame = self.state.camera_streamer.read()
-                    if ok and frame is not None:
-                        saved_path = self.state.save_capture_frame(frame)
-                    continue
-
-                # [S] 拍完直接平差
-                if key in (ord('s'), ord('S')):
-                    self.state.camera_streamer.stop()
-                    self.state.mode = HubState.MODE_INSPECTOR
-                    self._launch_offline_studio()
-                    continue
-
+                self._launch_capture_wizard()
                 continue
 
             # =================== 标准看板模式下的事件 (多键位全覆盖) ===================
@@ -228,21 +203,18 @@ class TagSceneHubApp:
                 self._handle_delete_scene()
 
         # 退出清理
-        self.state.camera_streamer.stop()
         cv2.destroyAllWindows()
 
-    def _toggle_capture_mode(self):
-        """切入或退出相机实时连拍向导"""
-        if self.state.mode == HubState.MODE_INSPECTOR:
-            self.state.mode = HubState.MODE_CAPTURE
-            self.state.camera_streamer.start()
-            sc = self.state.get_selected_scene()
-            sid = sc.name if sc else ""
-            self.state.set_toast(f"已切入相机连拍向导 (按空格抓拍，保存至场景【{sid}】)")
-        else:
-            self.state.mode = HubState.MODE_INSPECTOR
-            self.state.camera_streamer.stop()
-            self.state.set_toast("已返回三栏看板。")
+    def _launch_capture_wizard(self):
+        """启动 AprilTag 专属多视角交互式采图向导 (tag_capture_wizard.py)"""
+        sc = self.state.get_selected_scene()
+        target_dir = sc.raw_images_dir if sc else ""
+        cmd = [sys.executable, os.path.join(PROJECT_ROOT, "tools", "calibration", "tag_capture_wizard.py")]
+        if target_dir:
+            cmd.extend(["--output-dir", target_dir])
+        if self.force_mock:
+            cmd.append("--mock")
+        self._run_subtool(cmd, "多视角交互采图向导")
 
     def _on_mouse_event(self, event, x, y, flags, param):
         """处理鼠标点击、悬浮 Hover 与滚轮切片交互"""
@@ -413,14 +385,6 @@ class TagSceneHubApp:
             self._running = False
             return
 
-        # 如果在相机采图全屏模式，点击画面抓拍
-        if self.state.mode == HubState.MODE_CAPTURE:
-            if 50 < y < 670:
-                ok, frame = self.state.camera_streamer.read()
-                if ok and frame is not None:
-                    self.state.save_capture_frame(frame)
-            return
-
         # 5.1 点击左侧场景列表卡片 (x: 10~330, y: 90~480)
         if 10 <= x <= 330 and 90 <= y <= 480:
             card_h = 70
@@ -469,9 +433,9 @@ class TagSceneHubApp:
         if 175 <= x <= 330 and 544 <= y <= 580:
             self._handle_open_directory()
             return
-        # 按钮 3: 原地相机连拍采图向导 [C] (x: 10~330, y: 588~624)
+        # 按钮 3: 启动采图向导工具 [C] (x: 10~330, y: 588~624)
         if 10 <= x <= 330 and 588 <= y <= 624:
-            self._toggle_capture_mode()
+            self._launch_capture_wizard()
             return
 
         # 5.4 全宽大图预览模式下的右上角按钮交互 (x: 340~1280)
@@ -570,9 +534,8 @@ class TagSceneHubApp:
         self.state.set_toast(msg)
 
     def _run_subtool(self, cmd: list, desc: str):
-        """统一子工具拉起执行器：停止当前相机流、销毁主窗、运行子工具、恢复环境与刷新状态"""
+        """统一子工具拉起执行器：销毁主窗、运行子工具、恢复环境与刷新状态"""
         self.state.set_toast(f"正在唤起 {desc}...")
-        self.state.camera_streamer.stop()
         cv2.destroyAllWindows()
 
         try:
@@ -609,7 +572,7 @@ class TagSceneHubApp:
         map_p = sc.map_path if sc and os.path.exists(sc.map_path) else "config/tags_map.yaml"
         cmd = [sys.executable, "tools/calibration/tag_calibration_verifier.py",
                "--map", map_p]
-        if self.state.camera_streamer.is_mock:
+        if self.force_mock:
             cmd.append("--mock")
         self._run_subtool(cmd, "在线 AR 综合验证系统")
 

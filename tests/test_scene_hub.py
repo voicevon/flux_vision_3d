@@ -84,21 +84,24 @@ class TestSceneHub(unittest.TestCase):
         self.assertEqual(len(state.current_images), 2)
 
     def test_hub_renderer_canvas(self):
-        """测试 HubRenderer 双缓冲画布渲染输出有效性"""
+        """测试 HubRenderer 双缓冲画布在不同视图模式下的渲染输出有效性"""
         state = HubState(self.scene_mgr, force_mock=True)
         renderer = HubRenderer()
 
-        # 1. 渲染画廊模式
-        state.mode = HubState.MODE_INSPECTOR
-        canvas_inspector = renderer.render(state)
-        self.assertEqual(canvas_inspector.shape, (720, 1280, 3))
+        # 1. 渲染标准三栏视图
+        state.set_view_mode(HubState.VIEW_STANDARD)
+        canvas_std = renderer.render(state)
+        self.assertEqual(canvas_std.shape, (720, 1280, 3))
 
-        # 2. 渲染原地采图模式
-        state.mode = HubState.MODE_CAPTURE
-        state.camera_streamer.start()
-        canvas_capture = renderer.render(state)
-        self.assertEqual(canvas_capture.shape, (720, 1280, 3))
-        state.camera_streamer.stop()
+        # 2. 渲染全宽大图沉浸视图
+        state.set_view_mode(HubState.VIEW_EXPANDED)
+        canvas_exp = renderer.render(state)
+        self.assertEqual(canvas_exp.shape, (720, 1280, 3))
+
+        # 3. 渲染纯净体检健康大屏视图
+        state.set_view_mode(HubState.VIEW_DASHBOARD)
+        canvas_dash = renderer.render(state)
+        self.assertEqual(canvas_dash.shape, (720, 1280, 3))
 
     def test_hub_toolbox_menu(self):
         """测试标定工具箱总菜单开关与浮层渲染"""
