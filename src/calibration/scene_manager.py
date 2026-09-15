@@ -145,7 +145,7 @@ class CalibrationScene:
             yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
     @classmethod
-    def load(cls, scene_dir: str) -> Optional["CalibrationScene"]:
+    def load(cls, scene_dir: str, force_refresh: bool = False) -> Optional["CalibrationScene"]:
         """从已有场景物理目录构建加载 CalibrationScene 对象"""
         if not os.path.isdir(scene_dir):
             return None
@@ -172,6 +172,11 @@ class CalibrationScene:
         status = meta.get("status", {})
         is_published = bool(status.get("is_published", False))
 
+        image_count = int(status.get("image_count", 0))
+        active_image_count = int(status.get("active_image_count", 0))
+        ba_solved = bool(status.get("ba_solved", False))
+        global_rmse_px = float(status.get("global_rmse_px", 0.0))
+
         scene = cls(
             scene_id=scene_id,
             name=name,
@@ -183,9 +188,14 @@ class CalibrationScene:
             valid_tag_ids=valid_tag_ids,
             origin_tag_id=origin_tag_id,
             x_axis_tag_id=x_axis_tag_id,
+            image_count=image_count,
+            active_image_count=active_image_count,
+            ba_solved=ba_solved,
+            global_rmse_px=global_rmse_px,
             is_published=is_published
         )
-        scene.refresh_stats()
+        if force_refresh or not status:
+            scene.refresh_stats()
         return scene
 
 
@@ -204,6 +214,8 @@ class CalibrationSceneManager:
         self.prod_map_path = os.path.abspath(prod_map_path)
         self.legacy_dir = os.path.abspath(legacy_dir) if legacy_dir else os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
         self.active_marker_file = os.path.join(self.scenes_dir, ".active_scene")
+        self._cached_active_scene: Optional[CalibrationScene] = None
+        self._cached_scenes: Dict[str, CalibrationScene] = {}
         
         # 确保根目录存在并执行历史数据向前兼容自愈
         os.makedirs(self.scenes_dir, exist_ok=True)
@@ -365,16 +377,22 @@ class CalibrationSceneManager:
             return sorted(existing)[-1]
         return ""
 
-    def get_active_scene(self) -> CalibrationScene:
-        """获取当前活动场景对象"""
+    def get_active_scene(self, force_refresh: bool = False) -> CalibrationScene:
+        """获取当前活动场景对象 (带内存缓存，避免重复全量反序列化大文件)"""
         active_id = self.get_active_scene_id()
+        if not force_refresh and self._cached_active_scene is not None and self._cached_active_scene.scene_id == active_id:
+            return self._cached_active_scene
+
         if active_id:
-            scene = CalibrationScene.load(os.path.join(self.scenes_dir, active_id))
+            scene = CalibrationScene.load(os.path.join(self.scenes_dir, active_id), force_refresh=force_refresh)
             if scene:
+                self._cached_active_scene = scene
                 return scene
 
         # 若无有效场景则自动构建默认场景
-        return self.create_scene(alias="默认工位", description="系统自动初始化默认场景")
+        new_scene = self.create_scene(alias="默认工位", description="系统自动初始化默认场景")
+        self._cached_active_scene = new_scene
+        return new_scene
 
     def set_active_scene(self, scene_id: str) -> bool:
         """设置当前活动场景"""
@@ -385,10 +403,16 @@ class CalibrationSceneManager:
         try:
             with open(self.active_marker_file, "w", encoding="utf-8") as f:
                 f.write(scene_id.strip())
+            self._cached_active_scene = CalibrationScene.load(target_dir)
             return True
         except Exception as e:
             print(f"[SCENE] 切换活动场景失败: {e}")
             return False
+
+    def invalidate_cache(self):
+        """显式使活动场景与列表缓存失效"""
+        self._cached_active_scene = None
+        self._cached_scenes.clear()
 
     def create_scene(self, alias: str, description: str = "") -> CalibrationScene:
         """根据操作员自定义别名创建新场景 (安全 ASCII 时间戳目录 + 完整友好中文别名)"""

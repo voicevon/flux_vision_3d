@@ -1,31 +1,53 @@
-# flux_vision_3d — 芦笋 3D 视觉与抓取位姿估计系统
+# flux_vision_3d — 芦笋 3D 视觉与智能抓取位姿估计系统
 
-
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
-[![OpenCV](https://img.shields.io/badge/OpenCV-5.0.0-green.svg)](https://opencv.org)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
+[![OpenCV](https://img.shields.io/badge/OpenCV-4.10+-green.svg)](https://opencv.org)
 [![Camera](https://img.shields.io/badge/Camera-Intel%20RealSense%20D435-orange.svg)](https://www.intelrealsense.com)
 [![Tests](https://img.shields.io/badge/Tests-100%25%20Passed-brightgreen.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-lightgrey.svg)]()
 
-`flux_vision_3d` 是专门针对**传送带上多层堆叠、并排贴合的细长果蔬（绿芦笋）**研发的工业级 3D 视觉感知与智能抓取位姿估计系统。
+`flux_vision_3d` 是专为**流水线传送带上多层复杂堆叠、紧密并排贴合的细长果蔬（绿芦笋）**研发的工业级 3D 视觉感知、全场景空间标定与智能抓取位姿估计系统。
 
-系统通过顶置 3D 深度相机实时解算最顶层芦笋的空间抓取位姿 $(X, Y, Z, R)$，生成标准 G-code 驱动下游 **SCARA 机械臂（flux_loader_mks_v16）** 完成无碰撞下探抓取，并通过 BLE 向 **分发分拣机构（flux_dealer）** 写入多级品质分拣槽位。
+系统通过顶置 3D 深度相机（Intel RealSense D435）实时感知流水线物料分布，完成传送带纠偏、暗缝分割、高度分层与主轴拟合，解算最顶层芦笋的空间抓取位姿 $(X, Y, Z, R)$，生成标准 G-code 驱动下游 **SCARA 机械臂（flux_loader_mks_v16）** 实现高动态无碰撞分拣抓取，并通过 BLE 蓝牙低功耗通信向 **分发翻转机构（flux_dealer）** 写入多级品质分拣槽位。
+
+同时，系统内置完整的**工业级全生命周期 AprilTag 空间建图与手眼标定工具链**，涵盖 **标定场景管理驾驶舱 (Scene Hub)**、**离线标定综合工作站 (Offline Studio)**、**离线精度体检台 (Offline Verifier)** 与 **在线 AR 虚实融合验收系统**，提供“草稿沙盒隔离 $\rightarrow$ 活动场景验证 $\rightarrow$ 生产原子生效”的严格工业闭环。
 
 ---
 
-## 系统拓扑
+## 目录
+
+- [系统拓扑与业务流](#系统拓扑与业务流)
+- [核心硬件与技术规格](#核心硬件与技术规格)
+- [快速上手](#快速上手)
+  - [环境准备](#环境准备)
+  - [一键启动控制终端](#一键启动控制终端)
+  - [控制终端功能总览](#控制终端功能总览)
+- [AprilTag 空间标定全流程体系](#apriltag-空间标定全流程体系)
+  - [标定六大工序流水线](#标定六大工序流水线)
+  - [场景驾驶舱 (Scene Hub) 机制与三模态视图](#场景驾驶舱-scene-hub-机制与三模态视图)
+  - [离线标定工作站 (Offline Studio)](#离线标定工作站-offline-studio)
+  - [离线精度体检台 (Offline Verifier)](#离线精度体检台-offline-verifier)
+- [视觉算法管线详解](#视觉算法管线详解)
+- [项目结构与模块划分](#项目结构与模块划分)
+- [自动化测试与质量保障](#自动化测试与质量保障)
+- [技术文档导航](#技术文档导航)
+
+---
+
+## 系统拓扑与业务流
 
 ```mermaid
 graph LR
-    subgraph 分拣系统
-        Vision["视觉识别大脑<br>(flux_vision_3d)<br>PC + RealSense D435"]
-        Loader["上料机械臂<br>(flux_loader_mks_v16)<br>SCARA + 双夹爪"]
-        Dealer["分发分拣机构<br>(flux_dealer)<br>ESP32 级联翻转"]
+    subgraph 视觉与控制系统
+        Vision["视觉感知与大脑<br><b>flux_vision_3d</b><br>PC + RealSense D435"]
+        Loader["SCARA 上料机械臂<br><b>flux_loader_mks_v16</b><br>Marlin G-code + 双气动夹爪"]
+        Dealer["分发分拣执行器<br><b>flux_dealer</b><br>ESP32 8级级联步进翻料"]
     end
 
-    Vision -- "串口 G-code (X, Y, Z, R)" --> Loader
-    Loader -- "ACK: DONE" --> Vision
-    Vision -- "BLE 单播 (Target ID: 1~8)" --> Dealer
-    Dealer -- "ACK: RECEIVED" --> Vision
+    Vision -- "串口 Marlin G-code<br>(G0 X.. Y.. R.. / G1 Z.. / M4)" --> Loader
+    Loader -- "串口 ACK 响应<br>(DONE / READY)" --> Vision
+    Vision -- "BLE 蓝牙单播数据包<br>(Target Grade ID: 1~8)" --> Dealer
+    Dealer -- "BLE 状态回传<br>(RECEIVED / ACK)" --> Vision
 
     style Vision fill:#1f4e79,stroke:#0d2c54,stroke-width:2px,color:#fff
     style Loader fill:#2e75b6,stroke:#1f4e79,stroke-width:2px,color:#fff
@@ -34,20 +56,18 @@ graph LR
 
 ---
 
-## 核心硬件规格
+## 核心硬件与技术规格
 
-| 维度 | 规格 | 工程要点 |
+| 维度 | 规格 / 指标 | 工程设计与技术要点 |
 | :--- | :--- | :--- |
-| **3D 传感器** | Intel RealSense D435 (主动红外双目 RGB-D) | 无 IMU，纯双目结构光 + 彩色图像 |
-| **安装方式** | 黑色传送带正上方，大倾角俯视 $(\pm 30°)$ | 算法通过传送带点云平面拟合自解算倾角，无需人工测量 |
-| **工作距离** | $550 \sim 700\text{ mm}$（基准 ~640mm） | 避开 D435 近距盲区 (28cm) |
-| **空间标靶** | AprilTag 16h5 × 30 枚 (ID 0~29, 50mm) | Tag 0 锁定 SCARA 原点，Tag 1~29 贴机架静止刚体阵列 |
-| **坐标标定** | AprilTag 地图在线自定位 + 手眼标定融合 | 支持实时 PnP (`tag_online`)、历史缓存 (`tag_cached`) 与 SVD 接触式标定 (`hand_eye`) |
-| **执行机构** | 4 轴 SCARA + 双开闭夹爪 (Marlin G-code) | 串口通信：`G0 X.. Y.. R..` → `G1 Z..` → `M4` |
-| **分拣机构** | 8 级级联步进翻料 (ESP32 BLE) | 蓝牙单播：`Target ID: 1~8` |
-
-> [!TIP]
-> **多源标定融合与安全降级**：`asparagus_analyzer.py` 优先使用 AprilTag 在线实时解算的世界外参；当现场标靶被遮挡时平滑沿用历史锁定缓存；若无 Tag 地图则回退至手工接触式手眼标定矩阵（`hand_eye`）；若完全未标定则触发防撞兜底，绝对拦截相机高程直接传入机械臂。详见 [apriltag_calibration.md](docs/apriltag_calibration.md)。
+| **3D 深度传感器** | Intel RealSense D435 | 主动红外双目结构光 + 彩色全局快门，支持 1280×720 / 1920×1080 图像流 |
+| **安装方式与倾角** | 黑色皮带正上方大倾角俯视 $(\pm 30°)$ | 算法内置传送带点云平面 RANSAC 自适应纠偏，消除倾角安装导致的深度梯度误差 |
+| **推荐工作距离** | $550 \sim 700\text{ mm}$（基准 ~640mm） | 严格避开 D435 近距物理盲区（< 280mm），保证视野覆盖整个输送带截面 |
+| **空间标靶系统** | AprilTag 16h5 阵列 (ID 0~29, 边长 50mm) | Tag 0 物理锁定机械臂 SCARA 笛卡尔原点，Tag 1~29 固联于刚性机架作为空间建图标尺 |
+| **多源标定融合** | 在线自定位 + 历史缓存 + 降级兜底 | 优先使用 AprilTag 在线实时 PnP 外参；遮挡时平滑锁定历史外参；无标靶回退至接触式手眼标定矩阵 |
+| **标定管理机制** | 场景沙盒隔离 + 生产原子生效 | 独立管理不同采样工况（Scene Hub），只有经过充分 BA 平差与体检达标的地图才可一键原子写入生产基准 |
+| **执行机构通信** | 4 轴 SCARA (Marlin 固件) | 串口指令流：`G0 X{x} Y{y} R{r}` (水平对位) $\rightarrow$ `G1 Z{z}` (无碰撞下探) $\rightarrow$ `M4` (气爪闭合) |
+| **分发机构通信** | 8 级级联步进翻料器 (ESP32) | 低功耗蓝牙 (BLE) 单播广播，下发分拣等级槽位 `Target Grade: 1~8` |
 
 ---
 
@@ -55,108 +75,329 @@ graph LR
 
 ### 环境准备
 
-系统推荐 Windows 10/11 64 位，Python 3.10+：
+系统推荐运行在 64 位 **Windows 10 / 11** 环境，需已安装 **Python 3.10+** 及 USB 3.0 控制器：
 
 ```powershell
+# 1. 克隆或进入项目根目录
 cd d:\Software\antigravity\flux_vision_3d
+
+# 2. 安装 Python 核心依赖项
 pip install -r requirements.txt
 ```
 
-### 启动控制终端
+> [!TIP]
+> 无物理 RealSense D435 相机时，系统提供完整的脱机仿真模式（`--mock`）和快照回放机制，完全支持在离线个人电脑上开展算法验证与工具链演练。
+
+### 一键启动控制终端
+
+项目内置了一键交互式启动控制台：
 
 ```powershell
-./run          # PowerShell
-run.bat        # CMD
+# PowerShell 环境
+./run.ps1
+# 或简写
+./run
+
+# Windows CMD 命令行
+run.bat
 ```
 
-进入控制终端后，系统分为顶级核心功能与二级标定专区：
+也可以通过 Python 命令直接拉起控制终端：
 
-| 顶级功能入口 | 说明 |
-| :--- | :--- |
-| `[1] 实时相机主视窗` | D435 查看器、鼠标 3D 探测、`[D]` 芦笋检测、`[G]` 打印 G-code、`[S]` 抓拍快照 |
-| `[2] 手眼标定与 AprilTag 建图` | **进入标定专区**：制靶、采图、BA 建图平差、在线 AR 验证、审核画板、白名单管理 |
-| `[3] 模拟生成快照帧` | 无真实相机时，一键生成虚拟芦笋点云快照帧 |
-| `[4] 运行最新快照解算` | 单独载入本地最新快照进行算法快速验证 |
-| `[5] 自动化全量测试` | 运行测试专区（真实快照 20 组、仿真管线、空间平差单元测试等） |
-| `[9] 硬件与环境诊断` | 诊断 Python、OpenCV、pyrealsense2、固件与连接状态 |
+```powershell
+python tools/cli_menu.py
+```
 
-### 查看器快捷键
+### 控制终端功能总览
 
-| 按键 | 功能 |
+终端启动后会自动执行轻量环境自检（Python、OpenCV、NumPy、D435 相机连接状态、快照数量、当前活动标定场景与生产地图状态），并提供清晰的功能分区导航：
+
+#### 1. 顶级主菜单 (Main Console)
+
+```text
+===============================================================================
+             flux_vision_3d 芦笋 3D 视觉与抓取位姿估计系统 - 控制终端              
+===============================================================================
+ 环境状态: Python 3.11.x | OpenCV: v4.10.x | D435驱动: 已连接 / 仿真就绪
+ 本地数据: snapshots 快照 (N 帧可用) | 当前标定场景 (active_scene_id)
+-------------------------------------------------------------------------------
+ [ 视觉预览与日常解算 (Vision Tools) ]
+   [1] 启动 D435 实时相机查看器与深度探针     (物理硬件模式)
+   [2] 启动 D435 仿真模拟可视化查看器         (--mock 模式，无需物理相机)
+   [3] 解算最顶层芦笋抓取位姿 (实时相机)      (find_top_asparagus.py 单帧采集解算)
+   [4] 解算最顶层芦笋抓取位姿 (离线快照)      (自动读取最新本地快照快速验证)
+   [5] 快速生成一帧模拟快照至 snapshots       (方便无相机时进行算法开发验证)
+
+ [ 核心向导与自动化专区 (Specialized Suites) ]
+   [H] 进入「SCARA 手眼标定与 AprilTag 空间建图」专区 (已建图/未建图状态)
+   [T] 进入「自动化测试与算法回归」专区
+
+ [ 依赖与系统维护 ]
+   [8] 安装 / 更新项目依赖包                  (pip install -r requirements.txt)
+   [9] 详细环境与驱动诊断
+   [C] 进入项目根目录命令行 (CMD)
+   [0] 退出控制终端
+===============================================================================
+```
+
+#### 2. 相机查看器快捷键 (`d435_viewer.py`)
+
+在 `[1]` 或 `[2]` 启动的相机视窗中，提供丰富的交互快捷键：
+
+| 按键 | 功能说明 |
 | :---: | :--- |
-| `D` | 开启/关闭芦笋检测与顶层高亮 |
-| `G` | 打印当前最顶层芦笋的 SCARA G-code |
-| `S` | 抓拍 RGB、深度热力图与点云到 `data/snapshots/` |
-| `H` | 切换纠偏高度图 / 原生深度图 |
-| `A` / `[` / `]` | 调节深度色彩区间（含自适应拉伸） |
+| `Space` | **画面定格 / 继续取流**：暂停当前画面便于巡检细节 |
+| `D` | **开启 / 关闭芦笋视觉分析**：实时显示传送带纠偏轮廓、抓取候选轴与顶层芦笋高亮 |
+| `G` | **打印最顶层芦笋 G-code**：在终端打印当前最适抓取位姿的 SCARA 驱动代码与位姿数据 |
+| `S` | **抓拍快照**：同步保存原色彩图、伪彩色深度热力图及点云数据至 `data/snapshots/` |
+| `H` | **切换显示模式**：在矫正高度图 (Corrected Height) 与原生深度图 (Raw Depth) 之间切换 |
+| `A` | **自适应拉伸深度色带**：自动以画面分位距自适应拉伸热力图，增强细微高度层级对比 |
+| `[` / `]` | **手动调节深度色彩范围**：微调深度可视化的上下截断门限 |
+| `Q` / `Esc` | **安全退出视窗** |
 
 ---
 
-## 项目结构
+## AprilTag 空间标定全流程体系
+
+针对工业现场环境振动、相机偶发位移与多工况多批次管理难点，系统打造了闭环的 **AprilTag 16h5 空间标定流水线**。
+
+### 标定六大工序流水线
+
+在控制终端主菜单按 **`[H]`** 进入 **手眼标定与 AprilTag 空间建图专区**：
+
+```text
+标准流水线: [1 制靶] -> [2 选场景] -> [3 采图] -> [4 超精提取] -> [S 离线Studio] -> [7 在线AR验证]
+```
+
+```mermaid
+flowchart TD
+    S1["<b>工序 1: 标靶准备</b><br>生成 0~29 号矢量标靶与 A4 排版 PDF<br><i>(generate_apriltags.py)</i>"]
+    S2["<b>工序 2: 场景管理 (Scene Hub)</b><br>新建工况沙盒 / 选定当前活动场景<br><i>(tag_scene_hub.py)</i>"]
+    S3["<b>工序 3: 图像采集</b><br>多视角连拍或原地交互抓拍<br><i>(tag_capture_wizard.py)</i>"]
+    S4["<b>工序 4: 离线超精重提取</b><br>16级网格 + 双尺度 CLAHE + 亚像素精修<br><i>(tag_super_extractor.py)</i>"]
+    S5["<b>工序 5: 离线平差与体检 (Studio)</b><br>交互审核 + 两阶段 BA 平差 + LOO 盲测<br><i>(tag_offline_studio.py)</i>"]
+    S6["<b>工序 6: 生效与在线验收</b><br>一键原子发布到生产 + 在线 AR 验证<br><i>(tag_calibration_verifier.py)</i>"]
+
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6
+```
+
+| 序号 / 键位 | 模块工具 | 核心功能与工程要点 |
+| :---: | :--- | :--- |
+| **`[1]`** | **标靶图纸生成**<br>`generate_apriltags.py` | 自动生成 Tag 0~29 高清矢量 PNG，以及严丝合缝的 1:1 实际尺寸 A4 打印排版 PDF 图纸 |
+| **`[2]`** | **场景综合驾驶舱 (Scene Hub)**<br>`tag_scene_hub.py` | **1280x720 综合管理 GUI**：工况卡片批次流、几何健康体检、相册缩略图流、原地连拍与生产发布 |
+| **`[3]`** | **多视角交互采图向导**<br>`tag_capture_wizard.py` | 交互式指导相机移动至不同高度与俯仰角，按空格连拍，样本自动存入当前场景沙盒 |
+| **`[S]`** | **离线标定工作站 (Studio)**<br>`tag_offline_studio.py` | **一站式离线解算工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
+| **`[4]`** | **超精重提取引擎**<br>`tag_super_extractor.py` | 16 级阈值网格 + 自适应双尺度 CLAHE + 亚像素级角点精修，极限召回暗光/反光/弱对比度标靶 |
+| **`[5]`** | **静默空间建图求解**<br>`tag_map_builder.py` | 纯计算命令行求解器：图论连通性建模 $\rightarrow$ 两阶段 BA（Cauchy 鲁棒核 + MAD 粗差清洗） |
+| **`[6]`** | **离线精度体检台**<br>`tag_offline_verifier.py` | 全量留一盲测（LOO）、3D 双四棱柱空间虚实位姿对比、2D 残差矢量放大图与质量放行评估 |
+| **`[7]`** | **在线 AR 综合验收系统**<br>`tag_calibration_verifier.py` | 相机实时取流，叠加 3D 轴网与虚拟立方体进行虚实融合 AR 盲测，支持多帧时域外参滤波锁定 |
+| **`[W]`** | **标靶 ID 白名单管理** | 联动 `config.yaml` 管理有效 Tag ID 列表，一键探索放行未知标靶或剔除异常 ID |
+| **`[D]`** | **标靶漏检病因切片诊断**<br>`diagnose_tag_frame.py` | 深入分析真图候选四边形轮廓，深度诊断因反光、对比度过低、畸变造成的漏检原因 |
+| **`[8]`** | **接触式物理手眼标定 (备用)**<br>`hand_eye_calibration.py` | SCARA 机械臂末端接触 4 点 SVD 刚体配准，在无 Tag 极端工况下提供手眼标定兜底保障 |
+
+---
+
+### 场景驾驶舱 (Scene Hub) 机制与三模态视图
+
+标定采样场景综合管理驾驶舱 (`tools/calibration/tag_scene_hub.py`) 采用 1280×720 深色工业科技风设计，是连接现场采样与生产部署的核心中枢。
+
+#### 1. 活动场景 (Active) 与生产基准 (Production) 安全隔离
+
+系统严格恪守**“草稿沙盒隔离、活动场景验证、生产原子生效”**原则：
+
+```
+[工况草稿沙盒] ----(设为活动 ⏎)----> [🟢 当前活动沙盒 (Active)]
+                                             │
+                                   (采图 / 平差 / 留一盲测)
+                                             │
+                                      (按 P 生效生产)
+                                             ▼
+                             [★ 生产基准 (config/tags_map.yaml)]
+                                             │
+                                    (在线生产程序读取)
+```
+
+- **草稿场景 (Draft)**：独立沙盒目录，修改、重测绝不影响线上运行；卡片右上角显示 `[设为活动 ⏎]`；
+- **活动场景 (Active)**：系统当前唯一装载并操作的场景，拥有高亮专属 `[P 生效生产]` 按钮，杜绝误发布草稿；
+- **生产基准 (Production)**：被主程序读取的现场真值地图（`config/tags_map.yaml`），界面顶部 Header 居中显示，卡片右下角授予金牌徽章 `★ 生产运行`。
+
+#### 2. 三模态视图切换 (`[F]` 快捷键)
+
+| 视图模式 | 布局结构 | 适用工况 |
+| :--- | :--- | :--- |
+| **模式 1：标准三栏视窗 (`[ ⊞ 标准 ]`)** | 左 340 场景卡片 + 中 460 体检指标 + 右 480 采样相册 | 日常巡检、对比工况、查看缩略图角标与核心指标 |
+| **模式 2：全宽大图沉浸 (`[ ⤢ 大图 ]`)** | 左 340 场景卡片 + 右 940 全宽高清大图自适应 | 巡检单张采样图的角点拟合精度、曝光与高光反光细节 |
+| **模式 3：纯净体检看板 (`[ ▤ 看板 ]`)** | 左 340 场景卡片 + 右 940 空间拓扑与体检健康大屏 | 全面呈现几何网络健康度、闭环跨度、0~29 号 Tag 覆盖矩阵 |
+
+#### 3. 性能优化与跨平台支持
+
+- **微切片 Patch 局部贴图**：非 ASCII 中文文本绘制采用基于 Bounding Box 的轻量微切片贴图，单帧耗时从 >45ms 骤降至 **<1.2ms**，消除一切鼠标 Hover 与滚动卡顿；
+- **Unicode 安全编解码**：封装 `imread_unicode` 与 `imwrite_unicode`，解决 Windows 平台下含中文路径导致 OpenCV 读写崩溃的问题。
+
+---
+
+### 离线标定工作站 (Offline Studio)
+
+离线工作站 (`tools/calibration/tag_offline_studio.py`) 整合了样本数据清洗、拓扑网络验证与两阶段 BA 空间平差：
+
+1. **样本画板交互审核**：自由选择样本帧，右键快捷剔除离群样本或整帧旁路；
+2. **两阶段非线性平差 (Two-Stage BA)**：
+   - 第一阶段：基于单应性矩阵与 IPPE 算法构建初始相机外参和标靶 3D 初值；
+   - 第二阶段：引入 **Cauchy 鲁棒核函数** 与 **中位数绝对偏差 (MAD)** 迭代清洗粗差，联合优化全量位姿与三维路标点；
+   - 尺度与世界系锚定：基于双标靶实际物理间距尺度对齐，并将 Tag 0 平移对齐至 SCARA 机械臂坐标系原点；
+3. **空间覆盖率看板**：直观展示视场四周及四角的标靶检测覆盖密度，杜绝视野边角盲区。
+
+---
+
+### 离线精度体检台 (Offline Verifier)
+
+体检台 (`tools/calibration/tag_offline_verifier.py`) 为空间建图质量提供严格的**工业放行把关**：
+
+- **留一法盲测 (Leave-One-Out, LOO)**：每次扣留目标标靶，利用其余标靶解算相机位姿并反推目标标靶空间坐标，计算独立残差；
+- **3D 双四棱柱虚实位姿对比**：绿色四棱柱代表建图真值位姿，黄色四棱柱代表单帧重投影预测位姿，位姿偏差肉眼清晰可辨；
+- **2D 残差矢量放大**：以矢量箭头形式十倍放大角点预测重投影与像素实测位置的偏移量，精准暴露镜头畸变或标靶翘曲。
+
+---
+
+## 视觉算法管线详解
+
+针对传送带上多层交错堆叠的绿芦笋，视觉处理核心引擎 (`src/vision/asparagus_analyzer.py`) 运行 9 步高抗噪感知管线：
+
+```mermaid
+flowchart TD
+    A["1. RGB-D 帧对齐与 ROI 空间截取"] --> B["2. 传送带点云 RANSAC 平面拟合与高度纠偏"]
+    B --> C["3. 暗缝与阴影分割 (Dark Seams Extraction)"]
+    C --> D["4. 芦笋骨架与候选轮廓连通域分析"]
+    D --> E["5. 主轴拟合与粗细/长度/曲率几何形态学滤波"]
+    E --> F["6. 顶层高度分层判定 (Topmost Layer Isolation)"]
+    F --> G["7. AprilTag 在线自定位外参变换 (Camera -> World)"]
+    G --> H["8. 抓取点中心与抓取航向角解算 (X, Y, Z, R)"]
+    H --> I["9. 生成 SCARA G-code 与 BLE 槽位分发"]
+```
+
+1. **传送带纠偏**：通过 RANSAC 鲁棒拟合黑色皮带主平面，构建旋转矩阵将点云矫正为以传送带平面为 $Z=0$ 的正交空间，消除倾角安装带来的系统误差；
+2. **暗缝分割**：芦笋并排贴合处存在微小缝隙阴影，算法结合自适应阈值与形态学开闭运算精准切开粘连边界；
+3. **顶层芦笋识别**：在矫正后的高度图中，统计各候选芦笋区域的上分位高程值，高置信度锁定绝对位于最上层、无其他物料压覆的单根芦笋；
+4. **抓取安全兜底**：若检测到标定外参异常或高度不在安全抓取区间（$Z \notin [5, 45]\text{ mm}$），系统立即熔断拦截，严禁输出下探 G-code，防止夹爪撞击皮带。
+
+---
+
+## 项目结构与模块划分
 
 ```text
 flux_vision_3d/
-├── config.yaml                    # 系统核心配置 (相机、滤波、视觉门限、白名单、串口)
-├── README.md                      # 本文件：项目总览与快速上手
+├── config.yaml                    # 核心全局配置 (相机分辨率、视觉门限、白名单、串口参数)
+├── README.md                      # 项目总览与核心使用指南
 ├── requirements.txt               # Python 依赖清单
-├── run.bat / run.ps1              # 一键启动入口
+├── run.bat / run.ps1              # 一键交互式控制终端启动入口
 │
-├── docs/                          # 📚 技术文档库
-│   ├── architecture.md            #    系统分层架构与模块职责
-│   ├── algorithm_pipeline.md      #    核心算法处理管线详解
-│   ├── requirements.md            #    系统需求与设计规格书
-│   └── apriltag_calibration.md    #    AprilTag 多标靶标定设计方案 (v2.0)
+├── config/                        # ⚙️ 生产配置文件沙盒
+│   ├── tags_map.yaml              #    生产在线 AprilTag 空间地图 (唯一生产基准)
+│   └── tags_map.yaml.bak          #    发布生产时的自动时间戳历史备份
 │
-├── src/vision/                    # 🧠 核心算法源码
-│   ├── asparagus_analyzer.py      #    感知引擎 (平面标定→暗缝分离→主轴拟合→顶层解算)
-│   └── tag_localizer.py           #    AprilTag 在线相机外参定位器
+├── docs/                          # 📚 深度工程与设计文档库
+│   ├── CHANGELOG.md               #    版本更新日志与重大演进历程记录
+│   ├── architecture.md            #    系统分层架构设计与数据流转说明
+│   ├── algorithm_pipeline.md      #    芦笋 3D 视觉处理管线逐层剖析
+│   ├── requirements.md            #    产品需求规格与工程指标基线
+│   ├── apriltag_calibration.md    #    AprilTag 建图、两阶段 BA 平差与在线定位方案
+│   └── calibration_scene_hub_guide.md # 标定场景管理驾驶舱 (Scene Hub) 技术操作指南
 │
-├── tests/                         # ✅ 自动化测试套件
-│   ├── test_real_snapshot.py      #    真实快照全量测试 (20 组, 100% 通过)
-│   ├── test_mock_pipeline.py      #    仿真管线回归测试
-│   ├── test_tag_map_builder.py    #    多标靶建图与两阶段 BA 单元测试
-│   ├── test_tag_calibration_verifier.py # 在线 AR 验证器与时域去噪测试
-│   ├── test_tag_localizer.py      #    在线定位器单元测试
-│   └── test_hand_eye_calibration.py # 手眼标定精度验证
-│
-├── tools/                         # 🔧 运维与顶级应用 (极简根目录)
-│   ├── cli_menu.py                #    交互式统一控制终端主入口
-│   ├── d435_viewer.py             #    实时相机查看器与深度探针
-│   ├── find_top_asparagus.py      #    单帧抓取解算 (输出 G-code 与 JSON)
+├── src/                           # 🧠 核心架构与领域驱动源码
+│   ├── calibration/               #    标定与空间平差核心引擎 (解耦架构)
+│   │   ├── scene_manager.py       #      场景沙盒管理器 (草稿/活动/生产三态状态机)
+│   │   ├── ba_optimizer.py        #      两阶段 BA 平差优化器 (Cauchy核 + 尺度基线对齐)
+│   │   ├── covisibility_graph.py  #      多视角标靶共视网络图论建模与割点分析
+│   │   ├── manifest_repository.py #      标定清单与观测数据持久化仓储
+│   │   ├── offline_engine.py      #      离线纯几何计算引擎 (PnP / IPPE / LOO 循环)
+│   │   ├── verification_reporter.py #    Per-Tag/Per-Frame 稳健统计与体检报告器
+│   │   ├── verification_visualizer.py #  3D 双四棱柱位姿对比与 2D 残差矢量渲染管线
+│   │   └── camera_streamer.py     #      跨设备高帧率相机取流与连拍适配器
 │   │
-│   └── calibration/               # 🎯 标定与平差全套工具链 (五步黄金工序)
-│       ├── generate_apriltags.py         # 工序 1: 标靶 0~29 高清矢量图与 A4 排版 PDF
-│       ├── tag_capture_wizard.py         # 工序 2: 交互式多视角采图向导 (1080P @ 8fps 连拍)
-│       ├── tag_super_extractor.py        # 工序 3: 离线超精重提取引擎 (16级网格+CLAHE+CONTOUR拟合)
-│       ├── tag_manifest_reviewer.py      # 工序 4: 采图清单交互画板 (右键菜单/整帧旁路/主从握手)
-│       ├── tag_map_builder.py            # 工序 5A: 离线极限两阶段 BA 建图平差求解器
-│       ├── tag_calibration_verifier.py   # 工序 5B: 现场 AR 盲测/时域去噪/原地一键BA与HUD
-│       ├── diagnose_tag_frame.py         # 辅助诊断: 标靶漏检病因切片深度诊断
-│       └── hand_eye_calibration.py       # 备用通道: SCARA 经典接触式物理标定向导
+│   ├── vision/                    #    实时视觉感知与抓取引擎
+│   │   ├── asparagus_analyzer.py  #      核心感知算法 (纠偏→暗缝分割→主轴提取→顶层解算)
+│   │   └── tag_localizer.py       #      AprilTag 在线外参自定位器与安全降级熔断
+│   │
+│   └── utils/                     #    通用工业 UI 与基础构件
+│       ├── viewport_manager.py    #      自适应高 DPI 视口、现代下拉框与局部 Patch 贴图
+│       ├── window_helper.py       #      Windows 原生窗口置顶、置前与无感激活辅助
+│       └── config_guard.py        #      原子配置读写保护与备份保障
 │
-└── data/snapshots/                # 📸 真实快照库 (RGB + 点云 + 标注图)
+├── tools/                         # 🔧 运维与顶级应用程序
+│   ├── cli_menu.py                #    交互式统一控制终端总入口
+│   ├── d435_viewer.py             #    RealSense D435 实时相机视窗与交互探针 (含 --mock)
+│   ├── find_top_asparagus.py      #    单帧抓取位姿解算 (输出 SCARA G-code 与 JSON)
+│   │
+│   └── calibration/               # 🎯 标定与平差全套工具链
+│       ├── scene_hub/             #    Scene Hub GUI 核心组件 (State, Renderer, Stream)
+│       ├── studio/                #    Offline Studio 工作站组件 (BA Runner, Viewport)
+│       ├── tag_scene_hub.py       #    【工序2】标定场景综合管理驾驶舱 (Scene Hub 主入口)
+│       ├── tag_offline_studio.py  #    【工序S】AprilTag 离线标定综合工作站
+│       ├── tag_capture_wizard.py  #    【工序3】多视角交互采图向导
+│       ├── tag_super_extractor.py #    【工序4】离线超精重提取引擎 (16级网格+CLAHE)
+│       ├── tag_map_builder.py     #    【工序5】空间立体建图与两阶段 BA 平差求解
+│       ├── tag_offline_verifier.py#    【工序6】离线精度体检工作台 (LOO盲测与双棱柱)
+│       ├── tag_calibration_verifier.py #【工序7】现场 AR 虚实融合在线验收系统
+│       ├── generate_apriltags.py  #    【工序1】标靶矢量生成与 A4 排版 PDF
+│       ├── diagnose_tag_frame.py  #    辅助诊断: 单帧漏检病因切片深度诊断
+│       └── hand_eye_calibration.py#    备用通道: SCARA 经典接触式物理标定向导
+│
+├── tests/                         # ✅ 自动化单元测试与回归套件 (17 项测试集)
+│   ├── test_scene_hub.py          #    场景驾驶舱与取流测试 (14 项全绿通过)
+│   ├── test_scene_manager.py      #    场景生命周期与沙盒隔离测试
+│   ├── test_tag_offline_studio.py #    离线 Studio 交互状态与平差驱动测试
+│   ├── test_tag_offline_verifier.py #  离线精度体检引擎与盲测计算测试
+│   ├── test_real_snapshot.py      #    真实工业快照全量测试 (20 组真实工业快照 100% 通过)
+│   ├── test_mock_pipeline.py      #    仿真管线脱机回归测试
+│   ├── test_ba_optimizer.py       #    两阶段 BA 平差数学单元测试
+│   ├── test_covisibility_graph.py #    共视拓扑图论连通性单元测试
+│   ├── test_manifest_repository.py#    标定清单仓储测试
+│   ├── test_tag_calibration_verifier.py # 在线 AR 验证器测试
+│   └── test_hand_eye_calibration.py # 手眼标定刚体配准精度测试
+│
+└── data/                          # 📁 数据存储沙盒
+    ├── snapshots/                 #    日常运行快照库 (RGB + 深度热力图 + 点云)
+    ├── calibration_scenes/        #    多工况标定场景沙盒库 (按工况独立隔离存储)
+    └── apriltags_16h5/            #    生成的 AprilTag 矢量图与打印 PDF
 ```
+
+---
+
+## 自动化测试与质量保障
+
+系统建立了从纯几何数学单元测试、领域模型测试，到真实工业快照回归的全方位 CI 质量保障体系：
+
+```powershell
+# 运行全部自动化测试 (通过 CLI 终端)
+./run -> 选择 [T] -> 选择 [A] 一键全量测试
+
+# 或在命令行单独执行各模块测试
+python -m unittest tests/test_scene_hub.py
+python -m unittest tests/test_tag_offline_verifier.py
+python -m unittest tests/test_real_snapshot.py
+python -m unittest tests/test_ba_optimizer.py
+```
+
+### 质量实测指标
+
+- **真实工业快照锁定率**：基于现场采集的 **20 组复杂堆叠快照**，顶层芦笋检测与抓取点锁定成功率达到 **100.0%**（累计 136 根次）；
+- **空间平差重投影精度**：实采图全局重投影均方根误差 (RMSE) 从初始 52.28px 经两阶段 BA 平差后稳定压降至 **< 0.8px**（标准靶场景优于 **0.035px**）；
+- **体检台盲测精度**：在全量留一盲测 (LOO) 下，中位重投影残差优于 **0.5px**，满足工业高精抓取需求；
+- **渲染响应度**：Scene Hub 经过 Patch 局部文本绘制优化后，单帧渲染耗时由 45ms 压降至 **1.2ms**，达到 60FPS 丝滑交互。
 
 ---
 
 ## 技术文档导航
 
-| 文档 | 内容概述 | 适用读者 |
+| 文档名称 | 核心内容概述 | 适用对象 |
 | :--- | :--- | :--- |
-| [CHANGELOG.md](docs/CHANGELOG.md) | 系统版本演进历程、重大架构升级与实测战报 | 全员、项目管理、架构评审 |
-| [architecture.md](docs/architecture.md) | 系统分层架构、模块职责、工具矩阵与数据流 | 新成员入门、架构评审 |
-| [algorithm_pipeline.md](docs/algorithm_pipeline.md) | 九大算法环节逐层剖析（含数学推导与 Mermaid 流程图） | 算法开发、调参优化 |
-| [requirements.md](docs/requirements.md) | 功能/非功能需求、里程碑进度 | 需求评审、项目管理 |
-| [apriltag_calibration.md](docs/apriltag_calibration.md) | AprilTag 16h5 多标靶建图、两阶段 BA 平差与在线自定位方案 | 标定实施、现场部署 |
+| **[CHANGELOG.md](docs/CHANGELOG.md)** | 系统版本演进历程、架构重构纪录与实测战报 | 全员、架构评审、交付验收 |
+| **[calibration_scene_hub_guide.md](docs/calibration_scene_hub_guide.md)** | 标定场景管理驾驶舱 (Scene Hub) 深度架构与 SOP 规范 | 现场实施、算法工程师、操作员 |
+| **[architecture.md](docs/architecture.md)** | 系统整体分层架构、核心领域模型职责与数据总线设计 | 新成员快速上手、架构设计 |
+| **[algorithm_pipeline.md](docs/algorithm_pipeline.md)** | 芦笋 3D 视觉处理管线九大环节数学推导与参数精析 | 算法开发、调优工程师 |
+| **[apriltag_calibration.md](docs/apriltag_calibration.md)** | AprilTag 多标靶建图、两阶段 BA 平差与在线定位方案 | 标定研发、现场部署人员 |
+| **[requirements.md](docs/requirements.md)** | 工业系统功能/非功能需求规格与里程碑进度 | 需求评审、项目管理 |
 
 ---
 
-## 质量保证
-
-- **真实快照测试**：覆盖 **20 组**现场快照，**100.0%** 顶层锁定成功率（累计 136 根次）
-- **空间平差优化**：实采图全局重投影 RMSE 从 52.28px 压降至 **4.14px**，标准图达 **0.032px**
-- **仿真管线测试**：脱机开发环境的虚拟点云与三层叠压回归验证
-- **手眼标定验证**：Horn/Kabsch SVD 刚体变换精度与 500+mm 危险深度拦截
-
----
-*文档更新日期: 2026年9月 | flux_vision_3d 团队*
+*文档版本: 2026年9月 | flux_vision_3d 团队*

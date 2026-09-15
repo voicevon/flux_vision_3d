@@ -11,6 +11,7 @@ Scene Hub 视觉渲染引擎 (HubRenderer)
 
 import os
 import time
+from typing import Any, Optional, Tuple
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -90,33 +91,165 @@ class HubRenderer:
         self.COLOR_GRAY = (140, 145, 155)
         self.COLOR_DARK_GRAY = (70, 75, 85)
 
+        # 帧级极速缓存 (毫秒级响应 Hover 交互)
+        self._cached_canvas: np.ndarray | None = None
+        self._last_cache_key: Any = None
+
+    def _get_interactive_hover_key(self, state: HubState) -> Any:
+        """获取当前鼠标悬停的交互元素标识 (若鼠标未落在任何可交互组件上返回 None)"""
+        mx, my = state.mouse_x, state.mouse_y
+        if mx < 0 or my < 0:
+            return None
+
+        # 1. 场景条目专属右键菜单
+        if state.context_menu_open:
+            cx, cy = state.context_menu_pos
+            menu_w = 216
+            item_h = 32
+            if cx <= mx <= cx + menu_w:
+                for idx in range(6):
+                    iy = cy + 34 + idx * item_h
+                    if iy <= my <= iy + item_h:
+                        return ("ctx_item", idx)
+            return "ctx_menu_other"
+
+        # 2. 生产说明 Help 弹窗
+        if state.is_help_modal_open:
+            mw, mh = 880, 560
+            ox = (self.canvas_w - mw) // 2
+            oy = (self.canvas_h - mh) // 2
+            if ox + mw - 120 <= mx <= ox + mw - 16 and oy + 11 <= my <= oy + 43:
+                return "help_close"
+            return "help_modal"
+
+        # 3. 工具箱 Modal
+        if state.is_toolbox_open:
+            mw, mh = 880, 520
+            ox = (self.canvas_w - mw) // 2
+            oy = (self.canvas_h - mh) // 2
+            if ox + mw - 120 <= mx <= ox + mw - 16 and oy + 11 <= my <= oy + 43:
+                return "toolbox_close"
+            return "toolbox_modal"
+
+        # 4. 常规看板模式
+        # 顶部 Header 交互
+        if 0 <= my <= 50:
+            if 288 <= mx <= 368 and 9 <= my <= 41:
+                return "tab_standard"
+            if 370 <= mx <= 448 and 9 <= my <= 41:
+                return "tab_expanded"
+            if 450 <= mx <= 530 and 9 <= my <= 41:
+                return "tab_dashboard"
+            if 546 <= mx <= 860 and 8 <= my <= 42:
+                return "header_prod"
+            if 870 <= mx <= 970 and 8 <= my <= 42:
+                return "btn_toolbox"
+            if 980 <= mx <= 1080 and 8 <= my <= 42:
+                return "btn_help"
+            if 1090 <= mx <= 1265 and 8 <= my <= 42:
+                return "btn_exit"
+
+        # 左侧面板按钮与卡片
+        if 0 <= mx <= 340:
+            div_y1 = 512
+            btn1_y = div_y1 + 32
+            if 10 <= mx <= 165 and btn1_y <= my <= btn1_y + 36:
+                return "btn_new_scene"
+            if 175 <= mx <= 330 and btn1_y <= my <= btn1_y + 36:
+                return "btn_open_dir"
+            btn2_y = btn1_y + 44
+            if 10 <= mx <= 330 and btn2_y <= my <= btn2_y + 36:
+                return "btn_capture_wizard"
+
+            # 场景卡片
+            card_h = 70
+            start_y = 90
+            max_cards = 5
+            scroll_start = max(0, state.selected_scene_idx - max_cards + 1)
+            visible_scenes = state.scenes[scroll_start: scroll_start + max_cards]
+            for i, sc in enumerate(visible_scenes):
+                cy = start_y + i * (card_h + 8)
+                real_idx = scroll_start + i
+                if 236 <= mx <= 324 and cy + 6 <= my <= cy + 30:
+                    return ("card_badge", real_idx)
+                if sc.scene_id == state.active_scene_id and (228 <= mx <= 324 and cy + 36 <= my <= cy + 64):
+                    return ("card_pub", real_idx)
+
+        # 右侧相册面板按钮
+        if state.view_mode == HubState.VIEW_EXPANDED:
+            box_x, box_y, box_w = 340, 50, 940
+            if box_x + box_w - 364 <= mx <= box_x + box_w - 280 and box_y + 10 <= my <= box_y + 42:
+                return "exp_prev"
+            if box_x + box_w - 274 <= mx <= box_x + box_w - 190 and box_y + 10 <= my <= box_y + 42:
+                return "exp_next"
+            if box_x + box_w - 184 <= mx <= box_x + box_w - 20 and box_y + 10 <= my <= box_y + 42:
+                return "exp_restore"
+        elif state.view_mode == HubState.VIEW_STANDARD:
+            box_x, box_y, box_w = 800, 50, 480
+            if box_x + box_w - 224 <= mx <= box_x + box_w - 184 and box_y + 8 <= my <= box_y + 40:
+                return "album_prev"
+            if box_x + box_w - 178 <= mx <= box_x + box_w - 138 and box_y + 8 <= my <= box_y + 40:
+                return "album_next"
+            if box_x + box_w - 132 <= mx <= box_x + box_w - 14 and box_y + 8 <= my <= box_y + 40:
+                return "album_expand"
+
+        return None
+
     def render(self, state: HubState) -> np.ndarray:
-        """主绘制入口，返回 1280x720 BGR 图像 (左-中-右三栏布局)"""
+        """主绘制入口，返回 1280x720 BGR 图像 (带极速帧级缓存，支持高频 60+ FPS Hover)"""
+        # 相机实时连拍向导模式必须每帧实时绘制视频流
+        if state.mode == HubState.MODE_CAPTURE:
+            canvas = np.full((self.canvas_h, self.canvas_w, 3), self.COLOR_BG, dtype=np.uint8)
+            self._render_header(canvas, state)
+            self._render_capture_viewport(canvas, state)
+            self._render_footer(canvas, state)
+            return canvas
+
+        hover_key = self._get_interactive_hover_key(state)
+        now = time.time()
+        toast_active = state.toast_time > now
+        flash_active = state.flash_timer > now
+
+        cache_key = (
+            state.mode,
+            state.view_mode,
+            state.selected_scene_idx,
+            state.active_scene_id,
+            state.selected_image_idx,
+            state.image_strip_offset,
+            state.is_toolbox_open,
+            state.is_help_modal_open,
+            state.context_menu_open,
+            state.context_menu_pos if state.context_menu_open else None,
+            state.context_menu_scene_idx if state.context_menu_open else None,
+            toast_active,
+            state.toast_msg if toast_active else "",
+            flash_active,
+            len(state.scenes),
+            len(state.current_images),
+            hover_key
+        )
+
+        # 缓存命中：状态与悬停目标均未发生改变，直接 0ms 返回上一帧已渲染画布
+        if self._cached_canvas is not None and cache_key == self._last_cache_key:
+            return self._cached_canvas
+
         canvas = np.full((self.canvas_h, self.canvas_w, 3), self.COLOR_BG, dtype=np.uint8)
 
         # 1. 顶部状态栏 (y: 0~50)
         self._render_header(canvas, state)
 
-        # 2. 如果处于相机连拍向导模式，则使用全屏采图视口
-        if state.mode == HubState.MODE_CAPTURE:
-            self._render_capture_viewport(canvas, state)
-            self._render_footer(canvas, state)
-            return canvas
-
-        # 3. 左侧综合导航栏 (x: 0~340, y: 50~670) - 场景列表 + 常用操作 + 核心工作流
+        # 3. 左侧综合导航栏 (x: 0~340, y: 50~670)
         self._render_left_panel(canvas, state)
         cv2.line(canvas, (340, 50), (340, 670), self.COLOR_BORDER, 1)
 
         # 4. 中间栏与右侧栏 (支持三模态视图: 标准三栏 / 全宽大图 / 纯净数据看板)
         sc = state.get_selected_scene()
         if state.view_mode == HubState.VIEW_EXPANDED:
-            # 模式 2: 全宽沉浸式大图视口 (跨越中间和右侧, x: 340~1280)
             self._render_expanded_photo_preview(canvas, state, sc)
         elif state.view_mode == HubState.VIEW_DASHBOARD:
-            # 模式 3: 纯净体检健康大屏 (左侧340完全固定, 右侧940舒展呈现大看板，相册关闭)
             self._render_pure_dashboard_panel(canvas, state, sc)
         else:
-            # 模式 1: 标准三栏结构 (左340, 中460, 右480)
             self._render_center_report_panel(canvas, state, sc)
             cv2.line(canvas, (800, 50), (800, 670), self.COLOR_BORDER, 1)
             self._render_right_album_panel(canvas, state, sc)
@@ -136,6 +269,8 @@ class HubRenderer:
         if state.context_menu_open:
             self._render_context_menu(canvas, state)
 
+        self._cached_canvas = canvas
+        self._last_cache_key = cache_key
         return canvas
 
     def _render_header(self, canvas: np.ndarray, state: HubState):
@@ -175,7 +310,7 @@ class HubRenderer:
                 draw_text(canvas, ttext, (tx + 12, 16), font_size=13, color=(160, 175, 195))
 
         # 3. 生产运行场景信息 (x: 546~860, y: 8~42)
-        act_sc = state.scene_mgr.get_active_scene()
+        act_sc = state.get_active_scene()
         act_name = act_sc.name if act_sc else "未设定"
         act_id = state.active_scene_id or "无"
         prod_x, prod_w = 546, 314
@@ -246,7 +381,6 @@ class HubRenderer:
 
         scroll_start = max(0, state.selected_scene_idx - max_cards + 1)
         visible_scenes = state.scenes[scroll_start: scroll_start + max_cards]
-        act_sc = state.scene_mgr.get_active_scene()
 
         for i, sc in enumerate(visible_scenes):
             real_idx = scroll_start + i

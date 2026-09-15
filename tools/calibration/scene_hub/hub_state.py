@@ -114,6 +114,13 @@ class HubState:
 
         self.load_current_scene_images()
 
+    def get_active_scene(self) -> CalibrationScene | None:
+        """从已载入内存的场景列表中极速获取当前活动场景对象 (0ms)"""
+        for sc in self.scenes:
+            if sc.scene_id == self.active_scene_id:
+                return sc
+        return self.scenes[0] if self.scenes else None
+
     def get_selected_scene(self) -> CalibrationScene | None:
         """获取当前高亮选中的场景"""
         if not self.scenes or self.selected_scene_idx >= len(self.scenes):
