@@ -49,6 +49,13 @@ class HubState:
         # 标定工具箱总菜单弹层是否打开 (按 M 键或点击呼出)
         self.is_toolbox_open = False
 
+        # 生产系统生效机制 Help 说明弹层 (按 H 键或点击 [? Help] 呼出)
+        self.is_help_modal_open = False
+
+        # 当前鼠标悬停坐标 (用于按钮 Hover 高亮效果)
+        self.mouse_x = -1
+        self.mouse_y = -1
+
         # 空格抓拍白闪动效倒计时
         self.flash_timer = 0.0
 
@@ -213,9 +220,19 @@ class HubState:
         """打开或关闭标定工具箱综合菜单 (按 M 键切换)"""
         self.is_toolbox_open = not self.is_toolbox_open
         if self.is_toolbox_open:
+            self.is_help_modal_open = False
             self.set_toast("已打开标定工具箱总菜单 (按对应字母启动工具，按 ESC/M 关闭)")
         else:
             self.set_toast("已关闭工具箱总菜单，返回场景驾驶舱。")
+
+    def toggle_help_modal(self):
+        """打开或关闭生产系统发布机制说明弹窗 (按 H 键或点击 [? Help] 切换)"""
+        self.is_help_modal_open = not self.is_help_modal_open
+        if self.is_help_modal_open:
+            self.is_toolbox_open = False
+            self.set_toast("已呼出【生效到生产系统】业务说明窗 (按 ESC/H 关闭)")
+        else:
+            self.set_toast("已关闭说明窗。")
 
     def rename_current_scene(self, new_name: str) -> bool:
         """重命名当前选中的场景显示名称 (支持中文)"""

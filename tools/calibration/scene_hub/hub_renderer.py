@@ -113,6 +113,10 @@ class HubRenderer:
         if state.is_toolbox_open:
             self._render_toolbox_modal(canvas, state)
 
+        # 7. 如果打开了生产系统生效机制说明弹窗，则渲染置顶半透明浮层
+        if state.is_help_modal_open:
+            self._render_help_modal(canvas, state)
+
         return canvas
 
     def _render_header(self, canvas: np.ndarray, state: HubState):
@@ -203,40 +207,116 @@ class HubRenderer:
             else:
                 draw_text(canvas, "草稿", (285, cy + 42), font_size=12, color=self.COLOR_DARK_GRAY)
 
+    def _draw_button(self, canvas: np.ndarray, rect: tuple[int, int, int, int], text: str,
+                     mouse_pos: tuple[int, int], is_active: bool = False,
+                     theme_color: tuple[int, int, int] = (0, 200, 140)) -> bool:
+        """统一绘制现代科技风交互按钮，带精准 Hover 高亮检测，返回是否处于 hover 状态"""
+        bx, by, bw, bh = rect
+        mx, my = mouse_pos
+        is_hover = (bx <= mx <= bx + bw and by <= my <= by + bh)
+
+        if is_hover:
+            bg_col = (34, 46, 56)
+            border_col = (0, 255, 180)  # 荧光亮绿高亮
+            text_col = (0, 255, 200)
+            thickness = 2
+        elif is_active:
+            bg_col = (28, 40, 48)
+            border_col = theme_color
+            text_col = self.COLOR_WHITE
+            thickness = 2
+        else:
+            bg_col = (22, 28, 36)
+            border_col = (45, 68, 62)   # 统一沉稳科技暗绿框
+            text_col = (205, 225, 220)
+            thickness = 1
+
+        cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), bg_col, -1)
+        cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border_col, thickness)
+
+        # 文字垂直居中
+        draw_text(canvas, text, (bx + 14, by + (bh - 18) // 2), font_size=14,
+                  color=text_col, bold=is_hover)
+        return is_hover
+
+    def _render_left_panel(self, canvas: np.ndarray, state: HubState):
+        """渲染左侧综合导航栏 (x: 0~340, y: 50~670)
+        包含三层结构:
+        1. 场景批次列表 (可滚动卡片流)
+        2. 场景常用操作按钮 (统一科技绿风格 + Hover高亮)
+        3. 核心工作流通道栏 (带 [? Help] 专属说明按钮)
+        """
+        cv2.rectangle(canvas, (0, 50), (340, 670), self.COLOR_PANEL, -1)
+        mpos = (state.mouse_x, state.mouse_y)
+
+        # ==== 1. 场景批次列表 ====
+        draw_text(canvas, f"工况场景批次 ({len(state.scenes)})", (16, 62), font_size=16, color=self.COLOR_WHITE, bold=True)
+
+        card_h = 66
+        start_y = 88
+        max_cards = 4  # 限制展示4个以留出充足空间放置操作按钮
+
+        scroll_start = max(0, state.selected_scene_idx - max_cards + 1)
+        visible_scenes = state.scenes[scroll_start: scroll_start + max_cards]
+
+        for i, sc in enumerate(visible_scenes):
+            real_idx = scroll_start + i
+            is_selected = (real_idx == state.selected_scene_idx)
+            is_active = (sc.scene_id == state.active_scene_id)
+            cy = start_y + i * (card_h + 6)
+
+            card_col = self.COLOR_CARD_ACTIVE if is_selected else (28, 32, 42)
+            border_col = self.COLOR_ACTIVE_BORDER if is_selected else self.COLOR_BORDER
+
+            cv2.rectangle(canvas, (10, cy), (330, cy + card_h), card_col, -1)
+            cv2.rectangle(canvas, (10, cy), (330, cy + card_h), border_col, 2 if is_selected else 1)
+
+            if is_selected:
+                cv2.rectangle(canvas, (10, cy), (14, cy + card_h), (0, 255, 160), -1)
+
+            # 主标题突出显示友好中文名称
+            prefix = f"{real_idx + 1:02d}."
+            display_title = f"{prefix} {sc.name}"
+            title_col = (0, 255, 200) if is_selected else self.COLOR_WHITE
+            draw_text(canvas, display_title, (20, cy + 6), font_size=15, color=title_col, bold=is_selected)
+
+            # 第二行：物理唯一 ID 与张数
+            id_subtitle = f"ID: {sc.scene_id[:18]} | {sc.image_count}帧"
+            cv2.putText(canvas, id_subtitle, (20, cy + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.38, self.COLOR_GRAY, 1, cv2.LINE_AA)
+
+            # 第三行：平差精度指标徽章
+            ba_badge = f"RMSE: {sc.global_rmse_px:.2f}px" if sc.ba_solved else "未平差"
+            ba_col = (0, 220, 100) if sc.ba_solved else self.COLOR_DARK_GRAY
+            cv2.putText(canvas, ba_badge, (20, cy + 56), cv2.FONT_HERSHEY_SIMPLEX, 0.38, ba_col, 1, cv2.LINE_AA)
+
+            # 当前活动标记 / 生产发布徽章
+            if is_active:
+                draw_text(canvas, "[活动]", (250, cy + 6), font_size=13, color=(0, 255, 120))
+            if sc.is_published:
+                draw_text(canvas, "★生产", (280, cy + 42), font_size=13, color=self.COLOR_GOLD, bold=True)
+            else:
+                draw_text(canvas, "草稿", (285, cy + 42), font_size=12, color=self.COLOR_DARK_GRAY)
+
         # 分割线
         div_y1 = 380
         cv2.line(canvas, (10, div_y1), (330, div_y1), self.COLOR_BORDER, 1)
 
-        # ==== 2. 场景管理常用操作按钮 ====
+        # ==== 2. 场景管理常用操作按钮 (风格统一为科技绿框，带精准 Hover 高亮) ====
         draw_text(canvas, "场景管理快捷操作", (16, div_y1 + 8), font_size=15, color=self.COLOR_CYAN, bold=True)
 
-        # 按钮 1: 新建场景 [N]
         btn1_y = div_y1 + 32
-        cv2.rectangle(canvas, (10, btn1_y), (165, btn1_y + 36), (22, 32, 44), -1)
-        cv2.rectangle(canvas, (10, btn1_y), (165, btn1_y + 36), (0, 200, 240), 1)
-        draw_text(canvas, "[+] 新建场景 [N]", (20, btn1_y + 9), font_size=14, color=(0, 240, 220), bold=True)
+        self._draw_button(canvas, (10, btn1_y, 155, 36), "[+] 新建 [N]", mpos)
+        self._draw_button(canvas, (175, btn1_y, 155, 36), "[R] 改名", mpos)
 
-        # 按钮 2: 修改名称 [R]
-        cv2.rectangle(canvas, (175, btn1_y), (330, btn1_y + 36), (30, 30, 42), -1)
-        cv2.rectangle(canvas, (175, btn1_y), (330, btn1_y + 36), (80, 180, 255), 1)
-        draw_text(canvas, "[R] 修改名称", (200, btn1_y + 9), font_size=14, color=(80, 200, 255), bold=True)
-
-        # 按钮 3: 克隆场景副本 [K]
         btn2_y = btn1_y + 40
-        cv2.rectangle(canvas, (10, btn2_y), (165, btn2_y + 34), (26, 26, 38), -1)
-        cv2.rectangle(canvas, (10, btn2_y), (165, btn2_y + 34), (160, 120, 240), 1)
-        draw_text(canvas, "[K] 克隆场景", (30, btn2_y + 8), font_size=14, color=(180, 140, 255))
-
-        # 按钮 4: 打开目录 [V]
-        cv2.rectangle(canvas, (175, btn2_y), (330, btn2_y + 34), (24, 28, 36), -1)
-        cv2.rectangle(canvas, (175, btn2_y), (330, btn2_y + 34), self.COLOR_BORDER, 1)
-        draw_text(canvas, "[V] 打开目录", (200, btn2_y + 8), font_size=14, color=self.COLOR_GRAY)
+        self._draw_button(canvas, (10, btn2_y, 155, 36), "[K] 克隆", mpos)
+        self._draw_button(canvas, (175, btn2_y, 155, 36), "[V] 目录", mpos)
 
         # 分割线
         div_y2 = btn2_y + 42
         cv2.line(canvas, (10, div_y2), (330, div_y2), self.COLOR_BORDER, 1)
 
-        # ==== 3. 核心快捷工作流通道 (与列表平行展示在左侧下方) ====
+        # ==== 3. 核心快捷工作流通道 ====
         draw_text(canvas, "核心快捷工作流通道", (16, div_y2 + 8), font_size=15, color=self.COLOR_WHITE, bold=True)
 
         wf_items = [
@@ -246,15 +326,29 @@ class HubRenderer:
         ]
 
         wfy = div_y2 + 32
-        for title, desc, col in wf_items:
-            cv2.rectangle(canvas, (10, wfy), (330, wfy + 44), (22, 26, 36), -1)
-            cv2.rectangle(canvas, (10, wfy), (330, wfy + 44), (38, 46, 62), 1)
+        for idx, (title, desc, col) in enumerate(wf_items):
+            is_hover = (10 <= mpos[0] <= 330 and wfy <= mpos[1] <= wfy + 44)
+            card_border = (0, 255, 180) if is_hover else (38, 46, 62)
+            cv2.rectangle(canvas, (10, wfy), (330, wfy + 44), (26, 32, 42) if is_hover else (22, 26, 36), -1)
+            cv2.rectangle(canvas, (10, wfy), (330, wfy + 44), card_border, 2 if is_hover else 1)
             draw_text(canvas, title, (18, wfy + 4), font_size=13, color=col, bold=True)
             draw_text(canvas, desc, (18, wfy + 24), font_size=12, color=self.COLOR_GRAY)
+
+            # 在第 3 项 [P] 生效到生产系统 右侧增加专属 [? Help] 按钮 (点击弹出说明弹窗)
+            if idx == 2:
+                hx, hy, hw, hh = 262, wfy + 6, 60, 32
+                h_hover = (hx <= mpos[0] <= hx + hw and hy <= mpos[1] <= hy + hh)
+                cv2.rectangle(canvas, (hx, hy), (hx + hw, hy + hh), (38, 48, 62) if h_hover else (26, 32, 42), -1)
+                cv2.rectangle(canvas, (hx, hy), (hx + hw, hy + hh), (0, 255, 200) if h_hover else self.COLOR_GOLD, 2 if h_hover else 1)
+                draw_text(canvas, "? Help", (hx + 6, hy + 7), font_size=13,
+                          color=(0, 255, 200) if h_hover else self.COLOR_GOLD, bold=True)
+
             wfy += 48
 
     def _render_center_report_panel(self, canvas: np.ndarray, state: HubState, sc):
-        """渲染中间栏：场景综合体检报告与几何健康看板 (x: 340~800, y: 50~670)"""
+        """渲染中间栏：场景综合体检报告与几何健康看板 (x: 340~800, y: 50~670)
+        移除底部冗长常驻文字，指标卡片舒展呈现，增加质检放行仪表盘！
+        """
         box_x, box_y, box_w, box_h = 340, 50, 460, 620
         cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), (20, 23, 30), -1)
 
@@ -268,12 +362,12 @@ class HubRenderer:
 
         # 场景核心元数据卡片
         meta_y = box_y + 54
-        cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 56), (26, 31, 42), -1)
-        cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 56), (0, 180, 220), 1)
+        cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 58), (26, 31, 42), -1)
+        cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 58), (0, 180, 220), 1)
         draw_text(canvas, f"当前场景: 【{sc.name}】", (box_x + 26, meta_y + 8), font_size=16, color=(0, 240, 220), bold=True)
-        draw_text(canvas, f"物理唯一ID: {sc.scene_id}", (box_x + 26, meta_y + 32), font_size=13, color=self.COLOR_GRAY)
+        draw_text(canvas, f"物理唯一ID: {sc.scene_id}", (box_x + 26, meta_y + 34), font_size=13, color=self.COLOR_GRAY)
 
-        # 4 大体检与健康指标卡片
+        # 4 大体检与健康指标卡片 (舒展间距)
         cards = [
             ("1. 采样数据集规模与有效性",
              f"总采集: {sc.image_count} 帧  |  有效参与: {sc.active_image_count} 帧",
@@ -282,7 +376,7 @@ class HubRenderer:
 
             ("2. 空间标靶拓扑与参考基准",
              f"基准原点: Tag #{sc.origin_tag_id}  |  X轴对准: Tag #{sc.x_axis_tag_id}",
-             f"已知标靶拓扑已锚定，空间几何关系锁定",
+             "已知标靶拓扑已锚定，空间立体几何约束锁定",
              (0, 220, 255)),
 
             ("3. 两阶段 BA 平差与重投影精度",
@@ -293,41 +387,56 @@ class HubRenderer:
 
             ("4. 生产系统生效与运行状态",
              "★ 已生效为全局生产运行地图 (生效中)" if sc.is_published else "草稿沙盒状态 (尚未生效至生产配置)",
-             "全局生产路径: config/tags_map.yaml",
+             "全局生产路径: config/tags_map.yaml  (可点击左侧 [? Help] 查看详情)",
              self.COLOR_GOLD if sc.is_published else (140, 150, 165))
         ]
 
-        cy = meta_y + 68
+        cy = meta_y + 70
         for title, val_line, sub_line, col in cards:
-            cv2.rectangle(canvas, (box_x + 16, cy), (box_x + box_w - 16, cy + 60), (26, 30, 40), -1)
-            cv2.rectangle(canvas, (box_x + 16, cy), (box_x + box_w - 16, cy + 60), (38, 44, 58), 1)
+            cv2.rectangle(canvas, (box_x + 16, cy), (box_x + box_w - 16, cy + 62), (26, 30, 40), -1)
+            cv2.rectangle(canvas, (box_x + 16, cy), (box_x + box_w - 16, cy + 62), (38, 44, 58), 1)
             draw_text(canvas, title, (box_x + 28, cy + 6), font_size=14, color=self.COLOR_WHITE, bold=True)
-            draw_text(canvas, val_line, (box_x + 28, cy + 25), font_size=13, color=col, bold=True)
-            draw_text(canvas, sub_line, (box_x + 28, cy + 42), font_size=12, color=self.COLOR_GRAY)
-            cy += 68
+            draw_text(canvas, val_line, (box_x + 28, cy + 26), font_size=13, color=col, bold=True)
+            draw_text(canvas, sub_line, (box_x + 28, cy + 44), font_size=12, color=self.COLOR_GRAY)
+            cy += 74
 
-        # 重点业务解释板块：解说“什么是生效为生产运行地图”
-        exp_y = cy + 4
-        cv2.rectangle(canvas, (box_x + 16, exp_y), (box_x + box_w - 16, box_y + box_h - 14), (20, 26, 36), -1)
-        cv2.rectangle(canvas, (box_x + 16, exp_y), (box_x + box_w - 16, box_y + box_h - 14), (0, 160, 200), 1)
+        # 底部升级为清爽的【工程质量放行评定面板】
+        eval_y = cy + 6
+        cv2.rectangle(canvas, (box_x + 16, eval_y), (box_x + box_w - 16, box_y + box_h - 16), (24, 28, 38), -1)
+        cv2.rectangle(canvas, (box_x + 16, eval_y), (box_x + box_w - 16, box_y + box_h - 16), (0, 180, 200), 1)
 
-        draw_text(canvas, "★ 什么是【生效到生产系统 (发布运行地图)】？", (box_x + 26, exp_y + 10), font_size=14, color=self.COLOR_GOLD, bold=True)
-        explain_lines = [
-            "• 在线定位与生产运行模块，仅读取全局配置 config/tags_map.yaml。",
-            "• 多场景管理允许您在独立工况沙盒中采图与平差调优，互不干扰。",
-            "• 验证当前场景精度达标后，按 [P] 键即可将当前高精度地图同步发布",
-            "  至 config/tags_map.yaml，使整个生产系统即刻获得高精度立体定位！"
-        ]
-        for idx, line in enumerate(explain_lines):
-            draw_text(canvas, line, (box_x + 26, exp_y + 34 + idx * 20), font_size=12, color=self.COLOR_WHITE)
+        draw_text(canvas, "★ 场景质量综合评定与放行指引", (box_x + 26, eval_y + 12), font_size=15, color=(0, 240, 220), bold=True)
+
+        if sc.ba_solved and sc.global_rmse_px < 0.2:
+            verdict_text = "🟢 [极优放行] 该场景平差精度达标 (RMSE < 0.20px)，几何精度稳定！"
+            action_advice = "建议操作: 按 [P] 键一键生效到生产系统，或进入在线 AR [A] 实景验收。"
+            v_col = (0, 255, 160)
+        elif sc.ba_solved:
+            verdict_text = "🟡 [常规放行] 该场景平差已收敛，可直接投入常规抓取定位。"
+            action_advice = "建议操作: 可按 [S] 启动 Studio 执行智能残差剪枝以进一步压低误差。"
+            v_col = self.COLOR_GOLD
+        else:
+            verdict_text = "⚪ [未求解] 当前场景尚未执行离线两阶段 BA 空间建图与平差。"
+            action_advice = "建议操作: 确保采图 ≥10 帧后，按下 [S] 键启动离线平差工作站。"
+            v_col = self.COLOR_GRAY
+
+        draw_text(canvas, verdict_text, (box_x + 26, eval_y + 40), font_size=13, color=v_col, bold=True)
+        draw_text(canvas, action_advice, (box_x + 26, eval_y + 64), font_size=12, color=self.COLOR_WHITE)
+        draw_text(canvas, "提示: 点击左侧 [? Help] 或按 [H] 键可随时了解生产生效机制。", (box_x + 26, eval_y + 88), font_size=12, color=self.COLOR_GRAY)
 
     def _render_right_album_panel(self, canvas: np.ndarray, state: HubState, sc):
         """渲染最右侧栏：采样相册画廊与大图预览视口 (x: 800~1280, y: 50~670)"""
         box_x, box_y, box_w, box_h = 800, 50, 480, 620
         cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), self.COLOR_PANEL, -1)
+        mpos = (state.mouse_x, state.mouse_y)
 
         # 栏目标题
         draw_text(canvas, f"采样相册 ({len(state.current_images)} 帧)", (box_x + 16, box_y + 14), font_size=17, color=self.COLOR_WHITE, bold=True)
+
+        # 顶部实体按钮组: [◀] [▶] [⛶ 全宽放大 [F]] (统一科技绿框 + Hover 高亮)
+        self._draw_button(canvas, (box_x + box_w - 224, box_y + 8, 40, 32), "[<]", mpos)
+        self._draw_button(canvas, (box_x + box_w - 178, box_y + 8, 40, 32), "[>]", mpos)
+        self._draw_button(canvas, (box_x + box_w - 132, box_y + 8, 118, 32), "[F] 全宽放大", mpos)
 
         if not state.current_images:
             empty_box_y = box_y + 50
@@ -348,13 +457,13 @@ class HubRenderer:
             real_idx = offset + idx
             is_cur = (real_idx == state.selected_image_idx)
             x = box_x + 16 + idx * (tw + pad)
-            y = box_y + 44
+            y = box_y + 46
 
             thumb = state.get_thumbnail(img_path, tw, th)
             if thumb is not None:
                 canvas[y:y + th, x:x + tw] = thumb
 
-            border_col = (0, 240, 200) if is_cur else self.COLOR_BORDER
+            border_col = (0, 255, 180) if is_cur else self.COLOR_BORDER
             cv2.rectangle(canvas, (x, y), (x + tw, y + th), border_col, 2 if is_cur else 1)
 
             base_name = os.path.basename(img_path)
@@ -363,7 +472,7 @@ class HubRenderer:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.33, (0, 255, 180) if is_cur else self.COLOR_GRAY, 1, cv2.LINE_AA)
 
             if is_cur:
-                cv2.line(canvas, (x + tw // 2 - 4, y + th + 3), (x + tw // 2 + 4, y + th + 3), (0, 255, 200), 2)
+                cv2.line(canvas, (x + tw // 2 - 4, y + th + 3), (x + tw // 2 + 4, y + th + 3), (0, 255, 180), 2)
 
         # 2. 单帧照片高画质大图视口 (y: 172~656)
         prev_box_y = box_y + 118
@@ -376,7 +485,6 @@ class HubRenderer:
 
         img_title = f"单帧预览: {os.path.basename(cur_img)} ({state.selected_image_idx + 1}/{len(state.current_images)})"
         draw_text(canvas, img_title, (box_x + 28, prev_box_y + 10), font_size=15, color=self.COLOR_CYAN, bold=True)
-        draw_text(canvas, "[按 F 键展开大视口]", (box_x + box_w - 160, prev_box_y + 11), font_size=13, color=(0, 255, 180))
 
         if prev is not None:
             ph, pw = prev.shape[:2]
@@ -385,17 +493,20 @@ class HubRenderer:
             canvas[py:py + ph, px:px + pw] = prev
             cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (50, 56, 72), 1)
 
-        draw_text(canvas, "[← / →] 左右键选片  |  [F] 放大预览占满空间",
-                  (box_x + 70, prev_box_y + prev_box_h - 22), font_size=13, color=self.COLOR_GRAY)
+        draw_text(canvas, "[< / >] 左右键选片  |  滚轮快速切片  |  [F] 放大预览",
+                  (box_x + 60, prev_box_y + prev_box_h - 22), font_size=13, color=self.COLOR_GRAY)
 
     def _render_expanded_photo_preview(self, canvas: np.ndarray, state: HubState, sc):
         """全宽自适应大图视口 (按 F 键展开，横跨中间和右侧，x: 340~1280)"""
         box_x, box_y, box_w, box_h = 340, 50, 940, 620
         cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), (16, 20, 26), -1)
         cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), (0, 200, 240), 2)
+        mpos = (state.mouse_x, state.mouse_y)
 
+        # 标题与右上角实体按钮
         if not state.current_images:
             draw_text(canvas, "当前场景无图片", (box_x + 400, box_y + 280), font_size=20, color=self.COLOR_DARK_GRAY)
+            self._draw_button(canvas, (box_x + box_w - 180, box_y + 10, 160, 32), "[F] 退出全宽放大", mpos)
             return
 
         cur_img = state.current_images[state.selected_image_idx]
@@ -403,7 +514,11 @@ class HubRenderer:
 
         img_title = f"全宽自适应大图预览: {os.path.basename(cur_img)} ({state.selected_image_idx + 1}/{len(state.current_images)})"
         draw_text(canvas, img_title, (box_x + 20, box_y + 14), font_size=17, color=(0, 255, 200), bold=True)
-        draw_text(canvas, "[按 F 键退出大图，恢复三栏标准看板]", (box_x + box_w - 300, box_y + 14), font_size=14, color=self.COLOR_GOLD)
+
+        # 右上角实体按钮组: [◀ 上一张] [下一张 ▶] [F 退出放大]
+        self._draw_button(canvas, (box_x + box_w - 364, box_y + 10, 84, 32), "[<] 上张", mpos)
+        self._draw_button(canvas, (box_x + box_w - 274, box_y + 10, 84, 32), "[>] 下张", mpos)
+        self._draw_button(canvas, (box_x + box_w - 184, box_y + 10, 164, 32), "[F] 退出全宽放大", mpos)
 
         if prev is not None:
             ph, pw = prev.shape[:2]
@@ -412,8 +527,8 @@ class HubRenderer:
             canvas[py:py + ph, px:px + pw] = prev
             cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (60, 70, 90), 1)
 
-        draw_text(canvas, "[← / →] 切换相册大图   |   [Space] 空间抓拍   |   [F] 退出全宽预览恢复三栏",
-                  (box_x + 230, box_y + box_h - 24), font_size=14, color=self.COLOR_WHITE)
+        draw_text(canvas, "[< / >] 切换相册大图   |   滚轮顺畅切换   |   [Space] 空间抓拍   |   [F] 恢复标准看板",
+                  (box_x + 210, box_y + box_h - 24), font_size=14, color=self.COLOR_WHITE)
 
     def _render_capture_viewport(self, canvas: np.ndarray, state: HubState):
         """渲染原地相机取流视口 (x: 0~1280, y: 50~670)"""
@@ -430,34 +545,35 @@ class HubRenderer:
         if state.toast_time > now:
             draw_text(canvas, f"[系统反馈] {state.toast_msg}", (20, 684), font_size=16, color=(0, 255, 200), bold=True)
         else:
-            if state.is_toolbox_open:
+            if state.is_help_modal_open:
+                draw_text(canvas, "【生产机制解析窗已激活】[ESC / H] 关闭说明窗口  |  按 [P] 可直接一键生效到生产系统",
+                          (20, 686), font_size=14, color=self.COLOR_GOLD, bold=True)
+            elif state.is_toolbox_open:
                 draw_text(canvas, "【工具箱已激活】[S] Studio平差  [A] 在线AR验证  [L] 盲测体检  [D] 漏检切片  [T] 标靶图纸  [W] 白名单  [ESC / M] 关闭",
                           (20, 686), font_size=14, color=(0, 255, 200), bold=True)
             elif state.mode == HubState.MODE_CAPTURE:
                 draw_text(canvas, "[Space] 抓拍存入当前场景   |   [ESC / C] 退出采图返回三栏看板   |   [S] 立即平差",
                           (20, 686), font_size=15, color=self.COLOR_WHITE)
             else:
-                draw_text(canvas, "[M] 工具箱菜单  [N] 新建场景  [R] 改名  [K] 克隆  [↑/↓] 选场景  [Enter] 设活动  [C] 连拍  [S] 平差  [P] 生效生产  [F] 放大",
+                draw_text(canvas, "[M] 工具箱  [N] 新建  [R] 改名  [K] 克隆  [↑/↓] 选场景  [C] 连拍  [S] 平差  [P] 生效生产  [H] 生产说明  [F] 放大",
                           (20, 686), font_size=14, color=self.COLOR_WHITE)
 
     def _render_toolbox_modal(self, canvas: np.ndarray, state: HubState):
         """渲染中央悬浮置顶的【标定工具箱综合菜单】(880x520)"""
-        # 1. 半透明暗色毛玻璃遮罩压暗底层
         overlay = canvas.copy()
         cv2.rectangle(overlay, (0, 0), (self.canvas_w, self.canvas_h), (8, 10, 14), -1)
         cv2.addWeighted(overlay, 0.75, canvas, 0.25, 0, canvas)
 
-        # 2. 弹窗主体视口
         modal_w, modal_h = 880, 520
-        mx = (self.canvas_w - modal_w) // 2  # 200
-        my = (self.canvas_h - modal_h) // 2  # 100
+        mx = (self.canvas_w - modal_w) // 2
+        my = (self.canvas_h - modal_h) // 2
+        mpos = (state.mouse_x, state.mouse_y)
 
-        # 弹窗底板与多层科技线框
         cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (20, 24, 32), -1)
         cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (0, 200, 240), 2)
         cv2.rectangle(canvas, (mx + 4, my + 4), (mx + modal_w - 4, my + modal_h - 4), (40, 50, 66), 1)
 
-        # 3. 弹窗标题栏 (my ~ my + 54)
+        # 标题栏
         cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + 54), (16, 20, 28), -1)
         cv2.line(canvas, (mx, my + 54), (mx + modal_w, my + 54), self.COLOR_BORDER, 1)
 
@@ -465,16 +581,12 @@ class HubRenderer:
         draw_text(canvas, "★ AprilTag 视觉标定综合工具箱总菜单 (Toolbox Hub)", (mx + 36, my + 15),
                   font_size=18, color=self.COLOR_WHITE, bold=True)
 
-        # 右上角 [X] 关闭按钮 (mx + modal_w - 110 ~ mx + modal_w - 20)
-        cv2.rectangle(canvas, (mx + modal_w - 106, my + 13), (mx + modal_w - 18, my + 41), (28, 32, 44), -1)
-        cv2.rectangle(canvas, (mx + modal_w - 106, my + 13), (mx + modal_w - 18, my + 41), (70, 80, 100), 1)
-        draw_text(canvas, "[X] 关闭 (ESC)", (mx + modal_w - 98, my + 18), font_size=12, color=self.COLOR_GRAY)
+        # 右上角 [X] 关闭按钮
+        self._draw_button(canvas, (mx + modal_w - 120, my + 11, 104, 32), "[X] 关闭 [ESC]", mpos)
 
-        # 副标题说明
         draw_text(canvas, "一站式极速唤起系统内所有独立 OpenCV 交互式图形化诊断、平差、图纸生成与在线验证工具：",
                   (mx + 28, my + 66), font_size=13, color=(0, 200, 240))
 
-        # 4. 6 大核心工具交互卡片 (2列 x 3行)
         tools = [
             ("[S] 离线 Studio 深度平差工作站",
              "整合多视角样本网格、两阶段 BA 平差求解、智能残差剪枝与全量质检体检报告",
@@ -511,32 +623,92 @@ class HubRenderer:
             x = col_xs[col_i]
             y = row_ys[row_i]
 
-            # 绘制工具卡片底板与边框
-            cv2.rectangle(canvas, (x, y), (x + cw, y + ch), (26, 31, 42), -1)
-            cv2.rectangle(canvas, (x, y), (x + cw, y + ch), (44, 52, 70), 1)
-
-            # 左侧高亮色条
+            is_hover = (x <= mpos[0] <= x + cw and y <= mpos[1] <= y + ch)
+            cv2.rectangle(canvas, (x, y), (x + cw, y + ch), (32, 40, 52) if is_hover else (26, 31, 42), -1)
+            cv2.rectangle(canvas, (x, y), (x + cw, y + ch), (0, 255, 180) if is_hover else (44, 52, 70), 2 if is_hover else 1)
             cv2.rectangle(canvas, (x, y), (x + 4, y + ch), col, -1)
 
-            # 标题 (带快捷键高亮)
             draw_text(canvas, title, (x + 14, y + 10), font_size=15, color=col, bold=True)
-
-            # 两行功能描述 (自动换行排版)
             desc_line1 = desc[:28]
             desc_line2 = desc[28:56]
             draw_text(canvas, desc_line1, (x + 14, y + 36), font_size=12, color=self.COLOR_WHITE)
             if desc_line2:
                 draw_text(canvas, desc_line2, (x + 14, y + 56), font_size=12, color=self.COLOR_GRAY)
 
-            # 右下角点击启动徽章
             cv2.rectangle(canvas, (x + cw - 72, y + ch - 22), (x + cw - 8, y + ch - 6), (16, 22, 30), -1)
             cv2.putText(canvas, "CLICK", (x + cw - 62, y + ch - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.34, col, 1, cv2.LINE_AA)
 
-        # 5. 弹窗底部操作指引 (y: my + modal_h - 40)
         footer_y = my + modal_h - 40
         cv2.line(canvas, (mx + 20, footer_y), (mx + modal_w - 20, footer_y), (36, 44, 58), 1)
         draw_text(canvas, "★ 操作提示: 鼠标直接点击对应工具卡片，或直接按下键盘快捷键 [S / A / L / D / T / W] 即可秒级拉起！",
                   (mx + 30, footer_y + 12), font_size=13, color=self.COLOR_GOLD)
+
+    def _render_help_modal(self, canvas: np.ndarray, state: HubState):
+        """渲染置顶居中的【生效到生产系统业务机制说明窗】(860x490)"""
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (0, 0), (self.canvas_w, self.canvas_h), (8, 10, 14), -1)
+        cv2.addWeighted(overlay, 0.78, canvas, 0.22, 0, canvas)
+
+        modal_w, modal_h = 860, 490
+        mx = (self.canvas_w - modal_w) // 2
+        my = (self.canvas_h - modal_h) // 2
+        mpos = (state.mouse_x, state.mouse_y)
+
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (20, 24, 32), -1)
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (0, 220, 160), 2)
+        cv2.rectangle(canvas, (mx + 4, my + 4), (mx + modal_w - 4, my + modal_h - 4), (40, 50, 66), 1)
+
+        # 标题栏
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + 54), (16, 20, 28), -1)
+        cv2.line(canvas, (mx, my + 54), (mx + modal_w, my + 54), self.COLOR_BORDER, 1)
+
+        cv2.circle(canvas, (mx + 24, my + 27), 6, self.COLOR_GOLD, -1)
+        draw_text(canvas, "★ 业务架构解析: 为什么需要【生效到生产系统】？", (mx + 38, my + 15),
+                  font_size=17, color=self.COLOR_WHITE, bold=True)
+
+        # 右上角 [X] 关闭按钮
+        self._draw_button(canvas, (mx + modal_w - 116, my + 11, 100, 32), "[X] 关闭 [H]", mpos)
+
+        # 4 条架构阐释卡片
+        intro_text = "在工业机器视觉与机械臂抓取工程中，标定研发与现场生产实行严格的【沙盒隔离】机制："
+        draw_text(canvas, intro_text, (mx + 30, my + 68), font_size=14, color=(0, 240, 220))
+
+        sections = [
+            ("1. 研发沙盒安全隔离 (Sandbox Isolation)",
+             "每个工况场景（如“1号机台主标定”、“光照对照组”）都是独立沙盒，拥有专属照片集与平差结果。现场实验或测试标定时，绝对不会影响正在作业的机械臂。",
+             (0, 255, 180)),
+
+            ("2. 全局唯一生产地图 (Global Production Map)",
+             "流水线所有空间定位与手眼协同节点，均默认读取项目根目录的【config/tags_map.yaml】。该文件是全系统运行时的唯一真实几何基准。",
+             (0, 220, 255)),
+
+            ("3. 一键安全原子覆盖与自动备份 (Safe Atomic Publish)",
+             "当操作员选中满意场景并按【[P] 生效到生产系统】时，系统自动生成带时间戳的 .bak 历史备份，随后将平差坐标原子写入 config/tags_map.yaml 并记录至 config.yaml。",
+             self.COLOR_GOLD),
+
+            ("4. 实时生效与生产闭环 (Seamless Hot-Reload)",
+             "生效发布后，无需重启生产服务即可读取最新厘米/亚毫米级标定矩阵，实现从“采图 -> 平差 -> 质检 -> 生产发布”的完整闭环，确保流水线作业极致精准！",
+             (160, 255, 120))
+        ]
+
+        sy = my + 98
+        for title, desc, col in sections:
+            cv2.rectangle(canvas, (mx + 28, sy), (mx + modal_w - 28, sy + 74), (25, 30, 40), -1)
+            cv2.rectangle(canvas, (mx + 28, sy), (mx + modal_w - 28, sy + 74), (44, 52, 68), 1)
+            cv2.rectangle(canvas, (mx + 28, sy), (mx + 32, sy + 74), col, -1)
+
+            draw_text(canvas, title, (mx + 42, sy + 8), font_size=14, color=col, bold=True)
+            d1 = desc[:48]
+            d2 = desc[48:96]
+            draw_text(canvas, d1, (mx + 42, sy + 30), font_size=12, color=self.COLOR_WHITE)
+            if d2:
+                draw_text(canvas, d2, (mx + 42, sy + 48), font_size=12, color=self.COLOR_GRAY)
+            sy += 82
+
+        footer_y = my + modal_h - 36
+        draw_text(canvas, "快捷提示: 鼠标点击右上角 [X]、点击遮罩或直接按键盘 [ESC / H] 即可秒级关闭！",
+                  (mx + 32, footer_y), font_size=13, color=self.COLOR_GRAY)
+
 
 

@@ -74,6 +74,19 @@ class TagSceneHubApp:
 
             key = raw_key & 0xFF
 
+            # =================== 生产系统机制 Help 弹窗模式事件 ===================
+            if self.state.is_help_modal_open:
+                # [ESC] / [H] / [Q] / [M]: 关闭 Help 弹窗
+                if raw_key in (27, ord('q'), ord('Q'), ord('h'), ord('H'), ord('m'), ord('M')):
+                    self.state.is_help_modal_open = False
+                    self.state.set_toast("已关闭生产系统机制说明窗。")
+                    continue
+                elif key in (ord('p'), ord('P')):
+                    self.state.is_help_modal_open = False
+                    self._handle_publish_to_production()
+                    continue
+                continue
+
             # =================== 标定工具箱总菜单模式事件 ===================
             if self.state.is_toolbox_open:
                 # [ESC] 或 [M] 或 [Q]: 关闭工具箱返回主看板
@@ -110,7 +123,7 @@ class TagSceneHubApp:
 
                 continue
 
-            # [ESC] 或 [Q] 退出逻辑 (非工具箱模式)
+            # [ESC] 或 [Q] 退出逻辑 (非工具箱与说明模式)
             if raw_key in (27, ord('q'), ord('Q')):
                 if self.state.mode == HubState.MODE_CAPTURE:
                     # 仅退出采图视口，返回三栏看板
@@ -125,6 +138,11 @@ class TagSceneHubApp:
             # [M] 切换标定综合工具箱菜单
             if key in (ord('m'), ord('M')):
                 self.state.toggle_toolbox()
+                continue
+
+            # [H] 切换生产机制解析说明窗
+            if key in (ord('h'), ord('H')):
+                self.state.toggle_help_modal()
                 continue
 
             # [C] 切换采图模式
@@ -150,24 +168,24 @@ class TagSceneHubApp:
 
                 continue
 
-            # =================== 标准看板模式下的事件 ===================
-            # [↑] 上方向键: Windows waitKeyEx code 2490368 或 'w'
-            if raw_key in (2490368, ord('w'), ord('W')):
+            # =================== 标准看板模式下的事件 (多键位全覆盖) ===================
+            # [↑] 上方向键: Windows waitKeyEx 2490368 / 65362 或 'w' / 小键盘 8
+            if raw_key in (2490368, 65362, ord('w'), ord('W'), ord('8')) or key in (ord('w'), ord('W')):
                 self.state.select_scene_by_offset(-1)
 
-            # [↓] 下方向键: Windows waitKeyEx code 2621440 或 's'
-            elif raw_key in (2621440, ord('s'), ord('S')):
+            # [↓] 下方向键: Windows waitKeyEx 2621440 / 65364 或 's' / 小键盘 2
+            elif raw_key in (2621440, 65364, ord('s'), ord('S'), ord('2')) or key in (ord('s'), ord('S')):
                 self.state.select_scene_by_offset(1)
 
-            # [←] 左方向键: Windows waitKeyEx code 2424832 或 'a'
-            elif raw_key in (2424832, ord('a'), ord('A')):
+            # [←] 左方向键: Windows waitKeyEx 2424832 / 65361 或 'a' / 小键盘 4 / 'j'
+            elif raw_key in (2424832, 65361, ord('a'), ord('A'), ord('4'), ord('j'), ord('J')) or key in (ord('a'), ord('A')):
                 self.state.select_image_by_offset(-1)
 
-            # [→] 右方向键: Windows waitKeyEx code 2555904 或 'd'
-            elif raw_key in (2555904, ord('d'), ord('D')):
+            # [→] 右方向键: Windows waitKeyEx 2555904 / 65363 或 'd' / 小键盘 6 / 'l'
+            elif raw_key in (2555904, 65363, ord('d'), ord('D'), ord('6'), ord('l'), ord('L')) or key in (ord('d'), ord('D')):
                 self.state.select_image_by_offset(1)
 
-            # [Enter] (回车键: 13): 设为全局活动场景
+            # [Enter] (回车键: 13, 10): 设为全局活动场景
             elif raw_key in (13, 10):
                 self.state.set_current_as_active()
 
@@ -221,18 +239,52 @@ class TagSceneHubApp:
             self.state.set_toast("已返回三栏看板。")
 
     def _on_mouse_event(self, event, x, y, flags, param):
-        """处理鼠标点击交互：工具箱菜单、卡片点击、按钮点击、相册选图与大图切换"""
+        """处理鼠标点击、悬浮 Hover 与滚轮切片交互"""
+        # 1. 实时跟踪鼠标坐标，支持全部按钮平滑 Hover 高亮
+        if event == cv2.EVENT_MOUSEMOVE:
+            self.state.mouse_x = x
+            self.state.mouse_y = y
+            return
+
+        # 2. 鼠标滚轮极速翻页/切换场景
+        if event == cv2.EVENT_MOUSEWHEEL:
+            delta = -1 if flags > 0 else 1
+            if x <= 340 and 80 <= y <= 380:
+                self.state.select_scene_by_offset(delta)
+            else:
+                self.state.select_image_by_offset(delta)
+            return
+
+        # 后续仅处理鼠标左键点击
         if event != cv2.EVENT_LBUTTONDOWN:
             return
 
-        # =================== 1. 工具箱模式下的鼠标点击 ===================
+        # =================== 3. 生产机制 Help 说明窗下的点击 ===================
+        if self.state.is_help_modal_open:
+            modal_w, modal_h = 860, 490
+            mx = (1280 - modal_w) // 2
+            my = (720 - modal_h) // 2
+
+            # 点击右上角 [X] 关闭按钮
+            if (mx + modal_w - 116) <= x <= (mx + modal_w - 16) and (my + 11) <= y <= (my + 43):
+                self.state.is_help_modal_open = False
+                self.state.set_toast("已关闭说明窗。")
+                return
+
+            # 点击弹窗外部半透明遮罩：关闭
+            if x < mx or x > mx + modal_w or y < my or y > my + modal_h:
+                self.state.is_help_modal_open = False
+                self.state.set_toast("已关闭说明窗。")
+            return
+
+        # =================== 4. 工具箱模式下的鼠标点击 ===================
         if self.state.is_toolbox_open:
             modal_w, modal_h = 880, 520
             mx = (1280 - modal_w) // 2  # 200
             my = (720 - modal_h) // 2   # 100
 
             # 点击右上角 [X] 关闭按钮
-            if (mx + modal_w - 110) <= x <= (mx + modal_w - 18) and (my + 10) <= y <= (my + 44):
+            if (mx + modal_w - 120) <= x <= (mx + modal_w - 16) and (my + 10) <= y <= (my + 44):
                 self.state.is_toolbox_open = False
                 self.state.set_toast("已关闭标定工具箱。")
                 return
@@ -267,7 +319,7 @@ class TagSceneHubApp:
                 self.state.set_toast("已关闭标定工具箱。")
             return
 
-        # =================== 2. 正常看板与采图模式下的鼠标点击 ===================
+        # =================== 5. 正常看板与采图模式下的鼠标点击 ===================
         # 点击顶部标题栏 [M] 工具箱菜单按钮 (x: 1040~1180, y: 8~42)
         if 1040 <= x <= 1180 and 8 <= y <= 42:
             self.state.toggle_toolbox()
@@ -275,13 +327,13 @@ class TagSceneHubApp:
 
         # 如果在相机采图全屏模式，点击画面抓拍
         if self.state.mode == HubState.MODE_CAPTURE:
-            if y > 50 and y < 670:
+            if 50 < y < 670:
                 ok, frame = self.state.camera_streamer.read()
                 if ok and frame is not None:
                     self.state.save_capture_frame(frame)
             return
 
-        # 1. 点击左侧场景列表卡片 (x: 10~330, y: 88~370)
+        # 5.1 点击左侧场景列表卡片 (x: 10~330, y: 88~370)
         if 10 <= x <= 330 and 88 <= y <= 370:
             card_h = 66
             gap = 6
@@ -294,52 +346,91 @@ class TagSceneHubApp:
                 self.state.load_current_scene_images()
             return
 
-        # 2. 点击左侧场景管理按钮 (y: 414~490)
-        # 按钮 1: 新建场景 [N] (x: 10~165, y: 414~450)
-        if 10 <= x <= 165 and 414 <= y <= 450:
+        # 5.2 点击左侧场景管理按钮 (y: 412~490)
+        # 按钮 1: 新建场景 [N] (x: 10~165, y: 412~450)
+        if 10 <= x <= 165 and 412 <= y <= 450:
             self._handle_create_scene()
             return
-        # 按钮 2: 修改名称 [R] (x: 175~330, y: 414~450)
-        if 175 <= x <= 330 and 414 <= y <= 450:
+        # 按钮 2: 修改名称 [R] (x: 175~330, y: 412~450)
+        if 175 <= x <= 330 and 412 <= y <= 450:
             self._handle_rename_scene()
             return
-        # 按钮 3: 克隆场景 [K] (x: 10~165, y: 456~490)
-        if 10 <= x <= 165 and 456 <= y <= 490:
+        # 按钮 3: 克隆场景 [K] (x: 10~165, y: 452~490)
+        if 10 <= x <= 165 and 452 <= y <= 490:
             self._handle_clone_scene()
             return
-        # 按钮 4: 打开目录 [V] (x: 175~330, y: 456~490)
-        if 175 <= x <= 330 and 456 <= y <= 490:
+        # 按钮 4: 打开目录 [V] (x: 175~330, y: 452~490)
+        if 175 <= x <= 330 and 452 <= y <= 490:
             self._handle_open_directory()
             return
 
-        # 3. 点击左侧核心工作流通道 (x: 10~330, y: 536~680)
+        # 5.3 点击左侧核心工作流通道 (x: 10~330, y: 536~680)
         if 10 <= x <= 330:
             if 536 <= y <= 580:
                 self._toggle_capture_mode()
                 return
-            elif 586 <= y <= 630:
+            elif 584 <= y <= 628:
                 self._launch_offline_studio()
                 return
-            elif 636 <= y <= 680:
-                self._handle_publish_to_production()
+            elif 632 <= y <= 678:
+                # 判断是否点击右侧的专属 [? Help] 按钮 (x: 262~326, y: 638~672)
+                if 260 <= x <= 326 and 636 <= y <= 672:
+                    self.state.toggle_help_modal()
+                else:
+                    self._handle_publish_to_production()
                 return
 
-        # 4. 点击最右侧相册缩略图 (x: 816~1260, y: 94~156)
-        if not self.state.expanded_preview_mode and 816 <= x <= 1260 and 94 <= y <= 156:
-            tw = 98
-            pad = 8
-            thumb_idx = (x - 816) // (tw + pad)
-            offset = self.state.image_strip_offset
-            target_img_idx = offset + thumb_idx
-            if 0 <= target_img_idx < len(self.state.current_images):
-                self.state.selected_image_idx = target_img_idx
-            return
+        # 5.4 全宽大图预览模式下的右上角按钮交互 (x: 340~1280)
+        if self.state.expanded_preview_mode:
+            # [◀] 上张按钮 (x: 1280-364 ~ 1280-280, y: 60~92)
+            if (1280 - 364) <= x <= (1280 - 280) and 60 <= y <= 92:
+                self.state.select_image_by_offset(-1)
+                return
+            # [▶] 下张按钮 (x: 1280-274 ~ 1280-190, y: 60~92)
+            if (1280 - 274) <= x <= (1280 - 190) and 60 <= y <= 92:
+                self.state.select_image_by_offset(1)
+                return
+            # [F] 退出全宽放大按钮 (x: 1280-184 ~ 1280-20, y: 60~92)
+            if (1280 - 184) <= x <= (1280 - 20) and 60 <= y <= 92:
+                self.state.toggle_expanded_preview()
+                return
 
-        # 5. 点击大图预览视口：触发 [F] 模式切换
-        if (not self.state.expanded_preview_mode and 816 <= x <= 1260 and 168 <= y <= 660) or \
-           (self.state.expanded_preview_mode and 340 <= x <= 1280 and 50 <= y <= 670):
-            self.state.toggle_expanded_preview()
-            return
+            # 点击大图画面本身也可以切换回标准看板
+            if 340 <= x <= 1280 and 50 <= y <= 670:
+                self.state.toggle_expanded_preview()
+                return
+
+        # 5.5 标准三栏看板模式下的右侧相册交互 (x: 800~1280)
+        if not self.state.expanded_preview_mode:
+            # 顶部实体按钮组:
+            # [◀] 按钮 (x: 1280 - 224 ~ 1280 - 184, y: 58~90)
+            if (1280 - 224) <= x <= (1280 - 184) and 58 <= y <= 90:
+                self.state.select_image_by_offset(-1)
+                return
+            # [▶] 按钮 (x: 1280 - 178 ~ 1280 - 138, y: 58~90)
+            if (1280 - 178) <= x <= (1280 - 138) and 58 <= y <= 90:
+                self.state.select_image_by_offset(1)
+                return
+            # [F] 全宽放大按钮 (x: 1280 - 132 ~ 1280 - 14, y: 58~90)
+            if (1280 - 132) <= x <= (1280 - 14) and 58 <= y <= 90:
+                self.state.toggle_expanded_preview()
+                return
+
+            # 点击缩略图水平滚动带 (x: 816~1260, y: 96~158)
+            if 816 <= x <= 1260 and 96 <= y <= 158:
+                tw = 98
+                pad = 8
+                thumb_idx = (x - 816) // (tw + pad)
+                offset = self.state.image_strip_offset
+                target_img_idx = offset + thumb_idx
+                if 0 <= target_img_idx < len(self.state.current_images):
+                    self.state.selected_image_idx = target_img_idx
+                return
+
+            # 点击单帧大图视口区域：进入全宽大图模式
+            if 816 <= x <= 1260 and 168 <= y <= 660:
+                self.state.toggle_expanded_preview()
+                return
 
     def _handle_publish_to_production(self):
         """生效为生产运行地图 (覆盖全局 config/tags_map.yaml)"""
@@ -470,7 +561,6 @@ class TagSceneHubApp:
 
     def _handle_create_scene(self):
         """新建工况场景 (支持中文名称弹窗)"""
-        existing_names = [s.name for s in self.state.scenes]
         idx = len(self.state.scenes) + 1
         default_alias = f"标定工况_{idx}"
 
@@ -485,10 +575,14 @@ class TagSceneHubApp:
 
         new_sc = self.scene_mgr.create_scene(alias=chosen_name, description=f"工况场景 {chosen_name}")
         self.state.refresh_scenes()
+        target_idx = 0
         for i, s in enumerate(self.state.scenes):
             if s.scene_id == new_sc.scene_id:
-                self.state.selected_scene_idx = i
+                target_idx = i
                 break
+        self.state.selected_scene_idx = target_idx
+        self.state.selected_image_idx = 0
+        self.state.image_strip_offset = 0
         self.state.load_current_scene_images()
         self.state.set_toast(f"已成功新建场景: 【{new_sc.name}】({new_sc.scene_id})，按 [C] 可立即开始采图！")
 
@@ -496,6 +590,7 @@ class TagSceneHubApp:
         """克隆场景 (支持中文名称弹窗)"""
         sc = self.state.get_selected_scene()
         if not sc:
+            self.state.set_toast("未选中任何场景，无法克隆！")
             return
 
         default_clone_name = f"{sc.name}_对照组"
@@ -509,13 +604,20 @@ class TagSceneHubApp:
 
         cloned = self.scene_mgr.clone_scene(sc.scene_id, new_alias=chosen_name)
         if cloned:
+            # 立即刷新场景列表
             self.state.refresh_scenes()
+            target_idx = 0
             for i, s in enumerate(self.state.scenes):
                 if s.scene_id == cloned.scene_id:
-                    self.state.selected_scene_idx = i
+                    target_idx = i
                     break
+            self.state.selected_scene_idx = target_idx
+            self.state.selected_image_idx = 0
+            self.state.image_strip_offset = 0
             self.state.load_current_scene_images()
-            self.state.set_toast(f"已成功克隆场景: 【{cloned.name}】")
+            self.state.set_toast(f"已成功克隆场景: 【{cloned.name}】并定位至新场景！")
+        else:
+            self.state.set_toast("克隆场景失败，请检查源场景目录！")
 
 
 def main():

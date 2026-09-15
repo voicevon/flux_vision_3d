@@ -266,18 +266,20 @@ class CalibrationSceneManager:
         if not os.path.isdir(self.scenes_dir):
             return []
         
-        active_id = self.get_active_scene_id()
         for item in os.listdir(self.scenes_dir):
             if item.startswith("."):
                 continue
             item_path = os.path.join(self.scenes_dir, item)
             if os.path.isdir(item_path):
-                scene = CalibrationScene.load(item_path)
-                if scene:
-                    scenes.append(scene)
+                try:
+                    scene = CalibrationScene.load(item_path)
+                    if scene:
+                        scenes.append(scene)
+                except Exception as e:
+                    print(f"[WARN] 加载场景异常 {item}: {e}")
 
-        # 排序：创建时间降序
-        scenes.sort(key=lambda s: s.created_at, reverse=True)
+        # 排序：创建时间降序，次要以 scene_id 降序
+        scenes.sort(key=lambda s: (s.created_at, s.scene_id), reverse=True)
         return scenes
 
     def get_active_scene_id(self) -> str:
@@ -298,19 +300,18 @@ class CalibrationSceneManager:
         return ""
 
     def get_active_scene(self) -> CalibrationScene:
-        """获取当前激活场景对象，若无场景则自愈创建默认场景"""
+        """获取当前活动场景对象"""
         active_id = self.get_active_scene_id()
         if active_id:
             scene = CalibrationScene.load(os.path.join(self.scenes_dir, active_id))
             if scene:
                 return scene
 
-        # 若没有任何场景，初始化一个标准默认场景
-        default_alias = "bench_default"
-        return self.create_scene(alias=default_alias, description="默认工位标定场景")
+        # 若无有效场景则自动构建默认场景
+        return self.create_scene(alias="默认工位", description="系统自动初始化默认场景")
 
     def set_active_scene(self, scene_id: str) -> bool:
-        """切换当前活动场景"""
+        """设置当前活动场景"""
         target_dir = os.path.join(self.scenes_dir, scene_id)
         if not os.path.isdir(target_dir):
             return False
@@ -324,15 +325,18 @@ class CalibrationSceneManager:
             return False
 
     def create_scene(self, alias: str, description: str = "") -> CalibrationScene:
-        """根据操作员自定义别名创建新场景 (自动添加 YYYYMMDD 前缀)"""
-        clean_alias = "".join(c for c in alias if c.isalnum() or c in ("_", "-")).strip("_")
-        if not clean_alias:
-            clean_alias = "scene"
-
-        date_prefix = time.strftime("%Y%m%d")
-        scene_id = f"{date_prefix}_{clean_alias}"
+        """根据操作员自定义别名创建新场景 (安全 ASCII 时间戳目录 + 完整友好中文别名)"""
+        display_name = alias.strip() if alias and alias.strip() else "新建工况"
         
-        # 避免同名覆盖，自增序列
+        # 物理 scene_id 目录名强制使用纯 ASCII 安全时间戳 + 序列，杜绝底层编码隐患
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        ascii_suffix = "".join(c for c in alias if c.isascii() and (c.isalnum() or c in ("_", "-"))).strip("_")
+        if ascii_suffix:
+            scene_id = f"{timestamp}_{ascii_suffix}"
+        else:
+            scene_id = f"{timestamp}_scene"
+
+        # 避免极短时间内冲突，自增序列
         counter = 1
         original_id = scene_id
         while os.path.exists(os.path.join(self.scenes_dir, scene_id)):
@@ -342,7 +346,7 @@ class CalibrationSceneManager:
         scene_dir = os.path.join(self.scenes_dir, scene_id)
         scene = CalibrationScene(
             scene_id=scene_id,
-            name=clean_alias,
+            name=display_name,
             scene_dir=scene_dir,
             description=description,
             created_at=time.strftime("%Y-%m-%d %H:%M:%S")
