@@ -186,30 +186,29 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["data/calibration_scenes/ 工况沙盒目录"],
             outputs=["当前活动场景切换、scene_meta.yaml、一键原子发布到 config/tags_map.yaml"],
-            quick_tips="快捷键: [1] 启动 | 中枢内 [⏎] 激活 | [P] 发布生产 | [S] 进Studio"
+            quick_tips="快捷键: [1] 启动 | 中枢内 [⏎] 激活 | [P] 发布生产 | [S] 进Studio",
         ),
 
         # ===== B — Tag 标定流水线 (6张，2×3) =====
         ToolCardMeta(
-            key_id="tag_generator",
+            key_id="tag_manager",
             shortcut="2",
-            title="AprilTag 标靶图纸生成器",
-            subtitle="[G] 一键生成高清PNG与严格1:1 A4 PDF排版标靶",
+            title="AprilTag 管理器",
+            subtitle="[G] 图纸生成 + 白名单管理 (cv2 GUI)",
             category="B — Tag 标定流水线",
-            is_gui=False,
-            command=[sys.executable, "tools/calibration/generate_apriltags.py"],
+            is_gui=True,
+            command=[sys.executable, "tools/calibration/tag_manager.py"],
             tag_color=COLOR_B,
-            summary="【标定流水线 Step 0】在标定现场第一步：物理打印 AprilTag 16h5 标靶图纸，生成高清 PNG 和严格 1:1 比例的 A4 PDF 排版文件。",
+            summary="【标定流水线 Step 0】统一管理 AprilTag 16h5 标靶：图纸生成 (PNG/PDF) + 白名单配置 (0~29 ID toggle)。",
             details=[
-                "生成 ID 00 ~ 29 共 30 个 AprilTag 16h5 高清独立 PNG 标靶卡片 (800×800)",
-                "自动排版为 2 页 A4 PDF 文件（每页 3列×5行 = 15个标靶，标靶物理尺寸 40mm×40mm）",
-                "每页顶部配备 100.0mm 物理校验尺，供游标卡尺验证打印比例严格 1:1 无失真",
-                "Tag #0 特别标注 SCARA 旋转中心红线，Tag #1 标注世界 +X 参考轴",
-                "同时生成 5×6 总览网格图 (apriltags_16h5_all_grid.png) 方便屏幕快速预览"
+                "📐 图纸生成 Tab: 一键生成 ID 00~29 高清 PNG + 2 页 A4 PDF 排版 + 总览网格预览",
+                "✅ 白名单管理 Tab: 30 个 Tag ID 方块 toggle / 全选 / 清空 / 预设 (0+18~29)",
+                "💾 白名单直接写回 config.yaml → calibration.valid_tag_ids",
+                "💾 窗口位置、缩放、当前 Tab、生成参数 自动持久化"
             ],
             inputs=["系统已安装 reportlab 库 (pip install reportlab)"],
-            outputs=["data/apriltags_16h5/ 目录下的 PNG 标靶卡片、A4 PDF 排版文件与总览网格图"],
-            quick_tips="快捷键: [2] 或 [G] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF，勿选“适应页面”"
+            outputs=["data/apriltags_16h5/ (PNG+PDF) | config.yaml (valid_tag_ids)"],
+                        quick_tips="快捷键: [2] 或 [G] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF，勿选“适应页面”"
         ),
 
         ToolCardMeta(
@@ -339,47 +338,27 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             quick_tips="快捷键: [H] 启动 (控制台) | 推荐 4~6 个非共面点对"
         ),
 
-        # ===== D — 生产调试 (4张，相机/仿真/抓取/诊断) =====
+        # ===== D — 生产调试 =====
         ToolCardMeta(
             key_id="d435_live",
             shortcut="8",
-            title="RealSense 深度相机与探针",
-            subtitle="[D] 物理高帧率取流/毫米级深度探针/单帧快照",
+            title="RealSense 深度相机诊断",
+            subtitle="[D] 硬件检测/深度探针/顶部按钮栏",
             category="D — 生产调试",
             is_gui=True,
             command=[sys.executable, "tools/d435_viewer.py"],
             tag_color=COLOR_D,
-            summary="【现场感知总览】RealSense 物理深度相机的综合查看器与交互式深度测量探针。",
+            summary="【硬件诊断 + 芦笋视觉】RealSense 物理深度相机综合查看器，顶部按钮栏快捷控制显示与业务功能。",
             details=[
-                "实时获取 1280x720 RGB 与精准对齐的深度流",
-                "鼠标悬停任意像素点，实时探针读取毫米级 (X, Y, Z) 空间坐标",
-                "支持深度热力图着色 (JET/TURBO) 与直方图动态均衡增强",
-                "按 [S] 键一键保存工业快照 (RGB + Depth + 点云 PLY)"
+                "实时 RGB + 对齐深度流，支持独立开关 RGB/Depth 画面",
+                "上下/左右排列切换，暂停定格，缩放放大缩小",
+                "芦笋识别、ROI 边框、激光、滤波均可独立开关",
+                "鼠标探针: 毫米级 (X, Y, Z) 空间坐标",
+                "按 [S] 抓拍快照 / [G] 打印 G-code"
             ],
-            inputs=["Intel RealSense 深度相机 USB 3.0 物理相机"],
-            outputs=["data/snapshots/ 单帧高质量工业多模态快照"],
-            quick_tips="快捷键: [8] 或 [D] 启动 | 查看器内 [S] 存快照 | [M] 切换热力着色 | [D] 测距探针 | [ESC] 退出"
-        ),
-
-        ToolCardMeta(
-            key_id="sim_sandbox",
-            shortcut="9",
-            title="仿真模拟与离线快照验证",
-            subtitle="[M] --mock 纯软件相机仿真 / 历史工业快照位姿解算",
-            category="D — 生产调试",
-            is_gui=True,
-            command=[sys.executable, "tools/d435_viewer.py", "--mock"],
-            tag_color=COLOR_D,
-            summary="【脱机仿真沙盒】无硬件时的开发与调试利器：涵盖纯软件仿真相机与历史快照抓取算法验证。",
-            details=[
-                "生成合成渐变深度场与模拟测试 AprilTag 标靶纹理，模拟真实 30FPS 视频流与探针交互",
-                "支持算法离线验证：从 data/snapshots/ 快速加载真实历史工业快照，验证芦笋抓取解算",
-                "适合在离线工位、出差环境或算法调优期间进行全流程无硬件联调",
-                "快照验证命令：python tools/find_top_asparagus.py --snapshot latest"
-            ],
-            inputs=["纯软件数学合成场 或 data/snapshots/ 历史已采集工业快照"],
-            outputs=["模拟工业快照至 data/snapshots/ 或控制台算法解算结果"],
-            quick_tips="快捷键: [9] 或 [M] 启动仿真查看器 | 离线快照测试在控制台执行对应参数命令"
+            inputs=["Intel RealSense D435 深度相机"],
+            outputs=["控制台诊断信息 / data/snapshots/ 快照"],
+            quick_tips="快捷键: [8] 或 [D] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
         ),
 
         # ===== D — 生产调试 (续，芦笋抓取) =====

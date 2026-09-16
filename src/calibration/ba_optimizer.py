@@ -7,7 +7,7 @@
 - 阶段二：微容差极致深层收敛求解
 - 标靶物理间距先验约束惩罚项 (Metric Baseline Gauge)
 - 基于雅可比矩阵逆的一阶 3D 空间置信度 (Uncertainty Estimation) 分析
-- 世界坐标系对齐闭环 (Origin 锚定与 X 轴水平对齐)
+- 世界坐标系对齐闭环 (FR-9.6 绝对坐标锚定 / Origin 锚定与 X 轴水平对齐)
 - 2D 像面 Quiver Plot 残差矢量场与 Markdown 诊断报告输出
 """
 
@@ -99,6 +99,7 @@ class BundleAdjustmentOptimizer:
                  origin_tag_id: int = 0,
                  x_align_tag_id: int = 1,
                  baseline_pair: Optional[Tuple[int, int, float]] = None,
+                 world_anchor: Optional[Dict[str, Any]] = None,
                  callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         """
         基于非线性最小二乘 (Bundle Adjustment) 联合优化所有标靶位姿与相机位姿
@@ -456,12 +457,15 @@ class BundleAdjustmentOptimizer:
             }
             self.marker_size_mm = real_marker_size
 
-        # 7. 坐标系对齐闭环：将世界坐标原点绑定到 Tag 0 中心，X 轴对齐到 Tag 1
-        final_tags_map = self.align_to_scara_world(
-            optimized_tags_pose, 
-            origin_tag_id=origin_tag_id, 
-            x_align_tag_id=x_align_tag_id
-        )
+        # 7. 坐标系对齐闭环: 优先 FR-9.6 世界系绝对锚定 (Tag0/Tag1 已知绝对坐标), 未配置时退化为相对对齐
+        if world_anchor:
+            final_tags_map = self.anchor_to_absolute_world(optimized_tags_pose, world_anchor)
+        else:
+            final_tags_map = self.align_to_scara_world(
+                optimized_tags_pose,
+                origin_tag_id=origin_tag_id,
+                x_align_tag_id=x_align_tag_id
+            )
 
         final_tags_map["rmse_reprojection_px"] = rmse_px
         final_tags_map["marker_size_mm"] = round(float(self.marker_size_mm), 3)
@@ -692,7 +696,110 @@ class BundleAdjustmentOptimizer:
 
         return scaled_poses, scale_factor, real_marker_size
 
-    def align_to_scara_world(self, 
+    @staticmethod
+    def _rotation_to_rpy_deg(R: np.ndarray) -> Tuple[float, float, float]:
+        """3x3 旋转矩阵 -> (roll, pitch, yaw) 弧度 (含万向锁奇异保护)"""
+        sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
+        singular = sy < 1e-6
+        if not singular:
+            roll = math.atan2(R[2, 1], R[2, 2])
+            pitch = math.atan2(-R[2, 0], sy)
+            yaw = math.atan2(R[1, 0], R[0, 0])
+        else:
+            roll = math.atan2(-R[1, 2], R[1, 1])
+            pitch = math.atan2(-R[2, 0], sy)
+            yaw = 0.0
+        return roll, pitch, yaw
+
+    def anchor_to_absolute_world(self,
+                                 tag_poses: Dict[int, np.ndarray],
+                                 world_anchor: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        FR-9.6 世界坐标系绝对锚定:
+        以两枚标靶的已知绝对坐标 (机械臂坐标系) 求解相似变换 (尺度 s + 旋转 R + 平移 t),
+        将整张 BA 平差地图变换到机械臂世界坐标系:
+        1. 尺度: |Tag_align - Tag_origin| 的世界距离 / BA 解算距离 (比单一 Tag 边长更完整的尺度参照)
+        2. 旋转: 由两锚点连线方向 + 重力竖直先验 (BA 系 Z 轴指向天) 唯一确定, 无绕连线滚转二义性
+        3. 平移: 使 Tag_origin 中心精确落在其绝对坐标上
+        """
+        origin_id = int(world_anchor["origin_tag_id"])
+        align_id = int(world_anchor["align_tag_id"])
+        p0_w = np.asarray(world_anchor["origin_xyz_mm"], dtype=np.float64)
+        p1_w = np.asarray(world_anchor["align_xyz_mm"], dtype=np.float64)
+
+        if origin_id not in tag_poses or align_id not in tag_poses:
+            missing = [tid for tid in (origin_id, align_id) if tid not in tag_poses]
+            raise CovisibilityGraphError(
+                f"世界锚定标靶缺失: Tag {missing} 未参与本次平差解算, 无法进行绝对坐标锚定 "
+                f"(需要 Tag {origin_id} 与 Tag {align_id} 同时被检出)！"
+            )
+
+        p0_ba = tag_poses[origin_id][:3, 3]
+        p1_ba = tag_poses[align_id][:3, 3]
+        d_ba = p1_ba - p0_ba
+        d_w = p1_w - p0_w
+        norm_ba = float(np.linalg.norm(d_ba))
+        norm_w = float(np.linalg.norm(d_w))
+        if norm_ba < 1e-9:
+            raise CovisibilityGraphError("世界锚定退化: 两枚锚定标靶在 BA 解中位置重合, 尺度无法解算！")
+
+        up = np.array([0.0, 0.0, 1.0])
+
+        def _basis(vec: np.ndarray) -> np.ndarray:
+            """由方向向量与竖直先验构建正交基 (列向量), 保证连线方向与竖直方向双重约束"""
+            e1 = vec / np.linalg.norm(vec)
+            e2 = up - np.dot(up, e1) * e1
+            n2 = float(np.linalg.norm(e2))
+            if n2 < 1e-6:
+                raise CovisibilityGraphError("世界锚定退化: 锚点连线与竖直方向平行, 旋转无法唯一确定！")
+            e2 = e2 / n2
+            e3 = np.cross(e1, e2)
+            return np.column_stack([e1, e2, e3])
+
+        R = _basis(d_w) @ _basis(d_ba).T
+        scale = norm_w / norm_ba
+        t_vec = p0_w - scale * (R @ p0_ba)
+
+        # 尺度修正同步作用于边长模型: BA 以名义边长建模, 真实边长 = 名义 × 锚定尺度
+        # (与 apply_baseline_scale 的 Metric Baseline Gauge 语义一致, 否则世界角点云与
+        #  单靶 PnP 模型比例失真, 导致绿/蓝棱柱尺寸与空间偏差系统性错误)
+        self.marker_size_mm = self.marker_size_mm * scale
+
+        aligned_map = {
+            "origin_tag_id": origin_id,
+            "x_axis_align_tag_id": align_id,
+            "world_anchor": {
+                "origin_tag_id": origin_id,
+                "origin_xyz_mm": [round(float(v), 3) for v in p0_w],
+                "align_tag_id": align_id,
+                "align_xyz_mm": [round(float(v), 3) for v in p1_w],
+                "scale_factor": round(float(scale), 6),
+                "ba_baseline_mm": round(norm_ba, 3),
+                "world_baseline_mm": round(norm_w, 3),
+                "real_marker_size_mm": round(float(self.marker_size_mm), 3)
+            },
+            "tags": {}
+        }
+        print(f"[+] [ANCHOR] FR-9.6 世界系绝对锚定完成: Tag {origin_id} -> {p0_w.tolist()} mm, "
+              f"Tag {align_id} -> {p1_w.tolist()} mm, 尺度因子: {scale:.6f}, "
+              f"反算真实边长: {self.marker_size_mm:.2f} mm")
+
+        for t_id, T_w_t in tag_poses.items():
+            pos_aligned = scale * (R @ T_w_t[:3, 3]) + t_vec
+            R_aligned = R @ T_w_t[:3, :3]
+            roll, pitch, yaw = self._rotation_to_rpy_deg(R_aligned)
+
+            aligned_map["tags"][t_id] = {
+                "position_mm": [round(float(v), 2) for v in pos_aligned],
+                "rpy_deg": [round(float(math.degrees(v)), 2) for v in [roll, pitch, yaw]],
+                "transform_matrix": [[round(float(val), 5) for val in row] for row in np.vstack([np.hstack([R_aligned, pos_aligned.reshape(3, 1)]), [0, 0, 0, 1]])],
+                "is_origin": bool(t_id == origin_id),
+                "is_dynamic_yaw": bool(t_id == origin_id)
+            }
+
+        return aligned_map
+
+    def align_to_scara_world(self,
                              tag_poses: Dict[int, np.ndarray], 
                              origin_tag_id: int, 
                              x_align_tag_id: int) -> Dict[str, Any]:
@@ -754,17 +861,7 @@ class BundleAdjustmentOptimizer:
             pos_rel = T_w_t[:3, 3] - p_origin
             pos_aligned = R_align @ pos_rel
             R_aligned = R_align @ T_w_t[:3, :3]
-            
-            sy = math.sqrt(R_aligned[0, 0] * R_aligned[0, 0] + R_aligned[1, 0] * R_aligned[1, 0])
-            singular = sy < 1e-6
-            if not singular:
-                roll = math.atan2(R_aligned[2, 1], R_aligned[2, 2])
-                pitch = math.atan2(-R_aligned[2, 0], sy)
-                yaw = math.atan2(R_aligned[1, 0], R_aligned[0, 0])
-            else:
-                roll = math.atan2(-R_aligned[1, 2], R_aligned[1, 1])
-                pitch = math.atan2(-R_aligned[2, 0], sy)
-                yaw = 0.0
+            roll, pitch, yaw = self._rotation_to_rpy_deg(R_aligned)
 
             aligned_map["tags"][t_id] = {
                 "position_mm": [round(float(v), 2) for v in pos_aligned],

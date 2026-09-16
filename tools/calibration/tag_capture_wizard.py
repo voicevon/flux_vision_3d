@@ -24,7 +24,7 @@ import cv2
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
+    except (AttributeError, ValueError):
         pass
 
 import yaml
@@ -35,7 +35,7 @@ sys.path.insert(0, PROJECT_ROOT)
 try:
     from src.calibration.scene_manager import CalibrationSceneManager
     DEFAULT_IMAGE_DIR = CalibrationSceneManager().get_active_scene().raw_images_dir
-except Exception:
+except (ImportError, RuntimeError):
     DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
 
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
@@ -94,7 +94,7 @@ class TagCaptureWizard:
             K, dist, _ = resolve_camera_intrinsics(self.config_path)
             self.camera_matrix = K
             self.dist_coeffs = dist
-        except Exception:
+        except (ImportError, FileNotFoundError, KeyError, yaml.YAMLError):
             self.camera_matrix = np.array([
                 [1363.68, 0.0, 971.19],
                 [0.0, 1361.19, 566.26],
@@ -258,14 +258,11 @@ class TagCaptureWizard:
                 self.pipeline.wait_for_frames(timeout_ms=2500)
 
             # 获取物理彩色传感器句柄，支持实时快捷调控硬件曝光与增益
-            try:
-                prof = self.pipeline.get_active_profile()
-                for s in prof.get_device().query_sensors():
-                    if s.is_color_sensor():
-                        self.color_sensor = s
-                        break
-            except Exception:
-                pass
+            prof = self.pipeline.get_active_profile()
+            for s in prof.get_device().query_sensors():
+                if s.is_color_sensor():
+                    self.color_sensor = s
+                    break
 
         except Exception as e:
             # 二级回退: 尝试标称 640x480
@@ -352,51 +349,52 @@ class TagCaptureWizard:
         # 若已有 tag_observations.yaml 存在，自动将该帧增量追加进观测清单
         manifest_path = os.path.join(self.output_dir, "tag_observations.yaml")
         if os.path.exists(manifest_path):
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    manifest_data = yaml.safe_load(f) or {}
-                images_dict = manifest_data.setdefault("images", {})
-                if raw_filename not in images_dict:
-                    found_tags = self.detect_tags_robust(raw_frame) or {}
-                    obs_list = []
-                    for tid in sorted(found_tags.keys()):
-                        corners = found_tags[tid]
-                        pts = corners.reshape((4, 2)).astype(np.float64)
-                        l01 = float(np.linalg.norm(pts[1] - pts[0]))
-                        l12 = float(np.linalg.norm(pts[2] - pts[1]))
-                        l23 = float(np.linalg.norm(pts[3] - pts[2]))
-                        l30 = float(np.linalg.norm(pts[0] - pts[3]))
-                        cell_w = int(round((l01 + l23) / 12.0))
-                        cell_h = int(round((l30 + l12) / 12.0))
-                        center_x = float(np.mean(pts[:, 0]))
-                        center_y = float(np.mean(pts[:, 1]))
-                        area = float(cv2.contourArea(pts.astype(np.float32)))
-                        obs_list.append({
-                            "tag_id": int(tid),
-                            "keep": True,
-                            "cell_size_px": [cell_w, cell_h],
-                            "center_px": [round(center_x, 1), round(center_y, 1)],
-                            "area_px": round(area, 1),
-                            "note": "采图向导现场拍摄录入",
-                            "corners": [[round(float(c[0]), 2), round(float(c[1]), 2)] for c in pts]
-                        })
-                    rel_img_path = os.path.relpath(raw_filepath, PROJECT_ROOT).replace("\\", "/")
-                    rel_vis_path = os.path.relpath(vis_filepath, PROJECT_ROOT).replace("\\", "/") if vis_filepath else ""
-                    images_dict[raw_filename] = {
-                        "file_name": raw_filename,
-                        "image_path": rel_img_path,
-                        "annotated_path": rel_vis_path,
-                        "detected_count": len(obs_list),
-                        "observations": obs_list
-                    }
-                    total_obs = sum(len(img["observations"]) for img in images_dict.values())
-                    total_kept = sum(sum(1 for obs in img["observations"] if obs.get("keep", True)) for img in images_dict.values())
-                    manifest_data["summary"]["total_images"] = len(images_dict)
-                    manifest_data["summary"]["total_observations"] = total_obs
-                    manifest_data["summary"]["total_kept"] = total_kept
-                    with open(manifest_path, "w", encoding="utf-8") as f:
-                        yaml.dump(manifest_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-                    print(f"  [AUTO-SYNC] 已将快照 #{self.image_count} 自动同步录入清单 {manifest_path} (检出 {len(obs_list)} 个标靶)")
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest_data = yaml.safe_load(f) or {}
+            images_dict = manifest_data.setdefault("images", {})
+            if raw_filename not in images_dict:
+                found_tags = self.detect_tags_robust(raw_frame) or {}
+                obs_list = []
+                for tid in sorted(found_tags.keys()):
+                    corners = found_tags[tid]
+                    pts = corners.reshape((4, 2)).astype(np.float64)
+                    l01 = float(np.linalg.norm(pts[1] - pts[0]))
+                    l12 = float(np.linalg.norm(pts[2] - pts[1]))
+                    l23 = float(np.linalg.norm(pts[3] - pts[2]))
+                    l30 = float(np.linalg.norm(pts[0] - pts[3]))
+                    cell_w = int(round((l01 + l23) / 12.0))
+                    cell_h = int(round((l30 + l12) / 12.0))
+                    center_x = float(np.mean(pts[:, 0]))
+                    center_y = float(np.mean(pts[:, 1]))
+                    area = float(cv2.contourArea(pts.astype(np.float32)))
+                    obs_list.append({
+                        "tag_id": int(tid),
+                        "keep": True,
+                        "cell_size_px": [cell_w, cell_h],
+                        "center_px": [round(center_x, 1), round(center_y, 1)],
+                        "area_px": round(area, 1),
+                        "note": "采图向导现场拍摄录入",
+                        "corners": [[round(float(c[0]), 2), round(float(c[1]), 2)] for c in pts]
+                    })
+                rel_img_path = os.path.relpath(raw_filepath, PROJECT_ROOT).replace("\\", "/")
+                rel_vis_path = os.path.relpath(vis_filepath, PROJECT_ROOT).replace("\\", "/") if vis_filepath else ""
+                images_dict[raw_filename] = {
+                    "file_name": raw_filename,
+                    "image_path": rel_img_path,
+                    "annotated_path": rel_vis_path,
+                    "detected_count": len(obs_list),
+                    "observations": obs_list
+                }
+                total_obs = sum(len(img["observations"]) for img in images_dict.values())
+                total_kept = sum(sum(1 for obs in img["observations"] if obs.get("keep", True)) for img in images_dict.values())
+                manifest_data.setdefault("summary", {})
+                manifest_data["summary"]["total_images"] = len(images_dict)
+                manifest_data["summary"]["total_observations"] = total_obs
+                manifest_data["summary"]["total_kept"] = total_kept
+                with open(manifest_path, "w", encoding="utf-8") as f:
+                    yaml.dump(manifest_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                print(f"  [AUTO-SYNC] 已将快照 #{self.image_count} 自动同步录入清单 {manifest_path} (检出 {len(obs_list)} 个标靶)")
+
         # 同步更新活动场景元数据
         try:
             from src.calibration.scene_manager import CalibrationSceneManager
@@ -404,8 +402,8 @@ class TagCaptureWizard:
             if os.path.normpath(active_sc.raw_images_dir) == os.path.normpath(self.output_dir):
                 active_sc.refresh_stats()
                 active_sc.save_meta()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARN] 场景元数据刷新失败 (非致命): {e}")
 
         self.flash_timer = time.time()
         return raw_filepath
@@ -541,98 +539,95 @@ class TagCaptureWizard:
         - X 轴 (红色, 25mm), Y 轴 (绿色, 25mm)
         - Z 轴指示: 边长 20.0mm x 20.0mm (原始标靶 1/2)、长 120.0mm 的实心正四棱柱 (半透明实心柱体 + 12条高亮棱线 + 顶盖透视截面)
         """
-        try:
-            corners_2d = corners.reshape((4, 2)).astype(np.float64)
-            retval, rvecs, tvecs, reprojErrors = cv2.solvePnPGeneric(
+        corners_2d = corners.reshape((4, 2)).astype(np.float64)
+        retval, rvecs, tvecs, reprojErrors = cv2.solvePnPGeneric(
+            self.obj_points, corners_2d, self.camera_matrix, self.dist_coeffs,
+            flags=cv2.SOLVEPNP_IPPE_SQUARE
+        )
+        if not retval or len(rvecs) == 0:
+            ok, rvec, tvec = cv2.solvePnP(
                 self.obj_points, corners_2d, self.camera_matrix, self.dist_coeffs,
-                flags=cv2.SOLVEPNP_IPPE_SQUARE
+                flags=cv2.SOLVEPNP_ITERATIVE
             )
-            if not retval or len(rvecs) == 0:
-                ok, rvec, tvec = cv2.solvePnP(
-                    self.obj_points, corners_2d, self.camera_matrix, self.dist_coeffs,
-                    flags=cv2.SOLVEPNP_ITERATIVE
-                )
-                if not ok:
-                    return
-            elif len(rvecs) == 1:
-                rvec, tvec = rvecs[0], tvecs[0]
-            else:
-                err0 = reprojErrors[0][0] if reprojErrors is not None else 0.0
-                err1 = reprojErrors[1][0] if reprojErrors is not None else 0.0
-                best_idx = 0
-                if abs(err0 - err1) < 2.5:
-                    R0, _ = cv2.Rodrigues(rvecs[0])
-                    R1, _ = cv2.Rodrigues(rvecs[1])
-                    if R0[1, 2] >= 0 and R1[1, 2] < 0:
-                        best_idx = 1
-                    elif R1[1, 2] >= 0 and R0[1, 2] < 0:
-                        best_idx = 0
-                    else:
-                        best_idx = 0 if err0 <= err1 else 1
+            if not ok:
+                return
+        elif len(rvecs) == 1:
+            rvec, tvec = rvecs[0], tvecs[0]
+        else:
+            err0 = reprojErrors[0][0] if reprojErrors is not None else 0.0
+            err1 = reprojErrors[1][0] if reprojErrors is not None else 0.0
+            best_idx = 0
+            if abs(err0 - err1) < 2.5:
+                R0, _ = cv2.Rodrigues(rvecs[0])
+                R1, _ = cv2.Rodrigues(rvecs[1])
+                if R0[1, 2] >= 0 and R1[1, 2] < 0:
+                    best_idx = 1
+                elif R1[1, 2] >= 0 and R0[1, 2] < 0:
+                    best_idx = 0
                 else:
                     best_idx = 0 if err0 <= err1 else 1
-                rvec, tvec = rvecs[best_idx], tvecs[best_idx]
+            else:
+                best_idx = 0 if err0 <= err1 else 1
+            rvec, tvec = rvecs[best_idx], tvecs[best_idx]
 
-            hw = 15.0   # 截面半宽 15mm，整体截面边长为 30.0mm x 30.0mm
-            L = 80.0    # 柱体长度 80mm (约原高度 2/3)
+        hw = 15.0   # 截面半宽 15mm，整体截面边长为 30.0mm x 30.0mm
+        L = 80.0    # 柱体长度 80mm (约原高度 2/3)
 
-            # 8 个 3D 角点: 底面 4 点 (Z=0), 顶面 4 点 (Z=L)
-            pts_3d = np.array([
-                # 底面 4 点
-                [-hw, -hw, 0.0],
-                [ hw, -hw, 0.0],
-                [ hw,  hw, 0.0],
-                [-hw,  hw, 0.0],
-                # 顶面 4 点
-                [-hw, -hw, L],
-                [ hw, -hw, L],
-                [ hw,  hw, L],
-                [-hw,  hw, L],
-                # 顶面中心
-                [0.0, 0.0, L],
-                # X 轴与 Y 轴参考端点 (从中心伸出 25mm，突出棱柱外侧)
-                [25.0, 0.0, 0.0],
-                [0.0, 25.0, 0.0],
-                [0.0, 0.0, 0.0]
-            ], dtype=np.float64)
+        # 8 个 3D 角点: 底面 4 点 (Z=0), 顶面 4 点 (Z=L)
+        pts_3d = np.array([
+            # 底面 4 点
+            [-hw, -hw, 0.0],
+            [ hw, -hw, 0.0],
+            [ hw,  hw, 0.0],
+            [-hw,  hw, 0.0],
+            # 顶面 4 点
+            [-hw, -hw, L],
+            [ hw, -hw, L],
+            [ hw,  hw, L],
+            [-hw,  hw, L],
+            # 顶面中心
+            [0.0, 0.0, L],
+            # X 轴与 Y 轴参考端点 (从中心伸出 25mm，突出棱柱外侧)
+            [25.0, 0.0, 0.0],
+            [0.0, 25.0, 0.0],
+            [0.0, 0.0, 0.0]
+        ], dtype=np.float64)
 
-            proj, _ = cv2.projectPoints(pts_3d, rvec, tvec, self.camera_matrix, self.dist_coeffs)
-            proj = proj.reshape((-1, 2)).astype(int)
+        proj, _ = cv2.projectPoints(pts_3d, rvec, tvec, self.camera_matrix, self.dist_coeffs)
+        proj = proj.reshape((-1, 2)).astype(int)
 
-            b_pts = proj[0:4] # 底面 4 点
-            t_pts = proj[4:8] # 顶面 4 点
-            top_center = tuple(proj[8])
-            p_x = tuple(proj[9])
-            p_y = tuple(proj[10])
-            p_orig = tuple(proj[11])
+        b_pts = proj[0:4] # 底面 4 点
+        t_pts = proj[4:8] # 顶面 4 点
+        top_center = tuple(proj[8])
+        p_x = tuple(proj[9])
+        p_y = tuple(proj[10])
+        p_orig = tuple(proj[11])
 
-            # 1. 绘制 X 轴 (红色) 和 Y 轴 (绿色)
-            cv2.line(img, p_orig, p_x, (0, 0, 240), 2, cv2.LINE_AA)
-            cv2.putText(img, 'X', p_x, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
-            cv2.line(img, p_orig, p_y, (0, 220, 0), 2, cv2.LINE_AA)
-            cv2.putText(img, 'Y', p_y, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
+        # 1. 绘制 X 轴 (红色) 和 Y 轴 (绿色)
+        cv2.line(img, p_orig, p_x, (0, 0, 240), 2, cv2.LINE_AA)
+        cv2.putText(img, 'X', p_x, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
+        cv2.line(img, p_orig, p_y, (0, 220, 0), 2, cv2.LINE_AA)
+        cv2.putText(img, 'Y', p_y, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
 
-            # 2. 半透明填充 4 个侧面与顶面 (呈现实心方柱体立体质感)
-            overlay = img.copy()
-            for i in range(4):
-                next_i = (i + 1) % 4
-                side_poly = np.array([b_pts[i], b_pts[next_i], t_pts[next_i], t_pts[i]], dtype=np.int32)
-                cv2.fillPoly(overlay, [side_poly], (240, 160, 30)) # BGR: 浅蓝/青
-            cv2.fillPoly(overlay, [t_pts], (255, 220, 90))         # 顶面高光
-            cv2.addWeighted(overlay, 0.42, img, 0.58, 0, img)
+        # 2. 半透明填充 4 个侧面与顶面 (呈现实心方柱体立体质感)
+        overlay = img.copy()
+        for i in range(4):
+            next_i = (i + 1) % 4
+            side_poly = np.array([b_pts[i], b_pts[next_i], t_pts[next_i], t_pts[i]], dtype=np.int32)
+            cv2.fillPoly(overlay, [side_poly], (240, 160, 30)) # BGR: 浅蓝/青
+        cv2.fillPoly(overlay, [t_pts], (255, 220, 90))         # 顶面高光
+        cv2.addWeighted(overlay, 0.42, img, 0.58, 0, img)
 
-            # 3. 绘制 12 条棱线 (高清晰边框)
-            cv2.polylines(img, [b_pts], isClosed=True, color=(180, 80, 0), thickness=2, lineType=cv2.LINE_AA)
-            for i in range(4):
-                cv2.line(img, tuple(b_pts[i]), tuple(t_pts[i]), (255, 130, 0), 2, cv2.LINE_AA)
-            cv2.polylines(img, [t_pts], isClosed=True, color=(255, 240, 120), thickness=2, lineType=cv2.LINE_AA)
+        # 3. 绘制 12 条棱线 (高清晰边框)
+        cv2.polylines(img, [b_pts], isClosed=True, color=(180, 80, 0), thickness=2, lineType=cv2.LINE_AA)
+        for i in range(4):
+            cv2.line(img, tuple(b_pts[i]), tuple(t_pts[i]), (255, 130, 0), 2, cv2.LINE_AA)
+        cv2.polylines(img, [t_pts], isClosed=True, color=(255, 240, 120), thickness=2, lineType=cv2.LINE_AA)
 
-            # 4. 顶面中心标注点与文字 (简洁工业标定, 仅保留 Z 轴标识)
-            cv2.circle(img, top_center, 3, (255, 255, 255), -1, cv2.LINE_AA)
-            cv2.putText(img, 'Z', (top_center[0] + 5, top_center[1] - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 230, 80), 2, cv2.LINE_AA)
-        except Exception:
-            pass
+        # 4. 顶面中心标注点与文字 (简洁工业标定, 仅保留 Z 轴标识)
+        cv2.circle(img, top_center, 3, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.putText(img, 'Z', (top_center[0] + 5, top_center[1] - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 230, 80), 2, cv2.LINE_AA)
 
     def run(self):
         """运行交互式采图主循环"""
@@ -777,7 +772,7 @@ class TagCaptureWizard:
                     disp_frame = cv2.addWeighted(disp_frame, 0.4, np.full_like(disp_frame, 255), 0.6, 0)
 
                 cv2.imshow(window_name, disp_frame)
-                if frame_count <= 3 and force_window_focus:
+                if frame_idx <= 3 and force_window_focus:
                     force_window_focus(window_name)
 
                 key = cv2.waitKey(10) & 0xFF
@@ -829,8 +824,8 @@ class TagCaptureWizard:
                         for f in all_del:
                             try:
                                 os.remove(f)
-                            except Exception:
-                                pass
+                            except OSError:
+                                pass  # 文件被占用/已删除/权限不足 — 合法窄异常
                         self.image_count = 0
                         print("[OK] 原图与图示化文件目录已全部清空。")
 
@@ -838,8 +833,8 @@ class TagCaptureWizard:
             if self.pipeline is not None:
                 try:
                     self.pipeline.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[WARN] pipeline.stop 异常 (非致命): {e}")
             cv2.destroyAllWindows()
 
 

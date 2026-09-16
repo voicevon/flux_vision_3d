@@ -49,6 +49,8 @@ vision:
 calibration:
   valid_tag_ids:
   - 0
+  - 1
+  - 2
   - 18
   - 19
   - 20
@@ -63,6 +65,11 @@ calibration:
   - 29
   origin_tag_id: 0
   x_axis_tag_id: 28
+  world_anchor:
+    origin_tag_id: 0
+    origin_xyz_mm: [0.0, 0.0, 405.0]
+    align_tag_id: 1
+    align_xyz_mm: [0.0, 520.0, 196.0]
   tags_map_path: config/tags_map.yaml
   tag_detection:
     contrast_boost: 1.6

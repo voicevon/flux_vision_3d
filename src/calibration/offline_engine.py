@@ -55,6 +55,19 @@ class OfflineVerificationEngine:
         self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_16h5)
         self.detector_bright, self.detector_dark = self._build_detectors()
 
+    def set_marker_size_mm(self, size_mm: float) -> None:
+        """更新标靶物理边长并重建单靶 PnP 物理角点模型 (与地图 BA 反算真实边长保持一致)"""
+        if not size_mm or float(size_mm) <= 0:
+            return
+        self.marker_size_mm = float(size_mm)
+        s = self.marker_size_mm / 2.0
+        self.obj_points = np.array([
+            [-s,  s, 0.0],
+            [ s,  s, 0.0],
+            [ s, -s, 0.0],
+            [-s, -s, 0.0]
+        ], dtype=np.float64)
+
     def _build_detectors(self):
         """构建双路互补检测器 (高光路与暗部动态拉伸路)"""
         def make_params(thresh_c, min_otsu):

@@ -11,7 +11,7 @@ AprilTag 离线标定工作站 - 异步 BA 平差调度器 (StudioBARunner)
 import os
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.manifest_repository import ManifestRepository
@@ -63,6 +63,7 @@ class StudioBARunner:
         # 世界系对齐锚定配置 (从 config.yaml 动态加载，杜绝幽灵 Tag 1)
         self.origin_tag_id: int = 0
         self.x_align_tag_id: int = 28
+        self.world_anchor: Optional[Dict[str, Any]] = None
         self._load_alignment_config()
 
     def _load_alignment_config(self):
@@ -75,6 +76,15 @@ class StudioBARunner:
                 calib = c.get("calibration", {})
                 self.origin_tag_id = int(calib.get("origin_tag_id", 0))
                 self.x_align_tag_id = int(calib.get("x_axis_tag_id", 28))
+                # FR-9.6 世界系绝对锚定 (Tag0/Tag1 已知机械臂坐标, 配置缺失时退化为相对对齐)
+                wa = calib.get("world_anchor")
+                if isinstance(wa, dict) and wa.get("origin_xyz_mm") and wa.get("align_xyz_mm"):
+                    self.world_anchor = {
+                        "origin_tag_id": int(wa.get("origin_tag_id", 0)),
+                        "origin_xyz_mm": [float(v) for v in wa["origin_xyz_mm"]],
+                        "align_tag_id": int(wa.get("align_tag_id", 1)),
+                        "align_xyz_mm": [float(v) for v in wa["align_xyz_mm"]]
+                    }
         except Exception as e:
             print(f"[WARN] [STUDIO] 读取对齐标靶配置异常，采用默认值 (0, 28): {e}")
 
@@ -96,6 +106,7 @@ class StudioBARunner:
             active_frame_names=valid_frame_names,
             origin_tag_id=self.origin_tag_id,
             x_align_tag_id=self.x_align_tag_id,
+            world_anchor=self.world_anchor,
             callback=callback
         )
         if opt_res and "tags" in opt_res:
@@ -119,10 +130,15 @@ class StudioBARunner:
                 "calibrated_images_count": opt_res.get("calibrated_images_count", len(valid_frame_names)),
                 "tags": tags_dict
             }
+            if opt_res.get("world_anchor"):
+                new_map["world_anchor"] = opt_res["world_anchor"]
             ManifestRepository.save_map(new_map, self.map_path)
             self.data_mgr.tags_map_data = new_map
             if self.data_mgr.engine:
                 self.data_mgr.engine.tags_map = new_map
+            # 同步 BA 反算的真实边长到引擎模型, 保证理论/实测棱柱比例与空间偏差解算一致
+            if new_map.get("marker_size_mm"):
+                self.data_mgr.set_marker_size_mm(new_map["marker_size_mm"])
             self.data_mgr.refresh_all_frame_metrics()
             return True, opt_res, f"平差收敛成功，全局 RMSE: {opt_res.get('final_rmse', 0.0):.3f} px"
         return False, None, "BA 优化未能收敛，请检查有效观测标靶数"

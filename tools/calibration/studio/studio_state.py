@@ -163,6 +163,8 @@ class StudioDataManager:
                     self.tags_map_data = yaml.safe_load(f) or {}
                 if self.tags_map_data and "tags" in self.tags_map_data:
                     print(f"[OK] Studio 成功装载地图: {self.map_path} (共 {len(self.tags_map_data['tags'])} 个标靶)")
+                    # 优先采用地图 BA 反算的真实边长, 保证绿(BA理论)/蓝(实测)棱柱比例与偏差解算一致
+                    self.set_marker_size_mm(self.tags_map_data.get("marker_size_mm"))
             except Exception as e:
                 print(f"[WARN] 无法读取地图: {e}")
                 self.tags_map_data = {}
@@ -170,6 +172,18 @@ class StudioDataManager:
             self.tags_map_data = {}
         if self.engine:
             self.engine.tags_map = self.tags_map_data
+
+    def set_marker_size_mm(self, size_mm) -> None:
+        """同步标靶物理边长到全局状态与引擎单靶 PnP 模型"""
+        try:
+            size_mm = float(size_mm)
+        except (TypeError, ValueError):
+            return
+        if size_mm <= 0:
+            return
+        self.marker_size_mm = size_mm
+        if getattr(self, "engine", None):
+            self.engine.set_marker_size_mm(size_mm)
 
     def get_tag_transform(self, tag_id: int) -> Optional[np.ndarray]:
         """获取已知标靶在世界系下的 4x4 位姿变换矩阵"""

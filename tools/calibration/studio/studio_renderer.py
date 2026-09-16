@@ -2,8 +2,8 @@
 AprilTag 离线标定工作站 - UI 界面渲染器 (StudioUIRenderer)
 ================================================================================
 负责工作站现代深色全景三栏界面的几何排版与所有视觉元素绘制：
-1. 顶栏 (Top Navigation Bar: 状态指标与全局 RMSE)
-2. 底栏 (Bottom Control Toolbar: 现代圆角微质感快捷动作按钮)
+1. 顶栏 (Top Navigation Bar: LOGO + 全局快捷动作按钮, Dashboard 同源风格)
+2. 底栏 (Bottom Status Bar: 放行门限 / 拓扑连通度 / 采图与精度状态指标)
 3. 左栏 (高信息密度垂直紧凑帧列表 + 双下拉菜单过滤与排序)
 4. 中栏视口 (自适应平移缩放、ROI 裁剪、3D 双棱柱与残差矢量投影)
 5. 右栏 (180px 瘦身属性面板、逐 Tag 剔除打叉、单帧病因切片诊断)
@@ -17,6 +17,57 @@ import cv2
 import numpy as np
 
 from src.utils.viewport_manager import draw_styled_button
+from tools.gui_launcher import draw_text, get_cached_font
+
+
+# ============================================================
+# Hover Tooltip 定义 (按钮 id -> 帮助文字)
+# ============================================================
+HOVER_TOOLTIPS: Dict[str, List[str]] = {
+    "SAVE_MAP": [
+        "【保存地图】",
+        "",
+        "将当前工作站 BA 全局平差后的 Tag 空间立体地图",
+        "写入 config/tags_map.yaml (覆盖保存)。",
+        "",
+        "地图内容包含:",
+        "  • 每个 Tag 的世界坐标系位姿 (x, y, z, 四元数)",
+        "  • 观测置信度、重投影误差统计、参与帧数",
+        "  • 全局 RMSE / 物理偏差 / 迭代次数等元信息",
+        "",
+        "下游 (tag_capture_wizard / tag_studio / robot_tracker)",
+        "启动时会自动加载此文件作为已知空间基准。",
+        "",
+        "快捷键: [M]  建议每次 BA 平差后立即保存",
+    ],
+    "RUN_AUTO_PRUNE_BA": [
+        "【智能残差剪枝平差 (A)】",
+        "",
+        "运行 BA 全局平差 + 自动剔除残差最大的离群观测",
+        "保留 RMSE 最优的 Tag 组合，迭代收敛。",
+        "",
+        "剪枝依据: 单帧残差 / 单 Tag 离群 / 共视拓扑连通性",
+        "快捷键: [A]",
+    ],
+    "RECOMPUTE_METRICS": [
+        "【全量体检重算 (P)】",
+        "",
+        "重新计算所有帧 / 所有 Tag 的精度体检指标:",
+        "  • RMSE 重投影误差",
+        "  • 空间物理偏差 (mm)",
+        "  • 清晰度 / 对比度 / 亮度 / 畸变",
+        "快捷键: [P]",
+    ],
+    "EXPORT_REPORT": [
+        "【导出质检报告 (R)】",
+        "",
+        "将当前工作站的标定结果导出为 Markdown 报告:",
+        "  • 收敛曲线 / 残差分布图 / 三维位姿",
+        "  • 各项精度指标汇总",
+        "  • 质检结论 (是否可发布)",
+        "快捷键: [R]",
+    ],
+}
 
 
 # 下拉菜单选项定义
@@ -91,6 +142,40 @@ def draw_dropdown_button(
     cv2.putText(canvas, display_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, text_col, 1, cv2.LINE_AA)
 
 
+def draw_dashboard_button(
+    canvas: np.ndarray,
+    rect: Tuple[int, int, int, int],
+    label: str,
+    mouse_pos: Tuple[int, int] = (-1, -1),
+    accent: Optional[Tuple[int, int, int]] = None,
+    is_running: bool = False,
+    font_size: int = 12,
+):
+    """绘制与 Dashboard (gui_launcher) 同源的碳灰卡片式按钮:
+    深色底 + 沉稳边框, 悬停冷青微光, 左缘语义色条 (danger 红 / success 绿), 运行中金色高亮"""
+    x1, y1, x2, y2 = rect
+    mx, my = mouse_pos
+    is_hover = (x1 <= mx <= x2 and y1 <= my <= y2)
+
+    if is_running:
+        bg_col, border_col, text_col, border_th = (30, 38, 50), (210, 175, 60), (250, 225, 140), 2
+    elif is_hover:
+        bg_col, border_col, text_col, border_th = (30, 38, 50), (0, 220, 180), (242, 245, 248), 2
+    else:
+        bg_col, border_col, text_col, border_th = (22, 26, 33), (38, 46, 58), (205, 215, 225), 1
+
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), bg_col, -1)
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), border_col, border_th)
+    if accent is not None:
+        cv2.rectangle(canvas, (x1 + 1, y1 + 1), (x1 + 4, y2 - 1), accent, -1)
+
+    bbox = get_cached_font(font_size, bold=True).getbbox(label)
+    tw, t_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    tx = x1 + max(4, ((x2 - x1) - tw) // 2 - bbox[0])
+    ty = y1 + ((y2 - y1) - t_h) // 2 - bbox[1]
+    draw_text(canvas, label, (tx, ty), font_size=font_size, color=text_col, bold=True)
+
+
 class StudioUIRenderer:
     """Offline Studio UI 渲染器"""
 
@@ -124,8 +209,8 @@ class StudioUIRenderer:
         # 1. 顶栏
         self.render_top_bar(studio, canvas, w, top_h)
 
-        # 2. 底栏
-        self.render_bottom_toolbar(studio, canvas, w, h, bot_h)
+        # 2. 底栏 (全局状态信息条)
+        self.render_bottom_status_bar(studio, canvas, w, h, bot_h)
 
         # 3. 工作区尺寸与左栏自适应宽度
         studio.left_bar_w = getattr(studio, "dynamic_left_bar_w", studio.left_bar_w)
@@ -164,15 +249,100 @@ class StudioUIRenderer:
             self.render_dropdown_popup(studio, canvas, studio.active_dropdown,
                                       dd_info["rect"], dd_info["options"], dd_info["active_key"])
 
+        # 7. Hover 帮助气泡 (最后绘制, 覆盖在所有面板之上, 不自动关闭)
+        mx, my = studio.mouse_pos
+        self._render_hover_tooltip(canvas, studio, mx, my, w, h)
+
     def render_top_bar(self, studio: Any, canvas: np.ndarray, w: int, top_h: int):
+        """顶栏：LOGO + 紧随其后的全局快捷动作按钮 (Dashboard 同源风格)"""
         cv2.rectangle(canvas, (0, 0), (w, top_h), (24, 26, 32), -1)
         cv2.line(canvas, (0, top_h), (w, top_h), (55, 60, 72), 1)
 
+        # 1. LOGO
         cv2.putText(canvas, "OFFLINE STUDIO", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 220, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, "| AprilTag 离线标定与空间建图综合工作站", (185, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 200, 200), 1, cv2.LINE_AA)
+        (logo_w, _), _ = cv2.getTextSize("OFFLINE STUDIO", cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
 
-        # 右侧状态胶囊区域
-        curr_x = w - 16
+        # 2. LOGO 右侧紧邻的全局快捷动作按钮
+        mx, my = studio.mouse_pos
+        btn_y_top, btn_y_bot = 7, top_h - 7
+        bx = 16 + logo_w + 26
+
+        # 1. 复位地图 (清空已知平差地图)
+        rst_map_w = 105
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "复位地图",
+                              mouse_pos=(mx, my), accent=(70, 60, 210))
+        studio.gui_buttons.append(("RESET_MAP", (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "RESET_MAP"))
+        bx += rst_map_w + 10
+
+        # 2. 全局全量超精提取 (清空旧角点并从头重提取)
+        ext_w = 135
+        is_ext = getattr(studio, "is_extracting_all", False)
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + ext_w, btn_y_bot),
+                              "正在超精提取..." if is_ext else "全局超精提取",
+                              mouse_pos=(mx, my), is_running=is_ext)
+        studio.gui_buttons.append(("SUPER_EXTRACT_ALL", (bx, btn_y_top, bx + ext_w, btn_y_bot), "SUPER_EXTRACT_ALL"))
+        bx += ext_w + 10
+
+        # 3. [B] 全局平差
+        ba_w = 135
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + ba_w, btn_y_bot),
+                              "正在平差..." if studio.is_ba_running else "全局平差 (B)",
+                              mouse_pos=(mx, my), is_running=studio.is_ba_running)
+        studio.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_w, btn_y_bot), "RUN_BA"))
+        bx += ba_w + 10
+
+        # 4. [A] 智能残差剪枝平差
+        prune_w = 135
+        is_prune = getattr(studio, "is_auto_pruning", False)
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + prune_w, btn_y_bot),
+                              "正在剪枝..." if is_prune else "剪枝平差 (A)",
+                              mouse_pos=(mx, my), is_running=is_prune)
+        studio.gui_buttons.append(("RUN_AUTO_PRUNE_BA", (bx, btn_y_top, bx + prune_w, btn_y_bot), "RUN_AUTO_PRUNE_BA"))
+        bx += prune_w + 10
+
+        # 5. [M] 保存/发布地图
+        s_w = 115
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + s_w, btn_y_bot), "保存地图 (M)",
+                              mouse_pos=(mx, my), accent=(0, 215, 90))
+        studio.gui_buttons.append(("SAVE_MAP", (bx, btn_y_top, bx + s_w, btn_y_bot), "SAVE_MAP"))
+        bx += s_w + 10
+
+        # 6. [P] 全程/全量精度体检重算
+        p_w = 125
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + p_w, btn_y_bot), "全量体检 (P)",
+                              mouse_pos=(mx, my))
+        studio.gui_buttons.append(("RECOMPUTE_METRICS", (bx, btn_y_top, bx + p_w, btn_y_bot), "RECOMPUTE_METRICS"))
+        bx += p_w + 10
+
+        # 7. [R] 导出质检报告
+        r_w = 115
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + r_w, btn_y_bot), "导出报告 (R)",
+                              mouse_pos=(mx, my))
+        studio.gui_buttons.append(("EXPORT_REPORT", (bx, btn_y_top, bx + r_w, btn_y_bot), "EXPORT_REPORT"))
+        bx += r_w + 10
+
+        # 8. 复位保留 (一键恢复所有剔除的观测为有效)
+        rst_keep_w = 105
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "复位保留",
+                              mouse_pos=(mx, my))
+        studio.gui_buttons.append(("RESET_KEEP_ALL", (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "RESET_KEEP_ALL"))
+
+        # 9. 右侧 [Q] 退出工作台 (最右侧退出不动)
+        exit_w = 90
+        exit_x1 = w - exit_w - 14
+        draw_dashboard_button(canvas, (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "退出 (Q)",
+                              mouse_pos=(mx, my), accent=(70, 60, 210))
+        studio.gui_buttons.append(("EXIT", (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "EXIT"))
+
+    def render_bottom_status_bar(self, studio: Any, canvas: np.ndarray, w: int, h: int, bot_h: int):
+        """底栏：全局状态信息条 (放行门限徽章 / 拓扑连通度 / 采图与精度统计)"""
+        y1 = h - bot_h
+        cv2.rectangle(canvas, (0, y1), (w, h), (20, 22, 28), -1)
+        cv2.line(canvas, (0, y1), (w, y1), (60, 65, 78), 1)
+
+        badge_y1, badge_y2 = y1 + 10, h - 10
+        badge_cy = (badge_y1 + badge_y2) // 2
+        curr_x = 16
 
         # 1. 质量放行门限徽章 (Gate Verdict)
         gate = getattr(studio, "gate_status", "REVIEW")
@@ -187,125 +357,98 @@ class StudioUIRenderer:
             v_txt = "放行: 建议回审"
             v_bg, v_border, v_fg = (30, 20, 80), (50, 40, 220), (180, 160, 255)
 
-        (vw, _), _ = cv2.getTextSize(v_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
-        v_box_w = vw + 14
-        curr_x -= v_box_w
-        cv2.rectangle(canvas, (curr_x, 9), (curr_x + v_box_w, top_h - 9), v_bg, -1)
-        cv2.rectangle(canvas, (curr_x, 9), (curr_x + v_box_w, top_h - 9), v_border, 1)
-        cv2.putText(canvas, v_txt, (curr_x + 7, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.38, v_fg, 1, cv2.LINE_AA)
-
-        curr_x -= 10
+        vb = get_cached_font(12).getbbox(v_txt)
+        v_box_w = (vb[2] - vb[0]) + 16
+        cv2.rectangle(canvas, (curr_x, badge_y1), (curr_x + v_box_w, badge_y2), v_bg, -1)
+        cv2.rectangle(canvas, (curr_x, badge_y1), (curr_x + v_box_w, badge_y2), v_border, 1)
+        draw_text(canvas, v_txt, (curr_x + 8, badge_cy - (vb[3] - vb[1]) // 2 - vb[1]),
+                  font_size=12, color=v_fg)
+        curr_x += v_box_w + 10
 
         # 2. 拓扑连通度徽章 (Topology Status)
         topo = getattr(studio, "topology_status", {})
-        is_conn = topo.get("is_valid", True)
         unconnected = topo.get("unconnected_tags", [])
         if unconnected:
             t_txt = f"拓扑: 孤岛 #{unconnected[0]}"
             t_bg, t_border, t_fg = (20, 20, 75), (40, 40, 200), (140, 140, 255)
-        elif not is_conn:
+        elif not topo.get("is_valid", True):
             t_txt = "拓扑: 弱连通"
             t_bg, t_border, t_fg = (20, 50, 75), (40, 130, 200), (140, 210, 255)
         else:
             t_txt = "拓扑: 全连通"
             t_bg, t_border, t_fg = (20, 60, 35), (40, 160, 80), (160, 255, 190)
 
-        (tw, _), _ = cv2.getTextSize(t_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
-        t_box_w = tw + 14
-        curr_x -= t_box_w
-        cv2.rectangle(canvas, (curr_x, 9), (curr_x + t_box_w, top_h - 9), t_bg, -1)
-        cv2.rectangle(canvas, (curr_x, 9), (curr_x + t_box_w, top_h - 9), t_border, 1)
-        cv2.putText(canvas, t_txt, (curr_x + 7, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.38, t_fg, 1, cv2.LINE_AA)
-
-        curr_x -= 14
+        tb = get_cached_font(12).getbbox(t_txt)
+        t_box_w = (tb[2] - tb[0]) + 16
+        cv2.rectangle(canvas, (curr_x, badge_y1), (curr_x + t_box_w, badge_y2), t_bg, -1)
+        cv2.rectangle(canvas, (curr_x, badge_y1), (curr_x + t_box_w, badge_y2), t_border, 1)
+        draw_text(canvas, t_txt, (curr_x + 8, badge_cy - (tb[3] - tb[1]) // 2 - tb[1]),
+                  font_size=12, color=t_fg)
+        curr_x += t_box_w + 14
 
         # 3. 统计指标文字 (采图数 | 标靶数 | 全局 RMSE / 空间毫米偏差)
         tag_num = len(studio.tags_map_data.get("tags", {}))
         med_mm = getattr(studio, "global_median_mm", 0.0)
         stat_txt = f"采图集: {len(studio.image_files)} 帧 | 标靶: {tag_num} 个 | 全局 RMSE: {studio.global_rmse:.2f}px ({med_mm:.2f}mm)"
-        (sw, _), _ = cv2.getTextSize(stat_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
-        cv2.putText(canvas, stat_txt, (curr_x - sw, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 180), 1, cv2.LINE_AA)
+        sb = get_cached_font(12).getbbox(stat_txt)
+        draw_text(canvas, stat_txt, (curr_x, badge_cy - (sb[3] - sb[1]) // 2 - sb[1]),
+                  font_size=12, color=(0, 255, 180))
 
-    def render_bottom_toolbar(self, studio: Any, canvas: np.ndarray, w: int, h: int, bot_h: int):
-        y1 = h - bot_h
-        cv2.rectangle(canvas, (0, y1), (w, h), (20, 22, 28), -1)
-        cv2.line(canvas, (0, y1), (w, y1), (60, 65, 78), 1)
+        # 4. 右侧产品副标题 (muted)
+        sub_txt = "AprilTag 离线标定与空间建图综合工作站"
+        ub = get_cached_font(11).getbbox(sub_txt)
+        draw_text(canvas, sub_txt, (w - 16 - (ub[2] - ub[0]), badge_cy - (ub[3] - ub[1]) // 2 - ub[1]),
+                  font_size=11, color=(115, 130, 145))
 
-        btn_y_top = y1 + 8
-        btn_y_bot = h - 8
-        bx = 16
-        mx, my = studio.mouse_pos
+    def _render_hover_tooltip(self, canvas: np.ndarray, studio: Any, mx: int, my: int,
+                               cw: int, ch: int):
+        """检测鼠标是否悬停在有帮助文字的按钮上, 若有则画气泡面板"""
+        if mx < 0 or my < 0:
+            return
+        for btn_id, (bx1, by1, bx2, by2), _ in getattr(studio, "gui_buttons", []):
+            if btn_id not in HOVER_TOOLTIPS:
+                continue
+            if bx1 <= mx <= bx2 and by1 <= my <= by2:
+                lines = HOVER_TOOLTIPS[btn_id]
+                # 测量尺寸
+                font = get_cached_font(11, bold=False)
+                bold_font = get_cached_font(14, bold=True)
+                lh = 18
+                pad_x, pad_y = 14, 12
+                inner_w = max((len(l) + 4) * 11 for l in lines)
+                tip_w = min(inner_w + pad_x * 2, 520)
+                tip_h = len(lines) * lh + pad_y * 2
 
-        # 1. 复位地图 (清空已知平差地图)
-        rst_map_w = 105
-        draw_styled_button(canvas, (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "复位地图",
-                           mouse_pos=(mx, my), btn_type="danger")
-        studio.gui_buttons.append(("RESET_MAP", (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "RESET_MAP"))
-        bx += rst_map_w + 10
+                # 定位: 优先在按钮正上方, 不够空间则在下方
+                gap = 8
+                if by1 - tip_h - gap >= 0:
+                    ty2 = by1 - gap
+                    ty1 = ty2 - tip_h
+                else:
+                    ty1 = by2 + gap
+                    ty2 = ty1 + tip_h
+                tx1 = max(8, min(bx1, cw - tip_w - 8))
+                tx2 = tx1 + tip_w
 
-        # 2. 全局全量超精提取 (清空旧角点并从头重提取)
-        ext_w = 135
-        is_ext = getattr(studio, "is_extracting_all", False)
-        ext_type = "warning" if is_ext else "normal"
-        ext_txt = "正在超精提取..." if is_ext else "全局超精提取"
-        draw_styled_button(canvas, (bx, btn_y_top, bx + ext_w, btn_y_bot), ext_txt,
-                           mouse_pos=(mx, my), btn_type=ext_type)
-        studio.gui_buttons.append(("SUPER_EXTRACT_ALL", (bx, btn_y_top, bx + ext_w, btn_y_bot), "SUPER_EXTRACT_ALL"))
-        bx += ext_w + 10
+                # 半透明暗色底
+                overlay = canvas.copy()
+                cv2.rectangle(overlay, (tx1, ty1), (tx2, ty2), (22, 24, 32), -1)
+                cv2.addWeighted(overlay, 0.92, canvas, 0.08, 0, dst=canvas)
+                cv2.rectangle(canvas, (tx1, ty1), (tx2, ty2), (0, 210, 180), 2)
 
-        # 3. [B] 全局平差
-        ba_w = 135
-        ba_type = "warning" if studio.is_ba_running else "primary"
-        ba_txt = "正在平差..." if studio.is_ba_running else "全局平差 (B)"
-        draw_styled_button(canvas, (bx, btn_y_top, bx + ba_w, btn_y_bot), ba_txt,
-                           mouse_pos=(mx, my), btn_type=ba_type)
-        studio.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_w, btn_y_bot), "RUN_BA"))
-        bx += ba_w + 10
-
-        # 3.2. [A] 智能残差剪枝平差
-        prune_w = 135
-        is_prune = getattr(studio, "is_auto_pruning", False)
-        prune_type = "warning" if is_prune else "primary"
-        prune_txt = "正在剪枝..." if is_prune else "剪枝平差 (A)"
-        draw_styled_button(canvas, (bx, btn_y_top, bx + prune_w, btn_y_bot), prune_txt,
-                           mouse_pos=(mx, my), btn_type=prune_type)
-        studio.gui_buttons.append(("RUN_AUTO_PRUNE_BA", (bx, btn_y_top, bx + prune_w, btn_y_bot), "RUN_AUTO_PRUNE_BA"))
-        bx += prune_w + 10
-
-        # 3. [M] 保存/发布地图
-        s_w = 115
-        draw_styled_button(canvas, (bx, btn_y_top, bx + s_w, btn_y_bot), "保存地图 (M)",
-                           mouse_pos=(mx, my), btn_type="success")
-        studio.gui_buttons.append(("SAVE_MAP", (bx, btn_y_top, bx + s_w, btn_y_bot), "SAVE_MAP"))
-        bx += s_w + 10
-
-        # 4. [P] 全程/全量精度体检重算
-        p_w = 125
-        draw_styled_button(canvas, (bx, btn_y_top, bx + p_w, btn_y_bot), "全量体检 (P)",
-                           mouse_pos=(mx, my), btn_type="normal")
-        studio.gui_buttons.append(("RECOMPUTE_METRICS", (bx, btn_y_top, bx + p_w, btn_y_bot), "RECOMPUTE_METRICS"))
-        bx += p_w + 10
-
-        # 5. [R] 导出质检报告
-        r_w = 115
-        draw_styled_button(canvas, (bx, btn_y_top, bx + r_w, btn_y_bot), "导出报告 (R)",
-                           mouse_pos=(mx, my), btn_type="normal")
-        studio.gui_buttons.append(("EXPORT_REPORT", (bx, btn_y_top, bx + r_w, btn_y_bot), "EXPORT_REPORT"))
-        bx += r_w + 10
-
-        # 6. 复位保留 (一键恢复所有剔除的观测为有效)
-        rst_keep_w = 105
-        draw_styled_button(canvas, (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "复位保留",
-                           mouse_pos=(mx, my), btn_type="normal")
-        studio.gui_buttons.append(("RESET_KEEP_ALL", (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "RESET_KEEP_ALL"))
-        bx += rst_keep_w + 10
-
-        # 7. 右侧 [Q] 退出工作台 (最右侧退出不动)
-        exit_w = 90
-        exit_x1 = w - exit_w - 16
-        draw_styled_button(canvas, (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "退出 (Q)",
-                           mouse_pos=(mx, my), btn_type="danger")
-        studio.gui_buttons.append(("EXIT", (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "EXIT"))
+                # 画文字
+                ly = ty1 + pad_y + 6
+                for i, line in enumerate(lines):
+                    if line.startswith("【") and line.endswith("】"):
+                        draw_text(canvas, line, (tx1 + pad_x, ly), font_size=13,
+                                  color=(0, 230, 200), bold=True)
+                    elif line == "":
+                        pass
+                    else:
+                        draw_text(canvas, line, (tx1 + pad_x, ly), font_size=11,
+                                  color=(220, 225, 235), bold=False)
+                    ly += lh
+                return
 
     def render_left_frame_list(self, studio: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
         """左栏：高信息密度垂直紧凑帧列表 或 逐帧多轮残差演进矩阵宽表大视图"""
@@ -609,7 +752,8 @@ class StudioUIRenderer:
         obs_list = meta.get("observations", [])
 
         # 叠加标靶与 3D 双棱柱
-        self.overlay_visual_elements(studio, disp_frame, obs_list, meta.get("is_excluded", False), meta=meta)
+        self.overlay_visual_elements(studio, disp_frame, obs_list, meta.get("is_excluded", False), meta=meta,
+                                     panel_rect=(x, y, w, h))
 
         # 视口等比与平移缩放渲染 (委托给 viewport 控制器)
         frame_h, frame_w = disp_frame.shape[:2]
@@ -676,11 +820,27 @@ class StudioUIRenderer:
         disp_frame: np.ndarray,
         observations: List[Dict[str, Any]],
         is_frame_excluded: bool,
-        meta: Optional[Dict[str, Any]] = None
+        meta: Optional[Dict[str, Any]] = None,
+        panel_rect: Optional[Tuple[int, int, int, int]] = None
     ):
         """依据 ba_view_mode 与 obs_view_mode 双独立维度解耦渲染，剔除标靶显著打红叉"""
         ba_mode = studio.ba_view_mode
         obs_mode = studio.obs_view_mode
+
+        # 画布鼠标坐标 -> 原始帧坐标 (悬停展开标靶详情, 高密度场景防遮挡)
+        mouse_frame = None
+        if panel_rect is not None and getattr(studio, "mouse_pos", None):
+            try:
+                fh, fw = disp_frame.shape[:2]
+                img_rect = studio.viewport.compute_image_rect(panel_rect, fw, fh)
+                ix1, iy1, ix2, iy2 = img_rect[0], img_rect[1], img_rect[2], img_rect[3]
+                if ix2 > ix1 and iy2 > iy1:
+                    mfx = (studio.mouse_pos[0] - ix1) / float(ix2 - ix1) * fw
+                    mfy = (studio.mouse_pos[1] - iy1) / float(iy2 - iy1) * fh
+                    if 0 <= mfx < fw and 0 <= mfy < fh:
+                        mouse_frame = (mfx, mfy)
+            except Exception:
+                mouse_frame = None
 
         obj_pts = []
         img_pts = []
@@ -751,6 +911,10 @@ class StudioUIRenderer:
                             candidate_tids.append(m_tid)
 
                 h_f, w_f = disp_frame.shape[:2]
+                # FR-9.6 世界系位姿元数据 (平差锚定后每枚标靶的 XYZ 与 RPY)
+                tags_meta = (getattr(studio, "tags_map_data", {}) or {}).get("tags", {})
+                if not tags_meta and hasattr(studio, "data_mgr"):
+                    tags_meta = (getattr(studio.data_mgr, "tags_map_data", {}) or {}).get("tags", {})
                 for tid in candidate_tids:
                     T_w_t = studio.get_tag_transform(tid)
                     if T_w_t is None:
@@ -799,6 +963,17 @@ class StudioUIRenderer:
                         err_mm = float(np.linalg.norm(t_tag - obs_t))
                     err_px = (meta or {}).get("tag_errors", {}).get(tid, 0.2)
 
+                    # 悬停命中检测 (帧坐标, 48px 半径): 实测以观测角点中心, 纯理论以投影中心
+                    tag_center_f = None
+                    if c_arr is not None:
+                        tag_center_f = (float(np.mean(c_arr[:, 0])), float(np.mean(c_arr[:, 1])))
+                    elif r_tag is not None:
+                        p_c, _ = cv2.projectPoints(np.array([[0.0, 0.0, 0.0]]), r_tag, t_tag,
+                                                   studio.engine.camera_matrix, studio.engine.dist_coeffs)
+                        tag_center_f = (float(p_c.reshape(-1)[0]), float(p_c.reshape(-1)[1]))
+                    is_hovered = (mouse_frame is not None and tag_center_f is not None
+                                  and (mouse_frame[0] - tag_center_f[0]) ** 2 + (mouse_frame[1] - tag_center_f[1]) ** 2 < 48.0 ** 2)
+
                     # 状态提示文案
                     status_hint = None
                     if obs is not None and not is_kept:
@@ -816,7 +991,12 @@ class StudioUIRenderer:
                         err_px=err_px,
                         err_mm=err_mm,
                         observed_corners=c_arr,
-                        tag_status_hint=status_hint
+                        tag_status_hint=status_hint,
+                        world_position_mm=(tags_meta.get(tid) or {}).get("position_mm"),
+                        world_rpy_deg=(tags_meta.get(tid) or {}).get("rpy_deg"),
+                        ba_center_xyz=(t_tag_center.tolist() if r_tag is not None else None),
+                        obs_center_xyz=(obs_t.flatten().tolist() if obs_t is not None else None),
+                        hovered=is_hovered
                     )
                     rendered_tids.add(tid)
 
@@ -937,7 +1117,11 @@ class StudioUIRenderer:
             cv2.line(canvas, (x + 8, list_y), (x + w - 8, list_y), (45, 48, 58), 1)
             obs_list = meta.get("observations", [])
             tag_errors = meta.get("tag_errors", {})
-            cv2.putText(canvas, f"标靶与残差 ({len(obs_list)}) 降序↓", (x + 8, list_y + 16),
+            # FR-9.6 世界系坐标 (平差锚定后每枚标靶的 XYZ)
+            tags_meta = (getattr(studio, "tags_map_data", {}) or {}).get("tags", {})
+            if not tags_meta and hasattr(studio, "data_mgr"):
+                tags_meta = (getattr(studio.data_mgr, "tags_map_data", {}) or {}).get("tags", {})
+            cv2.putText(canvas, f"标靶残差+世界XYZ ({len(obs_list)}) 降序↓", (x + 8, list_y + 16),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 220, 255), 1, cv2.LINE_AA)
 
             # 按残差降序排序：离差最大的坏标靶置顶优先显示
@@ -948,7 +1132,7 @@ class StudioUIRenderer:
             )
 
             row_y = list_y + 24
-            row_h = 24
+            row_h = 38
             for obs in sorted_obs_list:
                 tid = obs["tag_id"]
                 keep = obs.get("keep", True)
@@ -965,7 +1149,7 @@ class StudioUIRenderer:
                 cv2.circle(canvas, (rx1 + 10, ry1 + 11), 3, dot_c, -1)
 
                 t_col = (230, 230, 230) if keep else (120, 120, 120)
-                cv2.putText(canvas, f"#{tid}", (rx1 + 18, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.38, t_col, 1, cv2.LINE_AA)
+                cv2.putText(canvas, f"#{tid}", (rx1 + 18, ry1 + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.46, t_col, 1, cv2.LINE_AA)
 
                 err_str = f"{err_val:.2f}px" if keep else "EXCL"
                 if not keep:
@@ -976,8 +1160,19 @@ class StudioUIRenderer:
                     err_c = (0, 200, 255)  # 离差偏大 (>0.5px) 醒目金黄
                 else:
                     err_c = (0, 230, 80)   # 优良 (<=0.5px) 荧光绿
-                (ew, _), _ = cv2.getTextSize(err_str, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
-                cv2.putText(canvas, err_str, (rx2 - ew - 6, ry1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.36, err_c, 1, cv2.LINE_AA)
+                (ew, _), _ = cv2.getTextSize(err_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+                cv2.putText(canvas, err_str, (rx2 - ew - 6, ry1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.52, err_c, 1, cv2.LINE_AA)
+
+                # 第二行: FR-9.6 世界系坐标 XYZ (mm)
+                rec = tags_meta.get(tid) or {}
+                pos_mm = rec.get("position_mm")
+                if pos_mm and len(pos_mm) >= 3:
+                    xyz_str = f"X{pos_mm[0]:.0f} Y{pos_mm[1]:.0f} Z{pos_mm[2]:.0f} mm"
+                    xyz_c = (140, 190, 220)
+                else:
+                    xyz_str = "XYZ: --"
+                    xyz_c = (110, 115, 125)
+                cv2.putText(canvas, xyz_str, (rx1 + 18, ry1 + 31), cv2.FONT_HERSHEY_SIMPLEX, 0.36, xyz_c, 1, cv2.LINE_AA)
 
                 row_y += row_h
                 if row_y > diag_y - 12:

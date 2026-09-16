@@ -13,6 +13,8 @@ import cv2
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Any
 
+from tools.gui_launcher import draw_text, get_cached_font
+
 
 class VerificationVisualizer:
     """标定验证视觉呈现与双模态渲染器"""
@@ -37,11 +39,18 @@ class VerificationVisualizer:
         err_px: float,
         err_mm: float,
         observed_corners: Optional[np.ndarray] = None,
-        tag_status_hint: Optional[str] = None
+        tag_status_hint: Optional[str] = None,
+        world_position_mm: Optional[List[float]] = None,
+        world_rpy_deg: Optional[List[float]] = None,
+        ba_center_xyz: Optional[List[float]] = None,
+        obs_center_xyz: Optional[List[float]] = None,
+        hovered: bool = True
     ):
 
         """
         绘制全局 BA 平差理论位姿 (纯正翠绿) 与单帧本地实测抓取位姿 (科技天蓝) 的 3D 双四棱柱立体对比
+        (黑色提示框: 默认仅 Tag 编号省空间; 鼠标悬停展开六维详情:
+         世界系 XYZ/RPY + BA 理论与单帧实测的相机系中心 XYZ, 绿/蓝着色区分)
         """
         try:
             hw = 15.0   # 截面半宽 15mm，整体截面 30.0mm x 30.0mm
@@ -133,7 +142,7 @@ class VerificationVisualizer:
                 cv2.circle(img, obs_c, 5, (255, 180, 0), -1, cv2.LINE_AA)
                 cv2.circle(img, ba_c, 5, (0, 255, 100), -1, cv2.LINE_AA)
 
-            # E. 悬浮状态标签
+            # E. 悬浮状态标签 (默认仅 Tag 编号避免高密度遮挡; 鼠标悬停展开六维详情)
             anchor = proj_ba if proj_ba is not None else proj_obs
             min_x = np.min(anchor[:, 0])
             min_y = np.min(anchor[:, 1])
@@ -153,10 +162,45 @@ class VerificationVisualizer:
                 status_badge = "[吻合良好]" if is_good else f"[空间偏差 {err_mm:.2f}mm]"
                 border_c = (0, 240, 90) if is_good else (0, 180, 255)
                 label = f"Tag#{tag_id} {status_badge} ({err_px:.2f}px)"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)
-            cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), (16, 22, 28), -1)
-            cv2.rectangle(img, (bx - 6, by - th - 6), (bx + tw + 8, by + 4), border_c, 1)
-            cv2.putText(img, label, (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA)
+
+            if not hovered:
+                # 高密度场景: 仅显示紧凑编号, 状态语义由边框颜色承载
+                info_lines = [(f"Tag#{tag_id}", (255, 255, 255), 14)]
+            else:
+                # FR-9.7 排版: 三组坐标各占一行 (数值前无 X/Y/Z 字母, 纯列位辨识), 一位小数定宽右对齐,
+                # 标签 "世界/理论/实测" 均为双字宽, 保证三行 X/Y/Z 列小数点垂直对齐
+                def _fmt(v: float) -> str:
+                    return f"{v:>7.1f}"
+
+                info_lines = [(label, (255, 255, 255), 15)]
+                if world_position_mm is not None and len(world_position_mm) >= 3:
+                    info_lines.append((f"世界{_fmt(world_position_mm[0])}, {_fmt(world_position_mm[1])}, "
+                                       f"{_fmt(world_position_mm[2])} mm", (150, 220, 255), 14))
+                if ba_center_xyz is not None and len(ba_center_xyz) >= 3:
+                    info_lines.append((f"理论{_fmt(ba_center_xyz[0])}, {_fmt(ba_center_xyz[1])}, "
+                                       f"{_fmt(ba_center_xyz[2])} mm", (0, 255, 100), 14))
+                if obs_center_xyz is not None and len(obs_center_xyz) >= 3:
+                    info_lines.append((f"实测{_fmt(obs_center_xyz[0])}, {_fmt(obs_center_xyz[1])}, "
+                                       f"{_fmt(obs_center_xyz[2])} mm", (255, 195, 70), 14))
+                if world_rpy_deg is not None and len(world_rpy_deg) >= 3:
+                    info_lines.append((f"RPY: {world_rpy_deg[0]:>7.1f}, {world_rpy_deg[1]:>7.1f}, "
+                                       f"{world_rpy_deg[2]:>7.1f} deg", (150, 255, 200), 13))
+
+            box_w = 0
+            line_steps = []
+            for txt, _c, fs in info_lines:
+                bb = get_cached_font(fs).getbbox(txt)
+                box_w = max(box_w, bb[2] - bb[0])
+                line_steps.append(fs + 5)
+            box_h = sum(line_steps) + 8
+            by = max(by, box_h + 10)
+            box_top = by - box_h
+            cv2.rectangle(img, (bx - 6, box_top), (bx + box_w + 10, by + 4), (16, 22, 28), -1)
+            cv2.rectangle(img, (bx - 6, box_top), (bx + box_w + 10, by + 4), border_c, 1)
+            ly_ = box_top + 6
+            for (txt, col, fs), step in zip(info_lines, line_steps):
+                draw_text(img, txt, (bx, ly_), font_size=fs, color=col)
+                ly_ += step
         except Exception:
             pass
 

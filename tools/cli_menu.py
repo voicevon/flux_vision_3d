@@ -64,8 +64,6 @@ def print_main_banner(status):
     print(f"   {C_GREEN}[1]{C_RESET} 启动 D435 实时相机查看器与深度探针     (物理硬件模式)")
     print(f"   {C_GREEN}[3]{C_RESET} 解算最顶层芦笋抓取位姿 (实时相机)      (find_top_asparagus.py 单帧采集解算)")
     print(f"   {C_GREEN}[4]{C_RESET} 解算最顶层芦笋抓取位姿 (离线快照)      (自动读取最新本地快照快速验证)")
-    print(f"   {C_GREEN}[5]{C_RESET} 快速生成一帧模拟快照至 snapshots       (方便无相机时进行算法验证)")
-    print(f"   {C_GREEN}[6]{C_RESET} 启动 D435 仿真模拟可视化查看器         ({C_YELLOW}--mock{C_RESET} 模式，无需物理相机)")
     print("")
     print(f"{C_BOLD} [ 视觉标定与自动化专区 (Specialized Suites) ]{C_RESET}")
     tag_map_info = f"{C_GREEN}(已建图){C_RESET}" if status['has_tag_map'] else f"{C_YELLOW}(未建图){C_RESET}"
@@ -190,25 +188,15 @@ def run_tool_d435_real():
         pause_prompt()
         return
 
-    if mode == "mock":
-        run_tool_d435_mock()
-        return
-
-    print(f"{C_GRAY}操作提示: [Space]定格/暂停画面 | [V]切换视图 | [G]打印G-code | [D]芦笋检测 | [S]抓拍 | [Q]退出{C_RESET}")
+    print(f"{C_GRAY}操作提示: 顶部按钮栏 + [Space]暂停 | [V]排列 | [G]G-code | [D]检测 | [S]抓拍 | [Q]退出{C_RESET}")
     subprocess.run([sys.executable, "tools/d435_viewer.py"])
-
-
-def run_tool_d435_mock():
-    print(f"\n{C_CYAN}[启动]{C_RESET} 正在以仿真模拟模式启动 D435 可视化查看器 (--mock)...")
-    subprocess.run([sys.executable, "tools/d435_viewer.py", "--mock"])
 
 
 def run_tool_top_real():
     print(f"\n{C_CYAN}[启动]{C_RESET} 准备从 RealSense D435 物理相机单帧捕获并解算最顶层芦笋...")
     ok, mode = ensure_camera_connected()
-    if not ok or mode == "mock":
-        if mode == "mock":
-            print(f"{C_YELLOW}[提示]{C_RESET} 仿真模式请使用主菜单选项 [4] 加载快照数据解算。")
+    if not ok:
+        print(f"{C_YELLOW}[提示]{C_RESET} 未连接物理相机。")
         pause_prompt()
         return
 
@@ -236,20 +224,6 @@ def run_tool_top_offline():
 
     print(f"{C_GREEN}[INFO]{C_RESET} 加载快照数据: {latest_color}")
     subprocess.run([sys.executable, "tools/find_top_asparagus.py", "--image", latest_color, "--depth", latest_depth])
-    pause_prompt()
-
-
-def run_gen_mock_snapshot():
-    print(f"\n{C_CYAN}[操作]{C_RESET} 正在生成仿真 3D 芦笋堆叠数据帧...")
-    try:
-        from tools.d435_viewer import D435Viewer
-        viewer = D435Viewer(mock_mode=True)
-        viewer.start()
-        color, depth = viewer.generate_mock_frame()
-        viewer.save_snapshot(color, depth, color)
-        print(f"{C_GREEN}[成功]{C_RESET} 模拟数据已成功生成至 data/snapshots/！")
-    except Exception as e:
-        print(f"{C_RED}[失败]{C_RESET} 生成模拟数据异常: {e}")
     pause_prompt()
 
 
@@ -911,10 +885,6 @@ def main():
             run_tool_top_real()
         elif choice == '4':
             run_tool_top_offline()
-        elif choice == '5':
-            run_gen_mock_snapshot()
-        elif choice == '6':
-            run_tool_d435_mock()
         elif choice in ('H', 'CAL'):
             submenu_calibration_suite(cached_status=status)
         elif choice == 'T':
