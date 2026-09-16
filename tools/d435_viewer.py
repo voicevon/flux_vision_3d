@@ -279,6 +279,9 @@ class D435Viewer:
                 self.win_mgr.handle_mouse_wheel(event, flags)
                 return
 
+        # param 可能为 None（OpenCV 回调未传时），做防御处理
+        param = param or {}
+
         view_mode = getattr(self, "view_mode", "split_v")
         orig_w = getattr(self, "actual_w", 1280)
         orig_h = getattr(self, "actual_h", 720)

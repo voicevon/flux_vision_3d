@@ -2,7 +2,7 @@
 """
 3D 视觉综合控制中心 (Suite Dashboard)
 =================================================
-基于 1280x720 工业科技大屏，统一调度 flux_vision_3d 视觉系统的所有核心应用：
+基于 1280x830 工业科技大屏，统一调度 flux_vision_3d 视觉系统的所有核心应用：
 - 原生 Windows Unicode 窗口标题，杜绝任何乱码
 - 窗口拖拽缩放自适应动态分辨率 (Dynamic Native Canvas)，文字 1:1 矢量超采样，无任何拉伸锯齿
 - 高端工业冷峻暗色系配色（低饱和度科技冷蓝、工业深青与钛银灰），视觉沉稳专业不刺眼
@@ -157,13 +157,14 @@ class ToolCardMeta:
 
 
 def build_tools_catalog() -> List[ToolCardMeta]:
-    """构建全系统核心工具目录：9 张卡片，五大功能分组 (A场景 → B标定链 → C感知层 → D生产执行 → E系统运维)"""
+    """构建全系统核心工具目录：12 张卡片，四大功能分组 (A场景→B Tag标定→C示教标定→D生产调试)"""
 
     COLOR_A = (195, 155, 45)   # A 场景总控  : 琥珀金 (Amber)
-    COLOR_B = (65,  175, 160)  # B 标定流水线: 精密工业深青 (Teal)
-    COLOR_C = (90,  140, 195)  # C 感知层    : 钢蓝 (Steel Blue)
-    COLOR_D = (80,  190, 115)  # D 生产执行  : 活力绿 (Production Green)
-    COLOR_E = (130, 145, 165)  # E 系统运维  : 沉稳钛银灰 (Titanium Gray)
+    COLOR_B = (65,  175, 160)  # B Tag标定   : 精密工业深青 (Teal)
+    COLOR_C = (220, 145,  60)  # C 示教标定  : 暖橙 (Manual Teach)
+    COLOR_D = (90,  140, 195)  # D 生产调试  : 钢蓝 (Steel Blue)
+    COLOR_E = (80,  190, 115)  # 预留色彩槽
+    COLOR_F = (130, 145, 165)  # 预留色彩槽
 
     catalog = [
         # ===== A — 场景总控 (1张，顶部全宽) =====
@@ -188,13 +189,35 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             quick_tips="快捷键: [1] 启动 | 中枢内 [↑/↓] 选场景 | [⏎] 激活 | [P] 发布生产 | [S] 进Studio"
         ),
 
-        # ===== B — 标定流水线 (4张，2×2) =====
+        # ===== B — Tag 标定流水线 (6张，2×3) =====
+        ToolCardMeta(
+            key_id="tag_generator",
+            shortcut="2",
+            title="AprilTag 标靶图纸生成器",
+            subtitle="[G] 一键生成高清PNG与严格1:1 A4 PDF排版标靶",
+            category="B — Tag 标定流水线",
+            is_gui=False,
+            command=[sys.executable, "tools/calibration/generate_apriltags.py"],
+            tag_color=COLOR_B,
+            summary="【标定流水线 Step 0】在标定现场第一步：物理打印 AprilTag 16h5 标靶图纸，生成高清 PNG 和严格 1:1 比例的 A4 PDF 排版文件。",
+            details=[
+                "生成 ID 00 ~ 29 共 30 个 AprilTag 16h5 高清独立 PNG 标靶卡片 (800×800)",
+                "自动排版为 2 页 A4 PDF 文件（每页 3列×5行 = 15个标靶，标靶物理尺寸 40mm×40mm）",
+                "每页顶部配备 100.0mm 物理校验尺，供游标卡尺验证打印比例严格 1:1 无失真",
+                "Tag #0 特别标注 SCARA 旋转中心红线，Tag #1 标注世界 +X 参考轴",
+                "同时生成 5×6 总览网格图 (apriltags_16h5_all_grid.png) 方便屏幕快速预览"
+            ],
+            inputs=["系统已安装 reportlab 库 (pip install reportlab)"],
+            outputs=["data/apriltags_16h5/ 目录下的 PNG 标靶卡片、A4 PDF 排版文件与总览网格图"],
+            quick_tips="快捷键: [2] 或 [G] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF，勿选“适应页面”"
+        ),
+
         ToolCardMeta(
             key_id="tag_wizard",
-            shortcut="2",
+            shortcut="3",
             title="多视角采图向导 (Wizard)",
             subtitle="[C] 角度雷达交互指引/空格极速连拍/自动归档沙盒",
-            category="B — 标定流水线",
+            category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/calibration/tag_capture_wizard.py"],
             tag_color=COLOR_B,
@@ -206,15 +229,15 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense D435 相机 (或 --mock 仿真)"],
             outputs=["当前活动场景 raw_images/view_*.png 原始高质量未压缩图集"],
-            quick_tips="快捷键: [2] 或 [C] 启动 | 采图界面中 [空格] 拍摄归档 | [R] 重置批次 | [ESC] 完成返回"
+            quick_tips="快捷键: [3] 或 [C] 启动 | 采图界面中 [空格] 拍摄归档 | [R] 重置批次 | [ESC] 完成返回"
         ),
 
         ToolCardMeta(
             key_id="tag_studio",
-            shortcut="3",
+            shortcut="4",
             title="离线标定工作站 (Studio)",
             subtitle="[S] 多视角审核/两阶段 BA 平差/智能剪枝/质检闭环",
-            category="B — 标定流水线",
+            category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/calibration/tag_offline_studio.py"],
             tag_color=COLOR_B,
@@ -228,15 +251,15 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["当前活动场景 raw_images/", "相机内参 camera_intrinsics.yaml"],
             outputs=["当前场景 tags_map.yaml", "reports/studio_qa_report_*.md 质检报告"],
-            quick_tips="快捷键: [3] 或 [S] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
+            quick_tips="快捷键: [4] 或 [S] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
         ),
 
         ToolCardMeta(
             key_id="tag_offline_verifier",
-            shortcut="4",
+            shortcut="5",
             title="离线精度体检台 (LOO盲测)",
             subtitle="[L] 标定后留一交叉验证/双棱柱对比/残差评级",
-            category="B — 标定流水线",
+            category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/calibration/tag_offline_verifier.py"],
             tag_color=COLOR_B,
@@ -249,242 +272,18 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["当前活动场景样本图集", "当前场景 tags_map.yaml"],
             outputs=["data/tag_calibration_verification/ 诊断报告与残差矢量可视化图"],
-            quick_tips="快捷键: [4] 或 [L] 启动 | 体检界面中 [N/P] 切换盲测帧 | [R] 导出评估报告 | [ESC] 退出"
+            quick_tips="快捷键: [5] 或 [L] 启动 | 体检界面中 [N/P] 切换盲测帧 | [R] 导出评估报告 | [ESC] 退出"
         ),
 
         ToolCardMeta(
             key_id="tag_ar_verifier",
-            shortcut="5",
+            shortcut="6",
             title="在线 AR 虚实融合验收系统",
             subtitle="[A] 3D轴网虚实融合/时域外参滤波锁定/现场验收",
-            category="B — 标定流水线",
+            category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/calibration/tag_calibration_verifier.py"],
             tag_color=COLOR_B,
-            summary="【车间透视验收】通过虚实融合 AR 盲测直接肉眼检验平差地图的物理精确度。",
-            details=[
-                "高帧率实时取流，在检测到的 AprilTag 空间位置上虚实融合叠加 3D 彩色坐标轴",
-                "在已知标靶基准上虚实融合渲染 3D 虚拟彩色立方体/四棱柱",
-                "多帧时域外参滤波锁定：支持按 [L] 键采集 30 帧静止标靶，输出毫米级空间位姿方差",
-                "直观检验空间尺度是否严丝合缝，确认是否存在扭曲、漂移或尺度缩放偏差"
-            ],
-            inputs=["D435 实时相机", "当前生产 tags_map.yaml 或场景地图"],
-            outputs=["屏幕实时 AR 渲染显示、时域位姿锁定精度统计"],
-            quick_tips="快捷键: [5] 或 [A] 启动 | AR界面中 [L] 启动时域锁定 | [M] 切换模型 | [ESC] 退出"
-        ),
-
-        # ===== C — 感知层 (2张，实/虚镜像对) =====
-        ToolCardMeta(
-            key_id="d435_live",
-            shortcut="6",
-            title="D435 实时相机与深度探针",
-            subtitle="[D] 物理高帧率取流/毫米级深度探针/单帧快照",
-            category="C — 感知层",
-            is_gui=True,
-            command=[sys.executable, "tools/d435_viewer.py"],
-            tag_color=COLOR_C,
-            summary="【现场感知总览】RealSense D435 物理相机的综合查看器与交互式深度测量探针。",
-            details=[
-                "实时获取 1280x720 RGB 与精准对齐的深度流",
-                "鼠标悬停任意像素点，实时探针读取毫米级 (X, Y, Z) 空间坐标",
-                "支持深度热力图着色 (JET/TURBO) 与直方图动态均衡增强",
-                "按 [S] 键一键保存工业快照 (RGB + Depth + 点云 PLY)"
-            ],
-            inputs=["Intel RealSense D435 USB 3.0 物理相机"],
-            outputs=["data/snapshots/ 单帧高质量工业多模态快照"],
-            quick_tips="快捷键: [6] 或 [D] 启动 | 查看器内 [S] 存快照 | [M] 切换热力着色 | [D] 测距探针 | [ESC] 退出"
-        ),
-
-        ToolCardMeta(
-            key_id="sim_sandbox",
-            shortcut="7",
-            title="仿真模拟与离线快照验证",
-            subtitle="[M] --mock 纯软件相机仿真 / 历史工业快照位姿解算",
-            category="C — 感知层",
-            is_gui=True,
-            command=[sys.executable, "tools/d435_viewer.py", "--mock"],
-            tag_color=COLOR_C,
-            summary="【脱机仿真沙盒】无硬件时的开发与调试利器：涵盖纯软件仿真相机与历史快照抓取算法验证。",
-            details=[
-                "生成合成渐变深度场与模拟测试 AprilTag 标靶纹理，模拟真实 30FPS 视频流与探针交互",
-                "支持算法离线验证：从 data/snapshots/ 快速加载真实历史工业快照，验证芦笋抓取解算",
-                "适合在离线工位、出差环境或算法调优期间进行全流程无硬件联调",
-                "快照验证命令：python tools/find_top_asparagus.py --snapshot latest"
-            ],
-            inputs=["纯软件数学合成场 或 data/snapshots/ 历史已采集工业快照"],
-            outputs=["模拟工业快照至 data/snapshots/ 或控制台算法解算结果"],
-            quick_tips="快捷键: [7] 或 [M] 启动仿真查看器 | 离线快照测试在控制台执行对应参数命令"
-        ),
-
-        # ===== D — 生产执行 (1张) =====
-        ToolCardMeta(
-            key_id="asparagus_live",
-            shortcut="8",
-            title="芦笋抓取位姿解算 (实时生产)",
-            subtitle="[F] 硬件相机抓拍解算顶层芦笋/输出 G-code",
-            category="D — 生产执行",
-            is_gui=False,
-            command=[sys.executable, "tools/find_top_asparagus.py"],
-            tag_color=COLOR_D,
-            summary="【核心生产算法】调用物理相机抓拍一帧并解算最上层芦笋空间位姿，输出抓取指令。",
-            details=[
-                "自动拉起 D435 物理相机完成自动曝光对齐与单帧捕获",
-                "3D 表面法向量与空间骨架线拟合，精确定位顶层可抓取芦笋",
-                "将相机坐标系位姿通过生产标定矩阵转换为 SCARA 机械臂基坐标系",
-                "直接生成控制 SCARA 机械臂抓取的标准 G-code 指令与 JSON 协议"
-            ],
-            inputs=["D435 硬件相机", "config/camera_intrinsics.yaml", "config/tags_map.yaml"],
-            outputs=["终端打印机械臂 G-code 指令、JSON 抓取坐标与调试渲染图"],
-            quick_tips="快捷键: [8] 或 [F] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
-        ),
-
-        # ===== E — 系统运维 (1张) =====
-        ToolCardMeta(
-            key_id="sys_diagnose_tests",
-            shortcut="9",
-            title="系统环境深度诊断与测试套件",
-            subtitle="[T] 驱动与依赖诊断 / 85+ 项自动化 CI/CD 全量测试",
-            category="E — 系统运维",
-            is_gui=False,
-            command=[sys.executable, "tools/cli_menu.py", "--diagnose"],
-            tag_color=COLOR_E,
-            summary="【系统健康与质量守门】全面检查系统环境依赖，并提供工程全量自动化测试套件。",
-            details=[
-                "全面检查 Python、OpenCV、NumPy C-API 及 RealSense USB 3.0 驱动就绪状态",
-                "排查 yaml、PIL、matplotlib、scipy 等工业科学计算包环境版本",
-                "全量测试执行命令：python -m unittest discover -s tests -p \"test_*.py\"",
-                "涵盖数学平差 (BA)、图论连通拓扑、外参盲测体检与 UI 状态机，保障发布质量"
-            ],
-            inputs=["系统底层环境注册表与 tests/ 全量测试框架"],
-            outputs=["控制台输出清晰的逐项绿勾诊断报告与全工程测试矩阵"],
-            quick_tips="快捷键: [9] 或 [T] 启动环境深度诊断 | 遇到红叉时依提示执行 pip 修复命令"
-        ),
-    ]
-    return catalog
-
-
-    # 统一三大专区主色系 (低饱和专业工业冷色)
-    COLOR_SANDBOX = (65, 175, 160)  # 工况沙盒与离线标定: 精密工业深青 (Precision Teal)
-    COLOR_PROD = (85, 145, 215)     # 核心在线生产类: 典雅科技冷蓝 (Slate Blue)
-    COLOR_CI = (130, 145, 165)      # 仿真演练与运维测试类: 沉稳钛银冷灰 (Titanium Gray)
-
-    catalog = [
-        # ================= 专区一：工况沙盒与离线标定 (统一深青精密色系) =================
-        ToolCardMeta(
-            key_id="scene_hub",
-            shortcut="1",
-            title="工况场景管理中枢 (Scene Hub)",
-            subtitle="★ 顶层数据总控！沙盒画廊/大图巡检/生产发布",
-            category="工况与离线",
-            is_gui=True,
-            command=[sys.executable, "-m", "tools.scene_hub"],
-            tag_color=COLOR_SANDBOX,
-            summary="【首位核心中枢】视觉系统的工况沙盒容器与数据总控驾驶舱，连接采集、平差与生产部署。",
-            details=[
-                "多工况画廊管理：选择、新建、重命名、克隆与独立物理沙盒数据隔离",
-                "三大视图模式：标准三栏工作台 / 单帧大图全宽巡检 / 纯净几何健康看板",
-                "场景几何健康度体检：动态覆盖率热力、留一盲测残差分布与两阶段平差指标",
-                "严格恪守【草稿沙盒隔离、活动场景验证、生产原子发布】工业安全基准"
-            ],
-            inputs=["data/calibration_scenes/ 工况沙盒目录"],
-            outputs=["当前活动场景切换、scene_meta.yaml、一键原子发布到 config/tags_map.yaml"],
-            quick_tips="快捷键: [1] 或 [⏎] 启动 | 中枢内按 [↑/↓] 选场景 | [⏎] 激活 | [P] 发布生产 | [S] 进Studio"
-        ),
-
-        ToolCardMeta(
-            key_id="tag_studio",
-            shortcut="2",
-            title="离线标定工作站 (Studio)",
-            subtitle="[S] 多视角审核/两阶段 BA 平差/智能剪枝/质检闭环",
-            category="工况与离线",
-            is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_offline_studio.py"],
-            tag_color=COLOR_SANDBOX,
-            summary="【离线标定核心】一站式样本交互审核、高精两阶段 BA 平差求解、智能剪枝与质检闭环。",
-            details=[
-                "自动装载当前活动沙盒场景，多视角图像九宫格缩略图交互式审核与启闭",
-                "两阶段全局平差：Cauchy 鲁棒核粗平差 + MAD 统计自适应清洗 + LM 精平差",
-                "智能残差剪枝 (Auto-Prune)：自动迭代剪除反光/微动导致的高残差外点，拓扑安全守门",
-                "视网膜级热力覆盖度评估，一键导出 Markdown 格式全面质检体检报告",
-                "内置支持工具：标靶图纸生成 (A4 PDF) 与漏检病因切片诊断已全面打通支持"
-            ],
-            inputs=["当前活动场景 raw_images/", "相机内参 camera_intrinsics.yaml"],
-            outputs=["当前场景 tags_map.yaml", "reports/studio_qa_report_*.md 质检报告"],
-            quick_tips="快捷键: [2] 或 [S] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
-        ),
-
-        ToolCardMeta(
-            key_id="tag_wizard",
-            shortcut="3",
-            title="多视角采图向导 (Wizard)",
-            subtitle="[C] 角度雷达交互指引/空格极速连拍/自动归档沙盒",
-            category="工况与离线",
-            is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_capture_wizard.py"],
-            tag_color=COLOR_SANDBOX,
-            summary="【现场采图助手】专职采图向导：交互式指导相机移动至不同高度与俯仰角，高效采集高质量标定样本。",
-            details=[
-                "提供雷达式多视角视盘指引（俯视、大俯仰角、大滚转角、高低多层位态）",
-                "按 [空格键] 极速无感连拍，样本自动存入当前场景 raw_images/ 目录",
-                "实时 AprilTag 检出回显与白闪快门反馈，采图完毕后返回主中枢自动热重载"
-            ],
-            inputs=["RealSense D435 相机 (或 --mock 仿真)"],
-            outputs=["当前活动场景 raw_images/view_*.png 原始高质量未压缩图集"],
-            quick_tips="快捷键: [3] 或 [C] 启动 | 采图界面中 [空格] 拍摄归档 | [R] 重置批次 | [ESC] 完成采图返回"
-        ),
-
-        ToolCardMeta(
-            key_id="tag_offline_verifier",
-            shortcut="4",
-            title="离线精度体检台 (LOO盲测)",
-            subtitle="[L] 标定后留一交叉验证/双棱柱对比/残差评级",
-            category="工况与离线",
-            is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_offline_verifier.py"],
-            tag_color=COLOR_SANDBOX,
-            summary="【标定验收闭环】科学级精度评估台：执行严格的 Leave-One-Out (LOO) 盲测交叉验证与外参鲁棒性体检。",
-            details=[
-                "留一交叉验证：轮流屏蔽每一张标定图像作为未知盲测帧，求解相机外参并预测未参与平差的标靶",
-                "3D 空间双棱柱虚实位姿对比：直观呈现盲测外参与全局优化外参的空间刚体位移偏差",
-                "2D 像平面残差矢量放大图：标注重投影误差方向分布，揭示畸变或单侧光照系统误差",
-                "输出严谨的工业放行评级：优秀 (A)、达标 (B) 或 需补拍 (C)"
-            ],
-            inputs=["当前活动场景样本图集", "当前场景 tags_map.yaml"],
-            outputs=["data/tag_calibration_verification/ 诊断报告与残差矢量可视化图"],
-            quick_tips="快捷键: [4] 或 [L] 启动 | 体检界面中 [N/P] 切换盲测帧 | [R] 导出评估报告 | [ESC] 退出"
-        ),
-
-        # ================= 专区二：在线生产与现场作业 (统一科技冷蓝色系) =================
-        ToolCardMeta(
-            key_id="d435_live",
-            shortcut="5",
-            title="D435 实时相机与深度探针",
-            subtitle="[D] 物理高帧率取流/毫米级深度探针/单帧快照",
-            category="在线生产",
-            is_gui=True,
-            command=[sys.executable, "tools/d435_viewer.py"],
-            tag_color=COLOR_PROD,
-            summary="【现场感知总览】RealSense D435 物理相机的综合查看器与交互式深度测量探针。",
-            details=[
-                "实时获取 1280x720 RGB 与精准对齐的深度流",
-                "鼠标悬停任意像素点，实时探针读取毫米级 (X, Y, Z) 空间坐标",
-                "支持深度热力图着色 (JET/TURBO) 与直方图动态均衡增强",
-                "按 [S] 键一键保存工业快照 (RGB + Depth + 点云 PLY)"
-            ],
-            inputs=["Intel RealSense D435 USB 3.0 物理相机"],
-            outputs=["data/snapshots/ 单帧高质量工业多模态快照"],
-            quick_tips="快捷键: [5] 或 [D] 启动 | 查看器内 [S] 存快照 | [M] 切换热力着色 | [D] 测距探针 | [ESC] 退出"
-        ),
-
-        ToolCardMeta(
-            key_id="tag_ar_verifier",
-            shortcut="6",
-            title="在线 AR 虚实融合验收系统",
-            subtitle="[A] 3D轴网虚实融合/时域外参滤波锁定/现场验收",
-            category="在线生产",
-            is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_calibration_verifier.py"],
-            tag_color=COLOR_PROD,
             summary="【车间透视验收】通过虚实融合 AR 盲测直接肉眼检验平差地图的物理精确度。",
             details=[
                 "高帧率实时取流，在检测到的 AprilTag 空间位置上虚实融合叠加 3D 彩色坐标轴",
@@ -498,36 +297,79 @@ def build_tools_catalog() -> List[ToolCardMeta]:
         ),
 
         ToolCardMeta(
-            key_id="asparagus_live",
-            shortcut="7",
-            title="芦笋抓取位姿解算 (实时生产)",
-            subtitle="[F] 硬件相机抓拍解算顶层芦笋/输出 G-code",
-            category="在线生产",
-            is_gui=False,
-            command=[sys.executable, "tools/find_top_asparagus.py"],
-            tag_color=COLOR_PROD,
-            summary="【核心生产算法】调用物理相机抓拍一帧并解算最上层芦笋空间位姿，输出抓取指令。",
+            key_id="scara_tag_tracker",
+            shortcut="0",
+            title="SCARA 追踪验证 (Tag ID=2)",
+            subtitle="[V] 机械臂实时追踪运动标靶/方向跟随/验收",
+            category="B — Tag 标定流水线",
+            is_gui=True,
+            command=[sys.executable, "tools/calibration/scara_tag_tracker.py"],
+            tag_color=COLOR_B,
+            summary="【Tag 标定 Step 5 追踪验证】Tag 标定闭环验收：SCARA 实时追踪传送带上 Tag ID=2 假芦笋，验证标定精度与方向跟随一致性。",
             details=[
-                "自动拉起 D435 物理相机完成自动曝光对齐与单帧捕获",
-                "3D 表面法向量与空间骨架线拟合，精确定位顶层可抓取芦笋",
-                "将相机坐标系位姿通过生产标定矩阵转换为 SCARA 机械臂基坐标系",
-                "直接生成控制 SCARA 机械臂抓取的标准 G-code 指令与 JSON 协议"
+                "高帧率取流，持续检测 Tag ID=2 的 16h5 标靶（假芦笋载体）",
+                "跟踪标靶 (X, Y, θ) 位姿，SCARA 同步执行追踪运动指令",
+                "实时比较视觉解算位姿 ↔ 机械臂编码器反馈，输出毫米级追踪误差",
+                "验证 T_cam_to_scara 正确性，确保方向跟随无镜像/翻转偏差"
             ],
-            inputs=["D435 硬件相机", "config/camera_intrinsics.yaml", "config/tags_map.yaml"],
-            outputs=["终端打印机械臂 G-code 指令、JSON 抓取坐标与调试渲染图"],
-            quick_tips="快捷键: [7] 或 [F] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
+            inputs=["D435 实时相机 + 生产 tags_map.yaml + SCARA 串口 (COM3)"],
+            outputs=["追踪误差实时显示、机械臂运动日志、验收判定"],
+            quick_tips="快捷键: [0] 或 [V] 启动 | 传送带上放置 Tag ID=2 | [Q] 退出"
         ),
 
-        # ================= 专区三：仿真演练与运维测试 (统一钛银冷灰色系) =================
+        # ===== C — 示教标定 (1张，与 Tag 标定并列的独立路线) =====
+        ToolCardMeta(
+            key_id="hand_eye_calibration",
+            shortcut="H",
+            title="SCARA 示教标定 (接触式)",
+            subtitle="[H] Kabsch/SVD 点对刚体配准/极端无Tag场景",
+            category="C — 示教标定 (接触式)",
+            is_gui=False,
+            command=[sys.executable, "tools/calibration/hand_eye_calibration.py"],
+            tag_color=COLOR_C,
+            summary="【独立路线 · 示教标定】与 Tag 标定并列的接触式方案：示教 4~6 个物理对应点对，Kabsch/SVD 求解相机→SCARA 变换。",
+            details=[
+                "经典 Kabsch / Horn / Umeyama SVD 最小二乘刚体配准",
+                "操作员示教 N 个点对 (相机坐标 ↔ SCARA 基座坐标, N≥3, 推荐 4~6)",
+                "自动计算 R、t 与 RMSE，一键回写 config.yaml T_cam_to_scara",
+                "适用：Tag 因反光/遮挡/极端角度无法识别时的保底方案"
+            ],
+            inputs=["操作员手动示教的点对坐标"],
+            outputs=["config.yaml 更新、终端打印 RMSE 与配准质量"],
+            quick_tips="快捷键: [H] 启动 (控制台) | 推荐 4~6 个非共面点对"
+        ),
+
+        # ===== D — 生产调试 (4张，D435/仿真/抓取/诊断) =====
+        ToolCardMeta(
+            key_id="d435_live",
+            shortcut="7",
+            title="D435 实时相机与深度探针",
+            subtitle="[D] 物理高帧率取流/毫米级深度探针/单帧快照",
+            category="D — 生产调试",
+            is_gui=True,
+            command=[sys.executable, "tools/d435_viewer.py"],
+            tag_color=COLOR_D,
+            summary="【现场感知总览】RealSense D435 物理相机的综合查看器与交互式深度测量探针。",
+            details=[
+                "实时获取 1280x720 RGB 与精准对齐的深度流",
+                "鼠标悬停任意像素点，实时探针读取毫米级 (X, Y, Z) 空间坐标",
+                "支持深度热力图着色 (JET/TURBO) 与直方图动态均衡增强",
+                "按 [S] 键一键保存工业快照 (RGB + Depth + 点云 PLY)"
+            ],
+            inputs=["Intel RealSense D435 USB 3.0 物理相机"],
+            outputs=["data/snapshots/ 单帧高质量工业多模态快照"],
+            quick_tips="快捷键: [7] 或 [D] 启动 | 查看器内 [S] 存快照 | [M] 切换热力着色 | [D] 测距探针 | [ESC] 退出"
+        ),
+
         ToolCardMeta(
             key_id="sim_sandbox",
             shortcut="8",
             title="仿真模拟与离线快照验证",
             subtitle="[M] --mock 纯软件相机仿真 / 历史工业快照位姿解算",
-            category="仿真与运维",
+            category="D — 生产调试",
             is_gui=True,
             command=[sys.executable, "tools/d435_viewer.py", "--mock"],
-            tag_color=COLOR_CI,
+            tag_color=COLOR_D,
             summary="【脱机仿真沙盒】无硬件时的开发与调试利器：涵盖纯软件仿真相机与历史快照抓取算法验证。",
             details=[
                 "生成合成渐变深度场与模拟测试 AprilTag 标靶纹理，模拟真实 30FPS 视频流与探针交互",
@@ -540,15 +382,38 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             quick_tips="快捷键: [8] 或 [M] 启动仿真查看器 | 离线快照测试在控制台执行对应参数命令"
         ),
 
+        # ===== D — 生产调试 (续，芦笋抓取) =====
+        ToolCardMeta(
+            key_id="asparagus_live",
+            shortcut="9",
+            title="芦笋抓取位姿解算 (实时生产)",
+            subtitle="[F] 硬件相机抓拍解算顶层芦笋/输出 G-code",
+            category="D — 生产调试",
+            is_gui=False,
+            command=[sys.executable, "tools/find_top_asparagus.py"],
+            tag_color=COLOR_D,
+            summary="【核心生产算法】调用物理相机抓拍一帧并解算最上层芦笋空间位姿，输出抓取指令。",
+            details=[
+                "自动拉起 D435 物理相机完成自动曝光对齐与单帧捕获",
+                "3D 表面法向量与空间骨架线拟合，精确定位顶层可抓取芦笋",
+                "将相机坐标系位姿通过生产标定矩阵转换为 SCARA 机械臂基坐标系",
+                "直接生成控制 SCARA 机械臂抓取的标准 G-code 指令与 JSON 协议"
+            ],
+            inputs=["D435 硬件相机", "config/camera_intrinsics.yaml", "config/tags_map.yaml"],
+            outputs=["终端打印机械臂 G-code 指令、JSON 抓取坐标与调试渲染图"],
+            quick_tips="快捷键: [9] 或 [F] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
+        ),
+
+        # ===== D — 生产调试 (续，系统诊断) =====
         ToolCardMeta(
             key_id="sys_diagnose_tests",
-            shortcut="9",
+            shortcut="-",
             title="系统环境深度诊断与测试套件",
             subtitle="[T] 驱动与依赖诊断 / 85+ 项自动化 CI/CD 全量测试",
-            category="仿真与运维",
+            category="D — 生产调试",
             is_gui=False,
             command=[sys.executable, "tools/cli_menu.py", "--diagnose"],
-            tag_color=COLOR_CI,
+            tag_color=COLOR_D,
             summary="【系统健康与质量守门】全面检查系统环境依赖，并提供工程全量自动化测试套件。",
             details=[
                 "全面检查 Python、OpenCV、NumPy C-API 及 RealSense USB 3.0 驱动就绪状态",
@@ -558,10 +423,49 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["系统底层环境注册表与 tests/ 全量测试框架"],
             outputs=["控制台输出清晰的逐项绿勾诊断报告与全工程测试矩阵"],
-            quick_tips="快捷键: [9] 或 [T] 启动环境深度诊断 | 遇到红叉时依提示执行 pip 修复命令"
+            quick_tips="快捷键: [T] 启动环境深度诊断 | 遇到红叉时依提示执行 pip 修复命令"
+        ),
+
+        ToolCardMeta(
+            key_id="pip_install",
+            shortcut="P",
+            title="安装/更新项目依赖",
+            subtitle="[P] pip install -r requirements.txt",
+            category="D — 生产调试",
+            is_gui=False,
+            command=[sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+            tag_color=COLOR_D,
+            summary="【环境维护】一键安装或更新项目全部 Python 依赖包，确保与 requirements.txt 严格对齐。",
+            details=[
+                "安装/更新 requirements.txt 中声明的全部依赖",
+                "自动处理 numpy、opencv、pyrealsense2、pyyaml 等核心包",
+                "离线/网络环境均可运行，失败时控制台会提示缺失源"
+            ],
+            inputs=["requirements.txt 文件"],
+            outputs=["pip 安装进度与版本锁定结果"],
+            quick_tips="快捷键: [P] 启动 (控制台) | 首次克隆项目后必执行"
+        ),
+
+        ToolCardMeta(
+            key_id="open_cmd",
+            shortcut="X",
+            title="项目根目录命令行 (CMD)",
+            subtitle="[X] 打开 CMD，工作目录自动定位到 flux_vision_3d",
+            category="D — 生产调试",
+            is_gui=False,
+            command=["cmd.exe", "/k", "cd /d " + os.path.dirname(os.path.dirname(os.path.abspath(__file__)))],
+            tag_color=COLOR_D,
+            summary="【开发快速入口】一键打开 CMD 并自动 cd 到项目根目录，省去手动路径粘贴。",
+            details=[
+                "Windows CMD 自动定位到 flux_vision_3d 项目根目录",
+                "保持窗口打开 (/k)，可连续执行 python / pytest / git 等命令",
+                "配合 requirements.txt 依赖安装、调试脚本运行等高频操作"
+            ],
+            inputs=["无"],
+            outputs=["新 CMD 窗口，路径已在项目根"],
+            quick_tips="快捷键: [X] 启动 | CMD 窗口会保持打开等待输入"
         ),
     ]
-    return catalog
     return catalog
 
 
@@ -586,7 +490,7 @@ class GuiLauncherApp:
         self._settings_file = settings_file or GUI_SETTINGS_FILE
         self._is_active = True
         self.canvas_w = 1280
-        self.canvas_h = 720
+        self.canvas_h = 1000
         # 窗口内部 key 标识使用纯英文，通过 Windows API 设定中文标题杜绝乱码
         self.window_name = "flux_vision_3d_suite_dashboard"
         self._running = True
@@ -605,9 +509,9 @@ class GuiLauncherApp:
         self.is_subtool_running: bool = False
         self.running_tool_meta: Optional[ToolCardMeta] = None
 
-        # 视口与真矢量放大镜缩放控制 (基准 1280x720)
+        # 视口与真矢量放大镜缩放控制 (基准 1280x830)
         self._base_w   = 1280
-        self._base_h   = 720
+        self._base_h   = 1000
         self.scale_pct = 100   # 缩放百分比 (50% ~ 200%)
 
         # 加载上次记忆的用户偏好设置 (自动恢复缩放与窗口尺寸)
@@ -618,7 +522,7 @@ class GuiLauncherApp:
         if self.scale_pct != 100 or self.canvas_w != self._base_w or self.canvas_h != self._base_h:
             self.toast_msg = f"已自动恢复偏好设置：放大镜 {self.scale_pct}%，视窗 {self.canvas_w}×{self.canvas_h} (按 Ctrl+0 可随时复位)"
         else:
-            self.toast_msg = "欢迎使用 flux_vision_3d 工业视觉控制中心！按 [1~9] 或点击卡片进入工况中枢。"
+            self.toast_msg = "欢迎使用 flux_vision_3d 工业视觉控制中心！按 [1~0] 或点击卡片进入工况中枢。"
         self.toast_time = time.time() + 4.5
 
         # 系统状态缓存
@@ -886,7 +790,7 @@ class GuiLauncherApp:
                 self._launch_tool(self.tools[card_idx])
 
     def _handle_keyboard(self, raw_key: int):
-        """键盘快捷键响应 (五分组布局: row0全宽A, row1-2为B4张2×2, row3为C2张, row4为D+E各1张)"""
+        """键盘快捷键响应 (6分组: row0 A全宽, row1-3 B 2×3, row4 C 1张, row5 D 2张, row6 E+F 2张)"""
         if self.is_subtool_running:
             return  # 子应用运行期间，主视窗处于安全挂起待命态，屏蔽一切按键操作
 
@@ -901,19 +805,37 @@ class GuiLauncherApp:
             return
 
         # 方向键：将卡片索引映射到 (row, col) 坐标后导航
-        # row=0 → card 0 (全宽，col固定=0)
-        # row=1 → cards 1,2  row=2 → cards 3,4
-        # row=3 → cards 5,6  row=4 → cards 7,8
+        # row 0: idx 0 (A)
+        # row 1-3: idx 1-6 (B 2×3)
+        # row 4: idx 7 (C, 只有 col 0)
+        # row 5-7: idx 8-13 (D 2×3, 全部两列)
         def idx_to_rc(i: int) -> Tuple[int, int]:
             if i < 0:
-                return (0, 0)   # 未选中时默认从第一张开始导航
-            return (0, 0) if i == 0 else ((i - 1) // 2 + 1, (i - 1) % 2)
+                return (0, 0)
+            if i == 0:
+                return (0, 0)
+            if 1 <= i <= 6:   # B 区
+                b = i - 1
+                return (b // 2 + 1, b % 2)
+            if i == 7:        # C 区
+                return (4, 0)
+            if 8 <= i <= 13:  # D 区 2×3
+                d = i - 8
+                return (d // 2 + 5, d % 2)
+            return (7, 0)
 
         def rc_to_idx(r: int, c: int) -> int:
             if r == 0:
                 return 0
-            i = (r - 1) * 2 + 1 + c
-            return min(i, 8)  # clamp 至最后一张
+            if 1 <= r <= 3:   # B 区
+                base_b = (r - 1) * 2
+                return min(1 + base_b + c, 13)
+            if r == 4:        # C 区只有 col 0
+                return 7
+            if 5 <= r <= 7:   # D 区
+                base_d = (r - 5) * 2
+                return min(8 + base_d + c, 13)
+            return 13
 
         row, col = idx_to_rc(self.selected_tool_idx)
 
@@ -921,12 +843,14 @@ class GuiLauncherApp:
             if row > 0:
                 row -= 1
                 col = 0 if row == 0 else col
+                if row == 4 and col >= 1:  # C 区只有 col 0
+                    col = 0
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
             return
 
         if raw_key in (2621440, 65364, 40):    # 下
-            if row < 4:
+            if row < 7:
                 row += 1
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
@@ -941,7 +865,8 @@ class GuiLauncherApp:
 
         if raw_key in (2555904, 65363, 39):    # 右
             if row > 0 and col < 1:
-                col = 1
+                if row != 4:  # C 区只有 col 0
+                    col = 1
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
             return
@@ -1010,23 +935,29 @@ class GuiLauncherApp:
 
         shortcut_map = {
             '1': "scene_hub",            # A
-            '2': "tag_wizard",           # B
-            '3': "tag_studio",           # B
-            '4': "tag_offline_verifier", # B
-            '5': "tag_ar_verifier",      # B
-            '6': "d435_live",            # C
-            '7': "sim_sandbox",          # C
-            '8': "asparagus_live",       # D
-            '9': "sys_diagnose_tests",   # E
+            '2': "tag_generator",        # B Step 0
+            '3': "tag_wizard",           # B Step 1
+            '4': "tag_studio",           # B Step 2
+            '5': "tag_offline_verifier", # B Step 3
+            '6': "tag_ar_verifier",      # B Step 4
+            '0': "scara_tag_tracker",    # B Step 5 追踪验证
+            '7': "d435_live",            # D 感知层
+            '8': "sim_sandbox",          # D 感知层
+            '9': "asparagus_live",       # E 生产执行
             # 直觉字母快捷键
-            's': "tag_studio",
+            'v': "scara_tag_tracker",
+            'g': "tag_generator",
             'c': "tag_wizard",
+            's': "tag_studio",
             'l': "tag_offline_verifier",
             'a': "tag_ar_verifier",
+            'h': "hand_eye_calibration",
             'd': "d435_live",
             'm': "sim_sandbox",
             'f': "asparagus_live",
             't': "sys_diagnose_tests",
+            'p': "pip_install",
+            'x': "open_cmd",
         }
 
         if key_char in shortcut_map:
@@ -1039,15 +970,14 @@ class GuiLauncherApp:
                     return
 
     def _get_card_rect(self, idx: int) -> Tuple[int, int, int, int]:
-        """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致 (真矢量缩放联动)
+        """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
-        布局参数 (五分组):
-          LH   分组标题条高度
-          CH   卡片高度
-          CW   卡片宽度
-          SX   组内列间距
-          SY   组内行间距
-          GY   组间额外间距 (= 5 × SY)
+        布局 (7行，6分组):
+          row 0   A 场景总控 (全宽, 1张)
+          rows 1-3  B Tag 标定流水线 (2×3 = 6张)
+          row 4   C 示教标定 (1张, 左列)
+          row 5   D 感知层 (1×2 = 2张)
+          row 6   E 生产执行 + F 系统运维 (1×2 = 2张)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
@@ -1063,20 +993,19 @@ class GuiLauncherApp:
         if idx == 0:          # A: 顶部全宽
             return X0, Y0 + LH, FW, CH
 
-        if 1 <= idx <= 4:     # B: 2×2
+        if 1 <= idx <= 6:     # B: 2×3 (3行)
             b = idx - 1
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        if 5 <= idx <= 6:     # C: 1行×2列
-            c = idx - 5
-            base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
-            return X0 + c * (CW + SX), base_y, CW, CH
+        if idx == 7:          # C: 示教标定 (左列)
+            base_y = Y0 + LH + CH + GY + LH + 3 * (CH + SY) + GY + LH
+            return X0, base_y, CW, CH
 
-        if 7 <= idx <= 8:     # D + E: 1行×2列
-            de = idx - 7
-            base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH + CH + GY + LH
-            return X0 + de * (CW + SX), base_y, CW, CH
+        if 8 <= idx <= 13:    # D: 生产调试 (2×3 = 6张)
+            d = idx - 8
+            base_y = Y0 + LH + CH + GY + LH + 3 * (CH + SY) + GY + LH + CH + GY + LH
+            return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
 
         return 0, 0, 0, 0
 
@@ -1226,10 +1155,10 @@ class GuiLauncherApp:
 
         HEADER_TEXT = (192, 206, 222)
         group_headers = [
-            (self._get_card_rect(0)[1] - LH, FW, "A  场景总控",                (195, 155,  45)),
-            (self._get_card_rect(1)[1] - LH, FW, "B  标定流水线",              ( 65, 175, 160)),
-            (self._get_card_rect(5)[1] - LH, FW, "C  感知层",                  ( 90, 140, 195)),
-            (self._get_card_rect(7)[1] - LH, FW, "D  生产执行  ·  E  系统运维", (140, 150, 165)),
+            (self._get_card_rect(0)[1] - LH,  FW, "A  场景总控",                        (195, 155,  45)),
+            (self._get_card_rect(1)[1] - LH,  FW, "B  Tag 标定流水线 (AprilTag)",        ( 65, 175, 160)),
+            (self._get_card_rect(7)[1] - LH,  CW, "C  示教标定 (接触式 · SVD)",          (220, 145,  60)),
+            (self._get_card_rect(8)[1] - LH,  FW, "D  生产调试 (感知/仿真/抓取/诊断)",   ( 90, 140, 195)),
         ]
         for hy, hw, label, accent in group_headers:
             cv2.rectangle(canvas, (X0, hy), (X0 + hw, hy + LH - max(1, int(2 * s))), (18, 22, 30), -1)
@@ -1532,7 +1461,7 @@ class GuiLauncherApp:
 
         if curr_y < avail_bottom_y - max(20, int(30 * s)):
             tip_w = pw - max(16, int(32 * s))
-            guide_text = "操作小贴士: 鼠标悬停左侧任意卡片即可即时查阅该模块的工程定位与执行逻辑；按键盘 [1~9] 或双击卡片直接拉起对应工具；按 [Ctrl+滚轮] 或 [Ctrl +/-] 可任意缩放控制中心画面。"
+            guide_text = "操作小贴士: 鼠标悬停左侧任意卡片即可即时查阅该模块的工程定位与执行逻辑；按键盘 [1~0] 或双击卡片直接拉起对应工具；按 [Ctrl+滚轮] 或 [Ctrl +/-] 可任意缩放控制中心画面。"
             tip_font_size = max(9, int(12 * s))
             tip_lines = wrap_text_by_width(guide_text, tip_font_size, tip_w - max(16, int(24 * s)))
             line_h = tip_font_size + max(2, int(4 * s))
@@ -1549,7 +1478,7 @@ class GuiLauncherApp:
         cv2.rectangle(canvas, (px + max(8, int(16 * s)), btn_y), (px + pw - max(8, int(16 * s)), btn_y + btn_h), (20, 26, 34), -1)
         cv2.rectangle(canvas, (px + max(8, int(16 * s)), btn_y), (px + pw - max(8, int(16 * s)), btn_y + btn_h), (38, 52, 68), 1)
         cv2.circle(canvas, (px + max(20, int(32 * s)), btn_y + btn_h // 2), max(2, int(4 * s)), (0, 210, 160), -1)
-        bottom_hint = "工业控制中心系统总线已就绪 · 点击左侧卡片或按键 [1~9] 启动工具"
+        bottom_hint = "工业控制中心系统总线已就绪 · 点击左侧卡片或按键 [1~0] 启动工具"
         draw_text(canvas, bottom_hint, (px + max(30, int(46 * s)), btn_y + max(6, int(10 * s))),
                   font_size=max(9, int(12 * s)), color=(170, 190, 210))
 
@@ -1568,7 +1497,7 @@ class GuiLauncherApp:
             draw_text(canvas, f"[系统提示] {self.toast_msg}", (max(10, int(20 * s)), fy + max(8, int(14 * s))),
                       font_size=max(10, int(14 * s)), color=(0, 220, 180), bold=True)
         else:
-            hint_txt = f"[1~9] 快速启动  [↑/↓/←/→] 浏览  [Ctrl +/- 或 滚轮] 放大镜({self.scale_pct}%)  [Ctrl+0] 复位  [⏎] 启动  [ESC] 退出"
+            hint_txt = f"[1~0] 快速启动  [↑/↓/←/→] 浏览  [Ctrl +/- 或 滚轮] 放大镜({self.scale_pct}%)  [Ctrl+0] 复位  [⏎] 启动  [ESC] 退出"
             draw_text(canvas, hint_txt, (max(10, int(20 * s)), fy + max(10, int(16 * s))),
                       font_size=f_size, color=(160, 175, 190))
 
