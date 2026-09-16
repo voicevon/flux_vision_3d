@@ -101,7 +101,6 @@ class TagManifestReviewer:
         self.target_hit_frames = []
         self.focus_mode = False
         self.focus_idx = 0
-        self.trigger_verify_and_ba = False
 
         if self.focus_tag_id is not None:
             for k in self.image_keys:
@@ -221,11 +220,10 @@ class TagManifestReviewer:
         self.render_current_frame()
 
     def save_and_verify(self):
-        """保存修改并触发 Verifier 自动 BA 平差与在线验证"""
+        """保存修改并退出审核画板 (BA 求解交由 Offline Studio 统一执行)"""
         self.save_changes()
-        self.trigger_verify_and_ba = True
         self.is_running = False
-        print(f"[HANDSHAKE] 审核画板已保存修改，即将激活验证器并自动触发 BA 求解...")
+        print(f"[SAVED] 审核画板已保存修改并退出，可在 Offline Studio 中一键求解 BA 平差。")
 
     def sync_with_disk(self, auto_save: bool = True) -> int:
         """
@@ -550,7 +548,7 @@ class TagManifestReviewer:
             ("TOGGLE_KEEP", "[-] 剔除该标靶 (设为无效)" if is_kept else "[+] 恢复该标靶 (设为有效)", (0, 80, 255) if is_kept else (0, 220, 100)),
             ("FOCUS_TAG", f"[>] 靶向排查 Tag #{tid} (跳跃浏览命中帧)", (255, 120, 240)),
             ("REFINE_TAG", f"[*] 局部重新计算/精修角点 (Refine)", (0, 230, 255)),
-            ("SAVE_AND_BA", "[>] 完成审核并立即平差验证", (50, 200, 255)),
+            ("SAVE_AND_BA", "[>] 完成审核并保存退出", (50, 200, 255)),
             ("CLOSE", "[x] 取消 / 关闭菜单", (180, 180, 180))
         ]
 

@@ -537,26 +537,6 @@ class SceneHubApp:
                "--map", sc.map_path]
         self._run_subtool(cmd, "Offline Studio 深度平差工作站")
 
-    def _launch_ar_verifier(self):
-        """启动在线 AR 精度体验与 3D 虚实融合系统"""
-        sc = self.state.get_selected_scene()
-        map_p = sc.map_path if sc and os.path.exists(sc.map_path) else "config/tags_map.yaml"
-        cmd = [sys.executable, "tools/calibration/tag_calibration_verifier.py",
-               "--map", map_p]
-        if self.force_mock:
-            cmd.append("--mock")
-        self._run_subtool(cmd, "在线 AR 综合验证系统")
-
-    def _launch_offline_verifier(self):
-        """启动离线留一交叉验证 (LOO) 盲测工作台"""
-        sc = self.state.get_selected_scene()
-        if not sc:
-            return
-        cmd = [sys.executable, "tools/calibration/tag_offline_verifier.py",
-               "--map", sc.map_path,
-               "--image_dir", sc.raw_images_dir]
-        self._run_subtool(cmd, "离线精度体检与留一盲测工作台")
-
     def _launch_image_diagnostics(self):
         """启动标靶单帧漏检病因深度切片与梯度诊断"""
         cmd = [sys.executable, "tools/calibration/diagnose_tag_frame.py"]

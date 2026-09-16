@@ -84,7 +84,7 @@ def print_calibration_banner(status):
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
     print(f"{C_CYAN}{C_BOLD}       【手眼标定与 AprilTag 空间建图专区】(Calibration & Tag Mapping)         {C_RESET}")
     print(f"{C_CYAN}{C_BOLD}==============================================================================={C_RESET}")
-    print(f" 标准流水线: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图向导]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio]{C_RESET} -> {C_YELLOW}[6 在线AR验证]{C_RESET}")
+    print(f" 标准流水线: {C_YELLOW}[1 制靶]{C_RESET} -> {C_YELLOW}[2 采图向导]{C_RESET} -> {C_YELLOW}[3 超精提取]{C_RESET} -> {C_YELLOW}[S 离线Studio]{C_RESET} -> {C_YELLOW}[5 Robot在线跟踪]{C_RESET}")
 
     scene = status.get('active_scene')
     if scene:
@@ -100,17 +100,16 @@ def print_calibration_banner(status):
     print(f"   {C_GREEN}[1]{C_RESET} AprilTag 标靶图纸生成                  (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
     print("")
     print(f"{C_BOLD} [ 二、 图像采集与外部向导 (Image Acquisition) ]{C_RESET}")
-    print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍) {C_GRAY}[快捷键: C]{C_RESET}")
+    print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍)")
     print("")
     print(f"{C_BOLD} [ 三、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
     print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 自动装载当前活动场景{C_RESET}")
     print(f"       {C_GRAY}(整合样本交互审核、高精BA平差解算、热力覆盖率分析与全局体检闭环){C_RESET}")
-    print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (当前场景: 16级阈值网格+双尺度CLAHE+0.01px精修) {C_GRAY}[快捷键: 4]{C_RESET}")
-    print(f"   {C_GREEN}[4]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，命令行静默求解) {C_GRAY}[快捷键: 5/M]{C_RESET}")
-    print(f"   {C_GREEN}[5]{C_RESET} 离线标定精度体检工作台 (LOO盲测体检)   (当前场景全量留一盲测，残差矢量评估) {C_GRAY}[快捷键: 6/P]{C_RESET}")
+    print(f"   {C_GREEN}[3]{C_RESET} 离线图像诊断调优与超精重提取           (当前场景: 16级阈值网格+双尺度CLAHE+0.01px精修)")
+    print(f"   {C_GREEN}[4]{C_RESET} 纯计算空间立体建图与两阶段 BA 平差     (tag_map_builder.py，命令行静默求解)")
     print("")
-    print(f"{C_BOLD} [ 四、 在线验收与生产部署 (Online AR Verification & Deployment) ]{C_RESET}")
-    print(f"   {C_GREEN}[6]{C_RESET} 标定精度在线 AR 综合实时验证系统      (相机实时取流，3D轴/棱柱虚实融合，静态位姿锁定) {C_GRAY}[快捷键: 7]{C_RESET}")
+    print(f"{C_BOLD} [ 四、 在线跟踪与生产部署 (Online Robot Tracking & Deployment) ]{C_RESET}")
+    print(f"   {C_GREEN}[5]{C_RESET} Robot 在线跟踪                        (相机实时解算 Tag 世界坐标，机械臂联动跟踪与偏差对比)")
     print("")
     print(f"{C_BOLD} [ 五、 辅助工具与维护通道 (Auxiliary Tools & Maintenance) ]{C_RESET}")
     print(f"   {C_GREEN}[H]{C_RESET} 跳转打开工况与场景管理中枢 (Scene Hub)  (工况沙盒画廊、数据体检与生产生效)")
@@ -136,9 +135,7 @@ def print_test_banner():
     print(f"   {C_GREEN}[1]{C_RESET} 运行端到端视觉管线仿真测试             (tests/test_mock_pipeline.py)")
     print(f"   {C_GREEN}[2]{C_RESET} 运行真实快照芦笋算法测试               (tests/test_real_snapshot.py)")
     print(f"   {C_GREEN}[3]{C_RESET} 运行 AprilTag 空间建图与平差单元测试    (tests/test_tag_map_builder.py)")
-    print(f"   {C_GREEN}[4]{C_RESET} 运行 AprilTag 在线 AR 综合验证单元测试  (tests/test_tag_calibration_verifier.py)")
-    print(f"   {C_GREEN}[5]{C_RESET} 运行 AprilTag 离线精度体检单元测试      (tests/test_tag_offline_verifier.py)")
-    print(f"   {C_GREEN}[6]{C_RESET} 运行 AprilTag 场景管理与取流单元测试    (tests/test_scene_hub.py)")
+    print(f"   {C_GREEN}[4]{C_RESET} 运行 AprilTag 场景管理与取流单元测试    (tests/test_scene_hub.py)")
     print(f"   {C_GREEN}[A]{C_RESET} 一键运行全部自动化测试")
     print("")
     print(f"   {C_YELLOW}[B]{C_RESET} 返回主菜单")
@@ -304,24 +301,17 @@ def run_build_tag_map(status=None):
     pause_prompt()
 
 
-def run_tag_calibration_verifier():
-    print(f"\n{C_CYAN}[工序 7: 在线AR验证]{C_RESET} 正在启动标定精度与 3D 坐标系在线 AR 综合验证系统 (tag_calibration_verifier.py)...")
-    map_path = "config/tags_map.yaml"
-    if not os.path.exists(map_path):
-        print(f"{C_YELLOW}[提示]{C_RESET} 尚未检测到生产标靶地图文件: {map_path}！")
-        print(f"请先在场景管理器 {C_GREEN}[2]{C_RESET} 或离线工作站中将平差完毕的场景地图【[P]/[U] 一键发布至生产环境】后再运行在线 AR 验证。")
+def run_robot_online_tracker():
+    print(f"\n{C_CYAN}[工序 5: Robot 在线跟踪]{C_RESET} 正在启动 Tag 世界坐标实时解算与机械臂联动工具 (robot_online_tracker.py)...")
+    ok, _ = ensure_camera_connected()
+    if not ok:
+        print(f"{C_YELLOW}[提示]{C_RESET} 未检测到 RealSense 相机, 该工具需要真实相机取流。")
         pause_prompt()
         return
 
-    ok, mode = ensure_camera_connected()
-    cmd = [sys.executable, "tools/calibration/tag_calibration_verifier.py"]
-    if mode == "mock" or not ok:
-        print(f"{C_YELLOW}[提示]{C_RESET} 正在以 --mock 仿真模式启动 AR 综合验证...")
-        cmd.append("--mock")
-
-    res = subprocess.run(cmd)
+    res = subprocess.run([sys.executable, "tools/calibration/robot_online_tracker.py"])
     if res.returncode != 0:
-        print(f"\n{C_RED}[异常退出] 在线 AR 验证系统异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
+        print(f"\n{C_RED}[异常退出] Robot 在线跟踪异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
         pause_prompt()
 
 
@@ -496,25 +486,6 @@ def run_open_observations_manifest():
         except Exception as e:
             print(f"{C_RED}[WARN] 无法自动打开编辑器: {e}，请手动编辑该文件。{C_RESET}")
         pause_prompt()
-
-
-def run_offline_verifier(status=None):
-    """运行离线标定精度体检与 LOO 盲测批量验证"""
-    active_scene = status.get('active_scene') if status else None
-    map_path = active_scene.map_path if active_scene else os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
-    image_dir = active_scene.raw_images_dir if active_scene else os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
-    scene_name = active_scene.scene_id if active_scene else "默认场景"
-
-    if not os.path.exists(map_path) or os.path.getsize(map_path) < 50:
-        print(f"\n{C_YELLOW}[提示]{C_RESET} 尚未检测到场景 [{scene_name}] 的有效标靶地图文件: {map_path}！")
-        print(f"请先在离线 Studio {C_GREEN}[S]{C_RESET} 或工序 {C_GREEN}[5]{C_RESET} 中完成 BA 平差求解生成地图后再进行精度体检。")
-        pause_prompt()
-        return
-
-    print(f"\n{C_CYAN}[工序 6: 离线体检]{C_RESET} 正在启动场景 [{scene_name}] 的标定精度体检与 Leave-One-Out 盲测批量验证...")
-    cmd = [sys.executable, "tools/calibration/tag_offline_verifier.py", "--images", image_dir, "--map", map_path]
-    subprocess.run(cmd)
-    pause_prompt()
 
 
 def run_offline_studio(status=None):
@@ -692,22 +663,20 @@ def submenu_calibration_suite(cached_status=None):
         else:
             status = check_env_status()
         print_calibration_banner(status)
-        choice = input(f"请输入工序编号 [S, 1-6, H, W, V, D, C, 8, B]: ").strip().upper()
+        choice = input(f"请输入工序编号 [S, 1-5, H, W, V, D, C, 8, B]: ").strip().upper()
         
         if choice in ('S', 'STUDIO', 'O'):
             run_offline_studio(status)
         elif choice == '1':
             run_generate_tags()
-        elif choice in ('2', 'C', 'CAP'):
+        elif choice == '2':
             run_tag_capture_wizard(status)
-        elif choice in ('3', '4'):
+        elif choice == '3':
             run_tag_super_extractor(status)
-        elif choice in ('4', '5', 'M'):
+        elif choice == '4':
             run_build_tag_map(status)
-        elif choice in ('5', '6', 'P'):
-            run_offline_verifier(status)
-        elif choice in ('6', '7'):
-            run_tag_calibration_verifier()
+        elif choice == '5':
+            run_robot_online_tracker()
         elif choice in ('H', 'HUB', 'SCENE', '0'):
             run_scene_hub(status)
         elif choice in ('CLI', 'TXT'):
@@ -749,18 +718,6 @@ def run_test_tag_builder():
     pause_prompt()
 
 
-def run_test_tag_verifier():
-    print(f"\n{C_CYAN}[测试]{C_RESET} 正在执行 AprilTag 在线 AR 综合验证单元测试 (test_tag_calibration_verifier.py)...")
-    subprocess.run([sys.executable, "tests/test_tag_calibration_verifier.py"])
-    pause_prompt()
-
-
-def run_test_tag_offline_verifier():
-    print(f"\n{C_CYAN}[测试]{C_RESET} 正在执行 AprilTag 离线精度体检单元测试 (test_tag_offline_verifier.py)...")
-    subprocess.run([sys.executable, "tests/test_tag_offline_verifier.py"])
-    pause_prompt()
-
-
 def run_test_scene_hub():
     print(f"\n{C_CYAN}[测试]{C_RESET} 正在执行 AprilTag 场景管理与取流单元测试 (tests/test_scene_hub.py)...")
     subprocess.run([sys.executable, "-m", "unittest", "tests/test_scene_hub.py"])
@@ -775,20 +732,14 @@ def run_test_all():
     res2 = subprocess.run([sys.executable, "tests/test_real_snapshot.py"]).returncode
     print(f"\n{C_BOLD}--- 3. 运行 AprilTag 空间建图单元测试 ---{C_RESET}")
     res3 = subprocess.run([sys.executable, "tests/test_tag_map_builder.py"]).returncode
-    print(f"\n{C_BOLD}--- 4. 运行 AprilTag 在线 AR 综合验证单元测试 ---{C_RESET}")
-    res4 = subprocess.run([sys.executable, "tests/test_tag_calibration_verifier.py"]).returncode
-    print(f"\n{C_BOLD}--- 5. 运行 AprilTag 离线精度体检单元测试 ---{C_RESET}")
-    res5 = subprocess.run([sys.executable, "tests/test_tag_offline_verifier.py"]).returncode
-    print(f"\n{C_BOLD}--- 6. 运行 AprilTag 场景管理与取流单元测试 ---{C_RESET}")
-    res6 = subprocess.run([sys.executable, "-m", "unittest", "tests/test_scene_hub.py"]).returncode
+    print(f"\n{C_BOLD}--- 4. 运行 AprilTag 场景管理与取流单元测试 ---{C_RESET}")
+    res4 = subprocess.run([sys.executable, "-m", "unittest", "tests/test_scene_hub.py"]).returncode
 
     print(f"\n{C_CYAN}================ 测试汇总结果 ================{C_RESET}")
     print(f" 1. 仿真管线: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res1 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f" 2. 真实快照: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res2 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f" 3. 空间建图: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res3 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
-    print(f" 4. 综合验证: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res4 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
-    print(f" 5. 离线体检: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res5 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
-    print(f" 6. 场景管理: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res6 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
+    print(f" 4. 场景管理: {'[ ' + C_GREEN + 'PASS' + C_RESET + ' ]' if res4 == 0 else '[ ' + C_RED + 'FAIL' + C_RESET + ' ]'}")
     print(f"{C_CYAN}=============================================={C_RESET}")
     pause_prompt()
 
@@ -797,8 +748,8 @@ def submenu_test_suite():
     """二级子菜单：自动化测试与算法验证专区"""
     while True:
         print_test_banner()
-        choice = input(f"请输入测试选项 [1-6, A, B]: ").strip().upper()
-        
+        choice = input(f"请输入测试选项 [1-4, A, B]: ").strip().upper()
+
         if choice == '1':
             run_test_mock()
         elif choice == '2':
@@ -806,10 +757,6 @@ def submenu_test_suite():
         elif choice == '3':
             run_test_tag_builder()
         elif choice == '4':
-            run_test_tag_verifier()
-        elif choice == '5':
-            run_test_tag_offline_verifier()
-        elif choice == '6':
             run_test_scene_hub()
         elif choice == 'A':
             run_test_all()

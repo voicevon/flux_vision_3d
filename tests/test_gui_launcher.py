@@ -20,16 +20,15 @@ class TestGuiLauncher(unittest.TestCase):
     def test_tools_catalog_integrity(self):
         """测试工具目录数据结构完整性与快捷键不重复"""
         catalog = build_tools_catalog()
-        self.assertEqual(len(catalog), 9)
+        self.assertEqual(len(catalog), 11)
 
         seen_keys = set()
         seen_shortcuts = set()
         valid_categories = {
             "A — 场景总控",
-            "B — 标定流水线",
-            "C — 感知层",
-            "D — 生产执行",
-            "E — 系统运维"
+            "B — Tag 标定流水线",
+            "C — 示教标定 (接触式)",
+            "D — 生产调试"
         }
         for tool in catalog:
             self.assertIsInstance(tool, ToolCardMeta)
@@ -51,7 +50,7 @@ class TestGuiLauncher(unittest.TestCase):
     def test_app_initialization_and_status(self):
         """测试 Launcher 应用初始化与系统状态探针"""
         self.assertEqual(self.app.canvas_w, 1280)
-        self.assertEqual(self.app.canvas_h, 720)
+        self.assertEqual(self.app.canvas_h, 1000)
         self.assertTrue(self.app._running)
         self.assertIsNotNone(self.app.system_status)
 
@@ -59,7 +58,7 @@ class TestGuiLauncher(unittest.TestCase):
         """测试 1280x720 双缓冲画布离线渲染稳定性"""
         canvas = self.app._render_canvas()
         self.assertIsInstance(canvas, np.ndarray)
-        self.assertEqual(canvas.shape, (720, 1280, 3))
+        self.assertEqual(canvas.shape, (1000, 1280, 3))
 
     def test_hit_test_cards(self):
         """测试鼠标卡片网格碰撞检测 (基于五分组布局)"""
@@ -198,7 +197,7 @@ class TestGuiLauncher(unittest.TestCase):
                 new_app = GuiLauncherApp()
                 self.assertEqual(new_app.scale_pct, 120)
                 self.assertEqual(new_app.canvas_w, int(1280 * 1.2))
-                self.assertEqual(new_app.canvas_h, int(720 * 1.2))
+                self.assertEqual(new_app.canvas_h, int(1000 * 1.2))
 
                 # 3. 模拟拖动拉伸窗口改变分辨率，验证自动落盘
                 new_app.canvas_w = 1600
@@ -228,16 +227,16 @@ class TestGuiLauncher(unittest.TestCase):
         self.app.selected_tool_idx = -1
         self.app.hover_tool_idx = -1
         canvas = self.app._render_canvas()
-        self.assertEqual(canvas.shape, (720, 1280, 3))
+        self.assertEqual(canvas.shape, (1000, 1280, 3))
         # 验证画布非全黑
         self.assertTrue(np.any(canvas > 0))
 
     def test_inspector_panel_rendering_with_selection(self):
         """测试选中卡片时，右侧渲染对应工具的 Inspector 详尽指南与自动折行"""
-        self.app.selected_tool_idx = 2  # tag_studio
+        self.app.selected_tool_idx = 2  # tag_wizard
         self.app.hover_tool_idx = -1
         canvas = self.app._render_canvas()
-        self.assertEqual(canvas.shape, (720, 1280, 3))
+        self.assertEqual(canvas.shape, (1000, 1280, 3))
         self.assertTrue(np.any(canvas > 0))
 
     def test_suspended_modal_rendering_and_darkening(self):
@@ -252,7 +251,7 @@ class TestGuiLauncher(unittest.TestCase):
         self.app.running_tool_meta = self.app.tools[0]
         suspended_canvas = self.app._render_canvas()
 
-        self.assertEqual(suspended_canvas.shape, (720, 1280, 3))
+        self.assertEqual(suspended_canvas.shape, (1000, 1280, 3))
         # 验证暗化蒙版生效：背景区域平均亮度应显著降低（约 20%~30% 水平）
         suspended_mean = float(np.mean(suspended_canvas))
         self.assertLess(suspended_mean, normal_mean * 0.5)

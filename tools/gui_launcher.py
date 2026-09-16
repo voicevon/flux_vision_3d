@@ -157,7 +157,7 @@ class ToolCardMeta:
 
 
 def build_tools_catalog() -> List[ToolCardMeta]:
-    """构建全系统核心工具目录：12 张卡片，四大功能分组 (A场景→B Tag标定→C示教标定→D生产调试)"""
+    """构建全系统核心工具目录：11 张卡片，四大功能分组 (A场景→B Tag标定→C示教标定→D生产调试)"""
 
     COLOR_A = (195, 155, 45)   # A 场景总控  : 琥珀金 (Amber)
     COLOR_B = (65,  175, 160)  # B Tag标定   : 精密工业深青 (Teal)
@@ -189,12 +189,12 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             quick_tips="快捷键: [1] 启动 | 中枢内 [⏎] 激活 | [P] 发布生产 | [S] 进Studio",
         ),
 
-        # ===== B — Tag 标定流水线 (6张，2×3) =====
+        # ===== B — Tag 标定流水线 (4张，2×2) =====
         ToolCardMeta(
             key_id="tag_manager",
             shortcut="2",
             title="AprilTag 管理器",
-            subtitle="[G] 图纸生成 + 白名单管理 (cv2 GUI)",
+            subtitle="图纸生成 + 白名单管理 (cv2 GUI)",
             category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/calibration/tag_manager.py"],
@@ -208,14 +208,14 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["系统已安装 reportlab 库 (pip install reportlab)"],
             outputs=["data/apriltags_16h5/ (PNG+PDF) | config.yaml (valid_tag_ids)"],
-                        quick_tips="快捷键: [2] 或 [G] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF，勿选“适应页面”"
+                        quick_tips="快捷键: [2] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF，勿选“适应页面”"
         ),
 
         ToolCardMeta(
             key_id="tag_wizard",
             shortcut="3",
             title="多视角采图向导 (Wizard)",
-            subtitle="[C] 角度雷达交互指引/空格极速连拍/自动归档沙盒",
+            subtitle="角度雷达交互指引/空格极速连拍/自动归档沙盒",
             category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/calibration/tag_capture_wizard.py"],
@@ -228,14 +228,14 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense 深度相机 (或 --mock 仿真)"],
             outputs=["当前活动场景 raw_images/view_*.png 原始高质量未压缩图集"],
-            quick_tips="快捷键: [3] 或 [C] 启动 | 采图界面中 [空格] 拍摄归档 | [R] 重置批次 | [ESC] 完成返回"
+            quick_tips="快捷键: [3] 启动 | 采图界面中 [空格] 拍摄归档 | [R] 重置批次 | [ESC] 完成返回"
         ),
 
         ToolCardMeta(
             key_id="tag_studio",
             shortcut="4",
             title="离线标定工作站 (Studio)",
-            subtitle="[S] 多视角审核/两阶段 BA 平差/智能剪枝/质检闭环",
+            subtitle="多视角审核/两阶段 BA 平差/智能剪枝/质检闭环",
             category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/calibration/tag_offline_studio.py"],
@@ -250,70 +250,28 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["当前活动场景 raw_images/", "相机内参 camera_intrinsics.yaml"],
             outputs=["当前场景 tags_map.yaml", "reports/studio_qa_report_*.md 质检报告"],
-            quick_tips="快捷键: [4] 或 [S] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
+            quick_tips="快捷键: [4] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
         ),
 
         ToolCardMeta(
-            key_id="tag_offline_verifier",
+            key_id="robot_online_tracker",
             shortcut="5",
-            title="离线精度体检台 (LOO盲测)",
-            subtitle="[L] 标定后留一交叉验证/双棱柱对比/残差评级",
+            title="Robot 在线跟踪",
+            subtitle="Tag2 世界坐标实时解算/机械臂联动跟踪/相机位置校准",
             category="B — Tag 标定流水线",
             is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_offline_verifier.py"],
+            command=[sys.executable, "tools/calibration/robot_online_tracker.py"],
             tag_color=COLOR_B,
-            summary="【标定验收闭环】科学级精度评估台：执行严格的 Leave-One-Out (LOO) 盲测交叉验证与外参鲁棒性体检。",
+            summary="【在线联动校准】真实相机实时解算目标 Tag 世界坐标，机械臂三段式安全路径跟踪并对比末端偏差。",
             details=[
-                "留一交叉验证：轮流屏蔽每一张标定图像作为未知盲测帧，求解相机外参并预测未参与平差的标靶",
-                "3D 空间双棱柱虚实位姿对比：直观呈现盲测外参与全局优化外参的空间刚体位移偏差",
-                "2D 像平面残差矢量放大图：标注重投影误差方向分布，揭示畸变或单侧光照系统误差",
-                "输出严谨的工业放行评级：优秀 (A)、达标 (B) 或 需补拍 (C)"
+                "GUI 先行启动，顶部工具栏选择相机 (RealSense D435 / USB 摄像头) 与分辨率后一键开启",
+                "视野内已知标靶世界角点 PnP 解相机世界位姿，进而实时解出目标 Tag (默认 2 号) 世界坐标",
+                "按 [T] 经串口 (FR-7.1) 以\"抬起→平移→下探\"安全路径驱动末端跟踪目标 Tag",
+                "到位后 M114 回读末端实际坐标，与视觉解算坐标同屏对比偏差，用于相机位置校准"
             ],
-            inputs=["当前活动场景样本图集", "当前场景 tags_map.yaml"],
-            outputs=["data/tag_calibration_verification/ 诊断报告与残差矢量可视化图"],
-            quick_tips="快捷键: [5] 或 [L] 启动 | 体检界面中 [N/P] 切换盲测帧 | [R] 导出评估报告 | [ESC] 退出"
-        ),
-
-        ToolCardMeta(
-            key_id="tag_ar_verifier",
-            shortcut="6",
-            title="在线 AR 虚实融合验收系统",
-            subtitle="[A] 3D轴网虚实融合/时域外参滤波锁定/现场验收",
-            category="B — Tag 标定流水线",
-            is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_calibration_verifier.py"],
-            tag_color=COLOR_B,
-            summary="【车间透视验收】通过虚实融合 AR 盲测直接肉眼检验平差地图的物理精确度。",
-            details=[
-                "高帧率实时取流，在检测到的 AprilTag 空间位置上虚实融合叠加 3D 彩色坐标轴",
-                "在已知标靶基准上虚实融合渲染 3D 虚拟彩色立方体/四棱柱",
-                "多帧时域外参滤波锁定：支持按 [L] 键采集 30 帧静止标靶，输出毫米级空间位姿方差",
-                "直观检验空间尺度是否严丝合缝，确认是否存在扭曲、漂移或尺度缩放偏差"
-            ],
-            inputs=["RealSense 深度相机", "当前生产 tags_map.yaml 或场景地图"],
-            outputs=["屏幕实时 AR 渲染显示、时域位姿锁定精度统计"],
-            quick_tips="快捷键: [6] 或 [A] 启动 | AR界面中 [L] 启动时域锁定 | [M] 切换模型 | [ESC] 退出"
-        ),
-
-        ToolCardMeta(
-            key_id="robot_tag_tracker",
-            shortcut="7",
-            title="机械臂追踪验证 (Tag ID=2)",
-            subtitle="[V] 机械臂实时追踪运动标靶/方向跟随/验收",
-            category="B — Tag 标定流水线",
-            is_gui=True,
-            command=[sys.executable, "tools/calibration/robot_tag_tracker.py"],
-            tag_color=COLOR_B,
-            summary="【Tag 标定 Step 5 追踪验证】Tag 标定闭环验收：机械臂实时追踪传送带上 Tag ID=2 假芦笋，验证标定精度与方向跟随一致性。",
-            details=[
-                "高帧率取流，持续检测 Tag ID=2 的 16h5 标靶（假芦笋载体）",
-                "跟踪标靶 (X, Y, θ) 位姿，机械臂同步执行追踪运动指令",
-                "实时比较视觉解算位姿 ↔ 机械臂编码器反馈，输出毫米级追踪误差",
-                "验证 T_cam_to_robot 正确性，确保方向跟随无镜像/翻转偏差"
-            ],
-            inputs=["RealSense 深度相机 + 生产 tags_map.yaml + 机械臂串口 (COM3)"],
-            outputs=["追踪误差实时显示、机械臂运动日志、验收判定"],
-            quick_tips="快捷键: [7] 或 [V] 启动 | 传送带上放置 Tag ID=2 | [Q] 退出"
+            inputs=["RealSense D435 或 USB 摄像头", "当前场景世界坐标地图 tags_map.yaml", "机械臂串口 COM3 (config.yaml robot)"],
+            outputs=["屏幕实时世界坐标显示、机械臂末端到位偏差统计"],
+            quick_tips="快捷键: [5] 启动 | 界面内 [C] 连接机械臂 | [T] 触发跟踪 | [X] 退出"
         ),
 
         # ===== C — 示教标定 (1张，与 Tag 标定并列的独立路线) =====
@@ -341,9 +299,9 @@ def build_tools_catalog() -> List[ToolCardMeta]:
         # ===== D — 生产调试 =====
         ToolCardMeta(
             key_id="d435_live",
-            shortcut="8",
+            shortcut="6",
             title="RealSense 深度相机诊断",
-            subtitle="[D] 硬件检测/深度探针/顶部按钮栏",
+            subtitle="硬件检测/深度探针/顶部按钮栏",
             category="D — 生产调试",
             is_gui=True,
             command=[sys.executable, "tools/d435_viewer.py"],
@@ -358,15 +316,15 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["Intel RealSense D435 深度相机"],
             outputs=["控制台诊断信息 / data/snapshots/ 快照"],
-            quick_tips="快捷键: [8] 或 [D] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
+            quick_tips="快捷键: [6] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
         ),
 
         # ===== D — 生产调试 (续，芦笋抓取) =====
         ToolCardMeta(
             key_id="asparagus_live",
-            shortcut="0",
+            shortcut="7",
             title="芦笋抓取位姿解算 (实时生产)",
-            subtitle="[F] 硬件相机抓拍解算顶层芦笋/输出 G-code",
+            subtitle="硬件相机抓拍解算顶层芦笋/输出 G-code",
             category="D — 生产调试",
             is_gui=False,
             command=[sys.executable, "tools/find_top_asparagus.py"],
@@ -380,13 +338,13 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense 硬件相机", "config/camera_intrinsics.yaml", "config/tags_map.yaml"],
             outputs=["终端打印机械臂 G-code 指令、JSON 抓取坐标与调试渲染图"],
-            quick_tips="快捷键: [0] 或 [F] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
+            quick_tips="快捷键: [7] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
         ),
 
         # ===== D — 生产调试 (续，系统诊断) =====
         ToolCardMeta(
             key_id="sys_diagnose_tests",
-            shortcut="-",
+            shortcut="T",
             title="系统环境深度诊断与测试套件",
             subtitle="[T] 驱动与依赖诊断 / 85+ 项自动化 CI/CD 全量测试",
             category="D — 生产调试",
@@ -763,7 +721,7 @@ class GuiLauncherApp:
                 self._launch_tool(self.tools[card_idx])
 
     def _handle_keyboard(self, raw_key: int):
-        """键盘快捷键响应 (6分组: row0 A全宽, row1-3 B 2×3, row4 C 1张, row5 D 2张, row6 E+F 2张)"""
+        """键盘快捷键响应 (4分组: row0 A全宽, row1-2 B 2×2, row3 C 1张, row4-6 D 2×3)"""
         if self.is_subtool_running:
             return  # 子应用运行期间，主视窗处于安全挂起待命态，屏蔽一切按键操作
 
@@ -779,36 +737,34 @@ class GuiLauncherApp:
 
         # 方向键：将卡片索引映射到 (row, col) 坐标后导航
         # row 0: idx 0 (A)
-        # row 1-3: idx 1-6 (B 2×3)
-        # row 4: idx 7 (C, 只有 col 0)
-        # row 5-7: idx 8-13 (D 2×3, 全部两列)
+        # row 1-2: idx 1-4 (B 2×2)
+        # row 3: idx 5 (C, 只有 col 0)
+        # row 4-6: idx 6-10 (D 2×3)
         def idx_to_rc(i: int) -> Tuple[int, int]:
-            if i < 0:
+            if i <= 0:
                 return (0, 0)
-            if i == 0:
-                return (0, 0)
-            if 1 <= i <= 6:   # B 区
+            if 1 <= i <= 4:   # B 区
                 b = i - 1
                 return (b // 2 + 1, b % 2)
-            if i == 7:        # C 区
-                return (4, 0)
-            if 8 <= i <= 13:  # D 区 2×3
-                d = i - 8
-                return (d // 2 + 5, d % 2)
-            return (7, 0)
+            if i == 5:        # C 区
+                return (3, 0)
+            if 6 <= i <= 10:  # D 区 2×3
+                d = i - 6
+                return (d // 2 + 4, d % 2)
+            return (6, 0)
 
         def rc_to_idx(r: int, c: int) -> int:
             if r == 0:
                 return 0
-            if 1 <= r <= 3:   # B 区
+            if 1 <= r <= 2:   # B 区
                 base_b = (r - 1) * 2
-                return min(1 + base_b + c, 13)
-            if r == 4:        # C 区只有 col 0
-                return 7
-            if 5 <= r <= 7:   # D 区
-                base_d = (r - 5) * 2
-                return min(8 + base_d + c, 13)
-            return 13
+                return min(1 + base_b + c, 10)
+            if r == 3:        # C 区只有 col 0
+                return 5
+            if 4 <= r <= 6:   # D 区
+                base_d = (r - 4) * 2
+                return min(6 + base_d + c, 10)
+            return 10
 
         row, col = idx_to_rc(self.selected_tool_idx)
 
@@ -816,14 +772,14 @@ class GuiLauncherApp:
             if row > 0:
                 row -= 1
                 col = 0 if row == 0 else col
-                if row == 4 and col >= 1:  # C 区只有 col 0
+                if row == 3 and col >= 1:  # C 区只有 col 0
                     col = 0
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
             return
 
         if raw_key in (2621440, 65364, 40):    # 下
-            if row < 7:
+            if row < 6:
                 row += 1
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
@@ -838,7 +794,7 @@ class GuiLauncherApp:
 
         if raw_key in (2555904, 65363, 39):    # 右
             if row > 0 and col < 1:
-                if row != 4:  # C 区只有 col 0
+                if row != 3:  # C 区只有 col 0
                     col = 1
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
@@ -908,26 +864,14 @@ class GuiLauncherApp:
 
         shortcut_map = {
             '1': "scene_hub",            # A
-            '2': "tag_generator",        # B Step 0
-            '3': "tag_wizard",           # B Step 1
-            '4': "tag_studio",           # B Step 2
-            '5': "tag_offline_verifier", # B Step 3
-            '6': "tag_ar_verifier",      # B Step 4
-            '7': "robot_tag_tracker",    # B Step 5 追踪验证
-            '8': "d435_live",            # D 感知层
-            '9': "sim_sandbox",          # D 感知层
-            '0': "asparagus_live",       # E 生产执行
-            # 直觉字母快捷键
-            'v': "robot_tag_tracker",
-            'g': "tag_generator",
-            'c': "tag_wizard",
-            's': "tag_studio",
-            'l': "tag_offline_verifier",
-            'a': "tag_ar_verifier",
+            '2': "tag_generator",        # B
+            '3': "tag_wizard",           # B
+            '4': "tag_studio",           # B
+            '5': "robot_online_tracker", # B Robot 在线跟踪
+            '6': "d435_live",            # D
+            '7': "asparagus_live",       # D
+            # 单字母快捷键 (无数字键卡片)
             'h': "hand_eye_calibration",
-            'd': "d435_live",
-            'm': "sim_sandbox",
-            'f': "asparagus_live",
             't': "sys_diagnose_tests",
             'p': "pip_install",
             'x': "open_cmd",
@@ -945,12 +889,11 @@ class GuiLauncherApp:
     def _get_card_rect(self, idx: int) -> Tuple[int, int, int, int]:
         """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
-        布局 (7行，6分组):
+        布局 (5行，4分组):
           row 0   A 场景总控 (全宽, 1张)
-          rows 1-3  B Tag 标定流水线 (2×3 = 6张)
-          row 4   C 示教标定 (1张, 左列)
-          row 5   D 感知层 (1×2 = 2张)
-          row 6   E 生产执行 + F 系统运维 (1×2 = 2张)
+          rows 1-2  B Tag 标定流水线 (2×2 = 4张)
+          row 3   C 示教标定 (1张, 左列)
+          rows 4-6  D 生产调试 (2×3 = 5张)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
@@ -966,18 +909,18 @@ class GuiLauncherApp:
         if idx == 0:          # A: 顶部全宽
             return X0, Y0 + LH, FW, CH
 
-        if 1 <= idx <= 6:     # B: 2×3 (3行)
+        if 1 <= idx <= 4:     # B: 2×2 (2行)
             b = idx - 1
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        if idx == 7:          # C: 示教标定 (左列)
-            base_y = Y0 + LH + CH + GY + LH + 3 * (CH + SY) + GY + LH
+        if idx == 5:          # C: 示教标定 (左列)
+            base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
             return X0, base_y, CW, CH
 
-        if 8 <= idx <= 13:    # D: 生产调试 (2×3 = 6张)
-            d = idx - 8
-            base_y = Y0 + LH + CH + GY + LH + 3 * (CH + SY) + GY + LH + CH + GY + LH
+        if 6 <= idx <= 10:    # D: 生产调试 (2×3 = 5张)
+            d = idx - 6
+            base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH + CH + GY + LH
             return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
 
         return 0, 0, 0, 0
@@ -1130,8 +1073,8 @@ class GuiLauncherApp:
         group_headers = [
             (self._get_card_rect(0)[1] - LH,  FW, "A  场景总控",                        (195, 155,  45)),
             (self._get_card_rect(1)[1] - LH,  FW, "B  Tag 标定流水线 (AprilTag)",        ( 65, 175, 160)),
-            (self._get_card_rect(7)[1] - LH,  CW, "C  示教标定 (接触式 · SVD)",          (220, 145,  60)),
-            (self._get_card_rect(8)[1] - LH,  FW, "D  生产调试 (感知/仿真/抓取/诊断)",   ( 90, 140, 195)),
+            (self._get_card_rect(5)[1] - LH,  CW, "C  示教标定 (接触式 · SVD)",          (220, 145,  60)),
+            (self._get_card_rect(6)[1] - LH,  FW, "D  生产调试 (感知/抓取/诊断)",        ( 90, 140, 195)),
         ]
         for hy, hw, label, accent in group_headers:
             cv2.rectangle(canvas, (X0, hy), (X0 + hw, hy + LH - max(1, int(2 * s))), (18, 22, 30), -1)

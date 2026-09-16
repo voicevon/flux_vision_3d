@@ -10,7 +10,7 @@
 
 系统通过顶置 3D 深度相机（Intel RealSense D435）实时感知流水线物料分布，完成传送带纠偏、暗缝分割、高度分层与主轴拟合，解算最顶层芦笋的空间抓取位姿 $(X, Y, Z, R)$，生成标准 G-code 驱动下游 **SCARA 机械臂（flux_loader_mks_v16）** 实现高动态无碰撞分拣抓取，并通过 BLE 蓝牙低功耗通信向 **分发翻转机构（flux_dealer）** 写入多级品质分拣槽位。
 
-同时，系统内置完整的**工业级全生命周期 AprilTag 空间建图与手眼标定工具链**，涵盖 **工况与场景管理中枢 (Scene Hub)**、**离线标定综合工作站 (Offline Studio)**、**离线精度体检台 (Offline Verifier)** 与 **在线 AR 虚实融合验收系统**，提供“草稿沙盒隔离 $\rightarrow$ 活动场景验证 $\rightarrow$ 生产原子生效”的严格工业闭环。
+同时，系统内置完整的**工业级全生命周期 AprilTag 空间建图与手眼标定工具链**，涵盖 **工况与场景管理中枢 (Scene Hub)**、**离线标定综合工作站 (Offline Studio)** 与 **Robot 在线跟踪**，提供“草稿沙盒隔离 $\rightarrow$ 活动场景验证 $\rightarrow$ 生产原子生效”的严格工业闭环。
 
 ---
 
@@ -26,7 +26,6 @@
   - [标定工序流水线与工作台划分](#标定工序流水线与工作台划分)
   - [工况与场景管理中枢 (Scene Hub) 机制与三模态视图](#工况与场景管理中枢-scene-hub-机制与三模态视图)
   - [离线标定工作站 (Offline Studio)](#离线标定工作站-offline-studio)
-  - [离线精度体检台 (Offline Verifier)](#离线精度体检台-offline-verifier)
 - [视觉算法管线详解](#视觉算法管线详解)
 - [项目结构与模块划分](#项目结构与模块划分)
 - [自动化测试与质量保障](#自动化测试与质量保障)
@@ -167,7 +166,7 @@ python tools/cli_menu.py
 在控制终端主菜单选择 **`[2]`** 可直接拉起 **工况与场景管理中枢 (Scene Hub)**，或按 **`[H]`** 进入 **手眼标定与 AprilTag 空间建图专区**：
 
 ```text
-标准流水线: [1 制靶] -> [2 采图向导] -> [3 超精提取] -> [S 离线Studio] -> [6 在线AR验证]
+标准流水线: [1 制靶] -> [2 采图向导] -> [3 超精提取] -> [S 离线Studio] -> [5 Robot在线跟踪]
 快捷入口:   [H] / 顶级主菜单 [2] 随时呼出「工况与场景管理中枢 (Scene Hub)」管理多工况沙盒
 ```
 
@@ -177,8 +176,8 @@ flowchart TD
     S2["<b>工序 2: 场景管理 (Scene Hub)</b><br>新建工况沙盒 / 选定当前活动场景<br><i>(python -m tools.scene_hub)</i>"]
     S3["<b>工序 3: 图像采集</b><br>多视角连拍或原地交互抓拍<br><i>(tag_capture_wizard.py)</i>"]
     S4["<b>工序 4: 离线超精重提取</b><br>16级网格 + 双尺度 CLAHE + 亚像素精修<br><i>(tag_super_extractor.py)</i>"]
-    S5["<b>工序 5: 离线平差与体检 (Studio)</b><br>交互审核 + 两阶段 BA 平差 + LOO 盲测<br><i>(tag_offline_studio.py)</i>"]
-    S6["<b>工序 6: 生效与在线验收</b><br>一键原子发布到生产 + 在线 AR 验证<br><i>(tag_calibration_verifier.py)</i>"]
+    S5["<b>工序 5: 离线平差与体检 (Studio)</b><br>交互审核 + 两阶段 BA 平差<br><i>(tag_offline_studio.py)</i>"]
+    S6["<b>工序 6: 生效与在线跟踪</b><br>一键原子发布到生产 + Robot 在线跟踪<br><i>(robot_online_tracker.py)</i>"]
 
     S1 --> S2 --> S3 --> S4 --> S5 --> S6
 ```
@@ -189,10 +188,9 @@ flowchart TD
 | **顶级 `[2]` / `[H]`** | **工况与场景管理中枢 (Scene Hub)**<br>`tools/scene_hub/` | **1280x720 场景与数据总控台**：场景工作空间/数据容器管理、健康体检大屏、相册大图巡检；直接执行 `python -m tools.scene_hub` 即可启动 |
 | **`[2]`** | **多视角交互采图向导**<br>`tag_capture_wizard.py` | 专职采图工具：交互式指导相机移动至不同高度与俯仰角，按空格连拍，样本自动存入当前场景沙盒 |
 | **`[S]`** | **离线标定工作站 (Studio)**<br>`tag_offline_studio.py` | **一站式离线解算工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
-| **`[4]`** | **超精重提取引擎**<br>`tag_super_extractor.py` | 16 级阈值网格 + 自适应双尺度 CLAHE + 亚像素级角点精修，极限召回暗光/反光/弱对比度标靶 |
-| **`[5]`** | **静默空间建图求解**<br>`tag_map_builder.py` | 纯计算命令行求解器：图论连通性建模 $\rightarrow$ 两阶段 BA（Cauchy 鲁棒核 + MAD 粗差清洗） |
-| **`[6]`** | **离线精度体检台**<br>`tag_offline_verifier.py` | 全量留一盲测（LOO）、3D 双四棱柱空间虚实位姿对比、2D 残差矢量放大图与质量放行评估 |
-| **`[6]`** | **在线 AR 综合验收系统**<br>`tag_calibration_verifier.py` | 相机实时取流，叠加 3D 轴网与虚拟立方体进行虚实融合 AR 盲测，支持多帧时域外参滤波锁定 |
+| **`[3]`** | **超精重提取引擎**<br>`tag_super_extractor.py` | 16 级阈值网格 + 自适应双尺度 CLAHE + 亚像素级角点精修，极限召回暗光/反光/弱对比度标靶 |
+| **`[4]`** | **静默空间建图求解**<br>`tag_map_builder.py` | 纯计算命令行求解器：图论连通性建模 $\rightarrow$ 两阶段 BA（Cauchy 鲁棒核 + MAD 粗差清洗） |
+| **`[5]`** | **Robot 在线跟踪**<br>`robot_online_tracker.py` | 真实相机实时解算目标 Tag 世界坐标 (世界系=机械臂坐标系)，机械臂"抬起→平移→下探"安全路径联动跟踪，到位后 M114 回读对比偏差用于相机位置校准 |
 | **`[W]`** | **标靶 ID 白名单管理** | 联动 `config.yaml` 管理有效 Tag ID 列表，一键探索放行未知标靶或剔除异常 ID |
 | **`[D]`** | **标靶漏检病因切片诊断**<br>`diagnose_tag_frame.py` | 深入分析真图候选四边形轮廓，深度诊断因反光、对比度过低、畸变造成的漏检原因 |
 | **`[8]`** | **接触式物理手眼标定 (备用)**<br>`hand_eye_calibration.py` | SCARA 机械臂末端接触 4 点 SVD 刚体配准，在无 Tag 极端工况下提供手眼标定兜底保障 |
@@ -258,16 +256,6 @@ flowchart TD
 
 ---
 
-### 离线精度体检台 (Offline Verifier)
-
-体检台 (`tools/calibration/tag_offline_verifier.py`) 为空间建图质量提供严格的**工业放行把关**：
-
-- **留一法盲测 (Leave-One-Out, LOO)**：每次扣留目标标靶，利用其余标靶解算相机位姿并反推目标标靶空间坐标，计算独立残差；
-- **3D 双四棱柱虚实位姿对比**：绿色四棱柱代表建图真值位姿，黄色四棱柱代表单帧重投影预测位姿，位姿偏差肉眼清晰可辨；
-- **2D 残差矢量放大**：以矢量箭头形式十倍放大角点预测重投影与像素实测位置的偏移量，精准暴露镜头畸变或标靶翘曲。
-
----
-
 ## 视觉算法管线详解
 
 针对传送带上多层交错堆叠的绿芦笋，视觉处理核心引擎 (`src/vision/asparagus_analyzer.py`) 运行 9 步高抗噪感知管线：
@@ -318,7 +306,7 @@ flux_vision_3d/
 │   │   ├── ba_optimizer.py        #      两阶段 BA 平差优化器 (Cauchy核 + 尺度基线对齐)
 │   │   ├── covisibility_graph.py  #      多视角标靶共视网络图论建模与割点分析
 │   │   ├── manifest_repository.py #      标定清单与观测数据持久化仓储
-│   │   ├── offline_engine.py      #      离线纯几何计算引擎 (PnP / IPPE / LOO 循环)
+│   │   ├── offline_engine.py      #      离线纯几何计算引擎 (PnP / IPPE / 正深度校验)
 │   │   ├── verification_reporter.py #    Per-Tag/Per-Frame 稳健统计与体检报告器
 │   │   ├── verification_visualizer.py #  3D 双四棱柱位姿对比与 2D 残差矢量渲染管线
 │   │   └── camera_streamer.py     #      跨设备高帧率相机取流与连拍适配器
@@ -346,11 +334,10 @@ flux_vision_3d/
 │   └── calibration/               # 🎯 标定与平差全套工具链
 │       ├── studio/                #    Offline Studio 工作站组件 (BA Runner, Viewport)
 │       ├── tag_offline_studio.py  #    【工序S】AprilTag 离线标定综合工作站
-│       ├── tag_capture_wizard.py  #    【工序3】多视角交互采图向导
-│       ├── tag_super_extractor.py #    【工序4】离线超精重提取引擎 (16级网格+CLAHE)
-│       ├── tag_map_builder.py     #    【工序5】空间立体建图与两阶段 BA 平差求解
-│       ├── tag_offline_verifier.py#    【工序6】离线精度体检工作台 (LOO盲测与双棱柱)
-│       ├── tag_calibration_verifier.py #【工序7】现场 AR 虚实融合在线验收系统
+│       ├── tag_capture_wizard.py  #    【工序2】多视角交互采图向导
+│       ├── tag_super_extractor.py #    【工序3】离线超精重提取引擎 (16级网格+CLAHE)
+│       ├── tag_map_builder.py     #    【工序4】空间立体建图与两阶段 BA 平差求解
+│       ├── robot_online_tracker.py #   【工序5】Robot 在线跟踪 (Tag 世界坐标解算+机械臂联动)
 │       ├── generate_apriltags.py  #    【工序1】标靶矢量生成与 A4 排版 PDF
 │       ├── diagnose_tag_frame.py  #    辅助诊断: 单帧漏检病因切片深度诊断
 │       └── hand_eye_calibration.py#    备用通道: SCARA 经典接触式物理标定向导
@@ -359,13 +346,11 @@ flux_vision_3d/
 │   ├── test_scene_hub.py          #    场景驾驶舱与取流测试 (14 项全绿通过)
 │   ├── test_scene_manager.py      #    场景生命周期与沙盒隔离测试
 │   ├── test_tag_offline_studio.py #    离线 Studio 交互状态与平差驱动测试
-│   ├── test_tag_offline_verifier.py #  离线精度体检引擎与盲测计算测试
 │   ├── test_real_snapshot.py      #    真实工业快照全量测试 (20 组真实工业快照 100% 通过)
 │   ├── test_mock_pipeline.py      #    仿真管线脱机回归测试
 │   ├── test_ba_optimizer.py       #    两阶段 BA 平差数学单元测试
 │   ├── test_covisibility_graph.py #    共视拓扑图论连通性单元测试
 │   ├── test_manifest_repository.py#    标定清单仓储测试
-│   ├── test_tag_calibration_verifier.py # 在线 AR 验证器测试
 │   └── test_hand_eye_calibration.py # 手眼标定刚体配准精度测试
 │
 └── data/                          # 📁 数据存储沙盒
@@ -386,7 +371,6 @@ flux_vision_3d/
 
 # 或在命令行单独执行各模块测试
 python -m unittest tests/test_scene_hub.py
-python -m unittest tests/test_tag_offline_verifier.py
 python -m unittest tests/test_real_snapshot.py
 python -m unittest tests/test_ba_optimizer.py
 ```
@@ -395,7 +379,6 @@ python -m unittest tests/test_ba_optimizer.py
 
 - **真实工业快照锁定率**：基于现场采集的 **20 组复杂堆叠快照**，顶层芦笋检测与抓取点锁定成功率达到 **100.0%**（累计 136 根次）；
 - **空间平差重投影精度**：实采图全局重投影均方根误差 (RMSE) 从初始 52.28px 经两阶段 BA 平差后稳定压降至 **< 0.8px**（标准靶场景优于 **0.035px**）；
-- **体检台盲测精度**：在全量留一盲测 (LOO) 下，中位重投影残差优于 **0.5px**，满足工业高精抓取需求；
 - **渲染响应度**：Scene Hub 经过 Patch 局部文本绘制优化后，单帧渲染耗时由 45ms 压降至 **1.2ms**，达到 60FPS 丝滑交互。
 
 ---

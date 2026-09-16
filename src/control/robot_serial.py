@@ -1,0 +1,171 @@
+# -*- coding: utf-8 -*-
+"""
+机械臂串口控制 (RobotSerial)
+============================
+MKS Base V1.6 (Marlin 2.0+) G-code 串口通信封装 (FR-7.1 / FR-12.3)：
+  - G-code 指令发送与 `ok` 应答闭环侦听
+  - M114 末端位姿回读 (X/Y/Z 解析)
+  - "抬起 -> 平移 -> 下探" 三段式安全移动路径 (M400 等待到位)
+端口、波特率与安全参数默认读取 config.yaml 的 robot: 配置节。
+"""
+
+import os
+import re
+import time
+import threading
+
+import yaml
+
+try:
+    import serial
+except ImportError:
+    serial = None
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+
+
+def load_robot_config() -> dict:
+    """读取 config.yaml 的 robot 配置节 (port / baudrate / safe_z_mm / feedrate)"""
+    cfg = {
+        "port": "COM3",
+        "baudrate": 115200,
+        "safe_z_mm": 80.0,
+        "feedrate_travel": 4000,
+        "feedrate_grip": 1500,
+    }
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        robot_cfg = data.get("robot") or {}
+        for key in cfg:
+            if robot_cfg.get(key) is not None:
+                cfg[key] = robot_cfg[key]
+    except Exception:
+        pass
+    return cfg
+
+
+class RobotSerial:
+    """机械臂串口控制器 (线程安全 / Marlin G-code 协议 / ok 应答闭环)"""
+
+    def __init__(self, port: str = "", baudrate: int = 0):
+        cfg = load_robot_config()
+        self.port = port or str(cfg["port"])
+        self.baudrate = int(baudrate) if baudrate else int(cfg["baudrate"])
+        self.safe_z_mm = float(cfg.get("safe_z_mm", 80.0))
+        self.feedrate_travel = int(cfg.get("feedrate_travel", 4000))
+        self.feedrate_grip = int(cfg.get("feedrate_grip", 1500))
+        self.ser = None
+        self._lock = threading.Lock()
+
+    @property
+    def is_connected(self) -> bool:
+        return self.ser is not None
+
+    def connect(self) -> bool:
+        """打开串口并初始化绝对坐标模式 (G21/G90)，等待控制器就绪"""
+        if serial is None:
+            raise RuntimeError("pyserial 未安装, 请执行: pip install 'pyserial>=3.5'")
+        if self.ser is not None:
+            return True
+        ser = serial.Serial(self.port, self.baudrate, timeout=2.0)
+        time.sleep(2.0)  # Marlin 上电初始化等待
+        ser.reset_input_buffer()  # 丢弃启动横幅
+        self.ser = ser
+        self.send_gcode("G21")  # 单位 mm
+        self.send_gcode("G90")  # 绝对坐标模式
+        return True
+
+    def close(self):
+        """关闭串口连接"""
+        with self._lock:
+            if self.ser is not None:
+                try:
+                    self.ser.close()
+                except Exception:
+                    pass
+                self.ser = None
+
+    def send_gcode(self, cmd: str, expect_ok: bool = True,
+                   timeout: float = 2.0, wait_done: bool = False) -> bool:
+        """
+        发送单条 G-code 并侦听 `ok` 应答闭环
+        :param timeout: ok 应答等待上限 (秒), 运动指令需覆盖运动时长
+        :param wait_done: True 时追加 M400 等待运动队列完全排空 (阻塞到位)
+        """
+        if self.ser is None:
+            return False
+        with self._lock:
+            if not self._send_locked(cmd, expect_ok, timeout):
+                return False
+            if wait_done:
+                return self._send_locked("M400", True, timeout)
+            return True
+
+    def _send_locked(self, cmd: str, expect_ok: bool, timeout: float) -> bool:
+        """串口锁内发送与应答侦听 (调用方必须已持有 _lock)"""
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.write((cmd.strip() + "\n").encode("ascii"))
+            if not expect_ok:
+                return True
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                line = self.ser.readline().decode("ascii", errors="ignore").strip()
+                if line.lower().startswith("ok"):
+                    return True
+                if line.lower().startswith("error"):
+                    print(f"[RobotSerial] 控制器报错: {line} (cmd: {cmd})")
+                    return False
+            print(f"[RobotSerial] 应答超时: {cmd}")
+            return False
+        except Exception as e:
+            print(f"[RobotSerial] 串口异常: {e}")
+            return False
+
+    def get_position(self):
+        """
+        M114 回读当前末端坐标
+        :return: (x, y, z) mm 元组, 失败返回 None
+        """
+        if self.ser is None:
+            return None
+        with self._lock:
+            try:
+                self.ser.reset_input_buffer()
+                self.ser.write(b"M114\n")
+                deadline = time.time() + 2.0
+                while time.time() < deadline:
+                    line = self.ser.readline().decode("ascii", errors="ignore").strip()
+                    m = re.search(r"X:\s*([-\d.]+)\s+Y:\s*([-\d.]+)\s+Z:\s*([-\d.]+)", line)
+                    if m:
+                        return (float(m.group(1)), float(m.group(2)), float(m.group(3)))
+                    if line.lower().startswith("ok"):
+                        break
+            except Exception as e:
+                print(f"[RobotSerial] M114 读取失败: {e}")
+        return None
+
+    def move_to(self, x: float, y: float, z: float,
+                feed: int = 0, safe_lift_mm: float = 0.0) -> bool:
+        """
+        三段式安全移动: 抬起 -> 平移 -> 下探, 每段 M400 等待到位
+        :param feed: XY 平移进给 (mm/min), 0 则用 config feedrate_travel
+        :param safe_lift_mm: 抬起相对高度 (mm), 0 则用 config safe_z_mm
+        """
+        cur = self.get_position()
+        if cur is None:
+            print("[RobotSerial] 无法读取当前位姿, 取消移动")
+            return False
+        lift = float(safe_lift_mm) if safe_lift_mm > 0 else self.safe_z_mm
+        travel_feed = int(feed) if feed > 0 else self.feedrate_travel
+        steps = [
+            (f"G1 Z{cur[2] + lift:.2f} F{self.feedrate_grip}", 60.0),   # 抬起
+            (f"G1 X{x:.2f} Y{y:.2f} F{travel_feed}", 60.0),             # 平移
+            (f"G1 Z{z:.2f} F{self.feedrate_grip}", 60.0),               # 下探
+        ]
+        for cmd, tmo in steps:
+            if not self.send_gcode(cmd, timeout=tmo, wait_done=True):
+                return False
+        return True

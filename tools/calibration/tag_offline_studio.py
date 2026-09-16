@@ -887,8 +887,8 @@ class TagOfflineStudio:
             self.set_toast(f"已一键复位所有观测有效状态 (恢复 {restored} 个标靶)")
         elif btn_id == "DIAGNOSE_FRAME":
             self.toggle_frame_diagnostics()
-        elif btn_id == "LAUNCH_AR":
-            self.launch_online_ar_verifier()
+        elif btn_id == "LAUNCH_TRACKER":
+            self.launch_robot_online_tracker()
         elif btn_id == "RUN_AUTO_PRUNE_BA":
             self.start_auto_prune_ba()
         elif btn_id == "TOGGLE_MATRIX_VIEW":
@@ -923,12 +923,12 @@ class TagOfflineStudio:
         else:
             self.set_toast("已退出病因切片诊断模式，返回常规视口")
 
-    def launch_online_ar_verifier(self):
-        """一键跨工序启动工序 7 在线 AR 姿态重投影验证器"""
-        print("\n[*] [STUDIO] 正在启动工序 7 在线 AR 验证器 (tag_calibration_verifier.py)...")
-        self.set_toast("正在启动工序 7 在线 AR 验证器...")
+    def launch_robot_online_tracker(self):
+        """一键跨工序启动 Robot 在线跟踪 (Tag 世界坐标实时解算 + 机械臂联动)"""
+        print("\n[*] [STUDIO] 正在启动 Robot 在线跟踪 (robot_online_tracker.py)...")
+        self.set_toast("正在启动 Robot 在线跟踪...")
         import subprocess
-        subprocess.Popen([sys.executable, "tools/calibration/tag_calibration_verifier.py"])
+        subprocess.Popen([sys.executable, "tools/calibration/robot_online_tracker.py"])
 
     def run(self):
         """进入 Studio 主交互渲染循环"""

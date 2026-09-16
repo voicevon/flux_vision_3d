@@ -507,7 +507,7 @@ class HubRenderer:
 
         if sc.ba_solved and sc.global_rmse_px < 0.2:
             verdict_text = "🟢 [极优放行] 该场景平差精度达标 (RMSE < 0.20px)，几何精度稳定！"
-            action_advice = "建议操作: 按 [P] 键一键生效到生产系统，或进入在线 AR [A] 实景验收。"
+            action_advice = "建议操作: 按 [P] 键一键生效到生产系统，随后用 Dashboard「Robot 在线跟踪」校准相机位置。"
             v_col = (0, 255, 160)
         elif sc.ba_solved:
             verdict_text = "🟡 [常规放行] 该场景平差已收敛，可直接投入常规抓取定位。"
@@ -843,7 +843,7 @@ class HubRenderer:
         active_points = [
             ("概念定义", "当前研发与标定聚焦的操作台沙盒 (类似 Git 本地分支)"),
             ("连拍归档", "按 [C] 进入相机连拍抓拍的照片，自动保存于此场景"),
-            ("离线平差", "启动 Studio 平差、留一盲测、诊断切片默认载入此数据"),
+            ("离线平差", "启动 Studio 平差、诊断切片默认载入此数据"),
             ("如何切换", "在场景列表中按 [Enter] 回车键或点击徽章即可随时切换"),
             ("安全边界", "完全沙盒隔离！无论如何采图平差，流水线机械臂零影响"),
         ]

@@ -1,6 +1,13 @@
 {
   "scale_pct": 110,
   "canvas_w": 1366,
-  "canvas_h": 745,
-  "updated_at": "2026-09-16 18:27:47"
+  "canvas_h": 705,
+  "updated_at": "2026-09-16 20:08:48",
+  "robot_online_tracker": {
+    "viewer_state": {
+      "camera_type": "realsense",
+      "resolution": "1920x1080"
+    },
+    "updated_at": "2026-09-16 20:09:02"
+  }
 }

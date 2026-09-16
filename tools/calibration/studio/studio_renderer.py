@@ -1063,7 +1063,7 @@ class StudioUIRenderer:
                            mouse_pos=studio.mouse_pos, btn_type=b_type)
         studio.gui_buttons.append(("TOGGLE_FRAME_STATUS", (x + 8, y + 30, x + w - 8, y + 54), bname))
 
-        # 底部动作区域基准 Y (预留 3 个紧凑按钮: 超精提取、病因诊断/常规面板、在线AR)
+        # 底部动作区域基准 Y (预留 3 个紧凑按钮: 超精提取、病因诊断/常规面板、Robot 跟踪)
         diag_y = y + h - 88
 
         # 2. 中间区域：根据 show_frame_diagnostics 模式切换
@@ -1193,10 +1193,10 @@ class StudioUIRenderer:
                            mouse_pos=studio.mouse_pos, btn_type=d_typ)
         studio.gui_buttons.append(("DIAGNOSE_FRAME", (x + 8, diag_y + 32, x + w - 8, diag_y + 56), bname))
 
-        # 按钮 3: 在线 AR 验证 (7)
-        draw_styled_button(canvas, (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "在线 AR (7)",
+        # 按钮 3: Robot 在线跟踪
+        draw_styled_button(canvas, (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "Robot 跟踪",
                            mouse_pos=studio.mouse_pos, btn_type="success")
-        studio.gui_buttons.append(("LAUNCH_AR", (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "LAUNCH_AR"))
+        studio.gui_buttons.append(("LAUNCH_TRACKER", (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "LAUNCH_TRACKER"))
 
     def render_ba_loading_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
         """居中展示异步 BA 全局平差双轨进度卡片 (大阶段主进度条 + 求解器子进度条与实时收敛指标)"""

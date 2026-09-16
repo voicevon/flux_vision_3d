@@ -375,60 +375,6 @@ def test_frame_level_toggle_and_builder_bypass():
     print("[PASS] TagMapBuilder 成功旁路整帧停用图像 (load_observations_manifest bypass)")
 
 
-def test_verifier_hud_and_hot_reload():
-    """测试 TagCalibrationVerifier 的 HUD 终端、报告解析与地图热重载"""
-    import tempfile
-    import yaml
-    from tools.calibration.tag_calibration_verifier import TagCalibrationVerifier
-
-    temp_dir = tempfile.mkdtemp()
-    map_path = os.path.join(temp_dir, "tags_map.yaml")
-    report_path = os.path.join(temp_dir, "ba_precision_diagnostic_report.md")
-
-    # 创建测试用标靶地图
-    test_map = {
-        "tags": {
-            0: {"position_mm": [0.0, 0.0, 0.0], "rotation_matrix": np.eye(3).tolist(), "marker_size_mm": 50.0},
-            1: {"position_mm": [300.0, 0.0, 0.0], "rotation_matrix": np.eye(3).tolist(), "marker_size_mm": 50.0}
-        },
-        "rmse_reprojection_px": 0.25
-    }
-    with open(map_path, "w", encoding="utf-8") as f:
-        yaml.dump(test_map, f)
-
-    # 创建测试用诊断报告
-    test_report_text = "# BA 平差精度诊断报告\n- RMSE: 0.250 px\n- 状态: 优良\n"
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(test_report_text)
-
-    verifier = TagCalibrationVerifier(map_path=map_path, report_path=report_path)
-    assert 0 in verifier.tags_map["tags"]
-    assert len(verifier.diagnostic_lines) > 0
-
-    # 1. 测试 HUD 终端展开与收起
-    assert verifier.hud_visible is False
-    verifier.toggle_hud_terminal()
-    assert verifier.hud_visible is True
-    verifier.toggle_hud_terminal()
-    assert verifier.hud_visible is False
-
-    # 2. 测试 HUD 终端在画面上的渲染
-    dummy_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-    verifier.hud_visible = True
-    rendered_frame = verifier.render_hud_terminal(dummy_frame)
-    assert rendered_frame.shape == (720, 1280, 3)
-
-    # 3. 测试地图热重载 (Hot-Reload)
-    test_map["tags"][2] = {"position_mm": [100.0, 200.0, 0.0], "rotation_matrix": np.eye(3).tolist(), "marker_size_mm": 50.0}
-    with open(map_path, "w", encoding="utf-8") as f:
-        yaml.dump(test_map, f)
-
-    success = verifier.hot_reload_map()
-    assert success is True
-    assert 2 in verifier.tags_map["tags"]
-    print("[PASS] TagCalibrationVerifier HUD 浮层控制与地图热重载测试通过")
-
-
 def test_target_focus_mode_and_handshake():
     """测试画板靶向排查模式 (命中帧子集过滤、Tab 模式切换) 与保存并验证握手机制"""
     import tempfile
@@ -484,12 +430,10 @@ def test_target_focus_mode_and_handshake():
     # 由于 frame_2 不在聚焦帧中，应安全对齐到第 0 张 (frame_1.png)
     assert reviewer.current_image_key == "frame_1.png"
 
-    # 4. 测试一键保存并验证握手 (save_and_verify)
-    assert reviewer.trigger_verify_and_ba is False
+    # 4. 测试一键保存并退出 (save_and_verify)
     reviewer.save_and_verify()
-    assert reviewer.trigger_verify_and_ba is True
     assert reviewer.is_running is False
-    print("[PASS] 靶向聚焦排查模式 (命中帧子集过滤、Tab 切换与握手触发) 测试通过")
+    print("[PASS] 靶向聚焦排查模式 (命中帧子集过滤、Tab 切换与保存退出) 测试通过")
 
 
 def test_super_extractor_precision_and_state_inheritance():
@@ -582,7 +526,6 @@ if __name__ == "__main__":
     test_manifest_workflow_and_curation()
     test_tag_manifest_reviewer_logic()
     test_frame_level_toggle_and_builder_bypass()
-    test_verifier_hud_and_hot_reload()
     test_target_focus_mode_and_handshake()
     test_super_extractor_precision_and_state_inheritance()
     print("\n>>> 所有 AprilTag 空间建图、人工审核、靶向排查与超精提取测试通过 (ALL TESTS PASSED) <<<")
