@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SCARA 机械臂追踪验证 —— Tag ID=2 动态标靶 (假芦笋) 实时追踪
+机械臂追踪验证 —— Tag ID=2 动态标靶 (假芦笋) 实时追踪
 ===========================================================
 
 核心职责：Tag 标定闭环验收工具
   1. 高帧率取 D435 相机流，持续检测 Tag ID=2 的 AprilTag 16h5 标靶（假芦笋载体）
-  2. 跟踪传送带上标靶的 (X, Y, θ) 空间位姿，SCARA 同步执行追踪运动指令
+  2. 跟踪传送带上标靶的 (X, Y, θ) 空间位姿，机械臂同步执行追踪运动指令
   3. 实时比较视觉解算位姿 ↔ 机械臂编码器反馈，输出毫米级追踪误差
-  4. 验证 T_cam_to_scara 标定矩阵正确性，确保方向跟随无镜像/翻转偏差
+  4. 验证 T_cam_to_robot 标定矩阵正确性，确保方向跟随无镜像/翻转偏差
 
 快捷键：
   [Q/ESC] 退出 | [P] 暂停/继续追踪 | [L] 采集 30 帧统计锁定精度 | [R] 重置误差统计
@@ -158,10 +158,10 @@ class AprilTagDetector:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SCARA 串口通信（骨架）
+# 机械臂串口通信（骨架）
 # ──────────────────────────────────────────────────────────────────────────────
-class ScaraController:
-    """SCARA 机械臂串口控制器（骨架实现）"""
+class RobotController:
+    """机械臂串口控制器（骨架实现）"""
 
     def __init__(self, port: str = "COM3", baudrate: int = 115200):
         self.port = port
@@ -173,9 +173,9 @@ class ScaraController:
             import serial
             self.ser = serial.Serial(port, baudrate, timeout=0.1)
             self._connected = True
-            print(f"[Tracker] SCARA 已连接 {port} @ {baudrate}")
+            print(f"[Tracker] 机械臂已连接 {port} @ {baudrate}")
         except Exception as e:
-            print(f"[Tracker] SCARA 串口不可用 ({e}) — mock 追踪模式")
+            print(f"[Tracker] 机械臂串口不可用 ({e}) — mock 追踪模式")
 
     @property
     def connected(self) -> bool:
@@ -206,10 +206,10 @@ class ScaraController:
 # ──────────────────────────────────────────────────────────────────────────────
 # 主追踪器
 # ──────────────────────────────────────────────────────────────────────────────
-class ScaraTagTracker:
-    """SCARA Tag ID=2 追踪验证主类"""
+class RobotTagTracker:
+    """机械臂 Tag ID=2 追踪验证主类"""
 
-    WINDOW_NAME = "SCARA Tag Tracker — Tag ID=2 Verification"
+    WINDOW_NAME = "Robot Tag Tracker — Tag ID=2 Verification"
 
     def __init__(self, mock: bool = False):
         self.config = load_config()
@@ -218,7 +218,7 @@ class ScaraTagTracker:
 
         self.camera = CameraStream(mock=mock)
         self.detector = AprilTagDetector()
-        self.scara = ScaraController(
+        self.robot = RobotController(
             port=self.cfg_robot.get("port", "COM3"),
             baudrate=self.cfg_robot.get("baudrate", 115200),
         )
@@ -234,9 +234,9 @@ class ScaraTagTracker:
 
     def run(self):
         print(f"\n{'='*60}")
-        print(f" SCARA Tag Tracker — Tag ID={self.tag_id}")
+        print(f" Robot Tag Tracker — Tag ID={self.tag_id}")
         print(f" Camera: {'Mock' if self.camera.mock else 'D435 物理'}")
-        print(f" SCARA:  {'已连接' if self.scara.connected else 'Mock'}")
+        print(f" Robot:  {'已连接' if self.robot.connected else 'Mock'}")
         print(f"{'='*60}")
         print("快捷键: [Q/ESC] 退出  [P] 暂停  [R] 重置误差  [L] 30帧统计")
         print("在传送带上放置 Tag ID=2 假芦笋标靶后开始追踪...\n")
@@ -255,8 +255,8 @@ class ScaraTagTracker:
                 det = self.detector.detect(gray, target_id=self.tag_id)
 
                 header_lines = [
-                    f"[SCARA Tag Tracker]  Frame {self.frame_count}  {'PAUSED' if self.paused else 'TRACKING'}",
-                    f"Tag ID={self.tag_id}  Det={'YES' if det else '---'}  SCARA={'OK' if self.scara.connected else 'MOCK'}",
+                    f"[Robot Tag Tracker]  Frame {self.frame_count}  {'PAUSED' if self.paused else 'TRACKING'}",
+                    f"Tag ID={self.tag_id}  Det={'YES' if det else '---'}  Robot={'OK' if self.robot.connected else 'MOCK'}",
                     f"Cam={'Mock' if self.camera.mock else 'D435'}  Det={self.detector.tag_center_method}",
                 ]
 
@@ -266,12 +266,12 @@ class ScaraTagTracker:
                     cv2.drawMarker(display, (int(cx), int(cy)), (0, 255, 0), cv2.MARKER_CROSS, 25, 2)
 
                     if not self.paused:
-                        # 视觉 → 机械臂运动指令（这里简化为像素级，实际需要 T_cam_to_scara）
-                        # TODO: 后续接入 config.yaml 的 T_cam_to_scara 变换矩阵
-                        self.scara.send_track_cmd(cx, cy, angle)
+                        # 视觉 → 机械臂运动指令（这里简化为像素级，实际需要 T_cam_to_robot）
+                        # TODO: 后续接入 config.yaml 的 T_cam_to_robot 变换矩阵
+                        self.robot.send_track_cmd(cx, cy, angle)
 
                     # 追踪误差统计
-                    enc_x, enc_y, enc_t = self.scara.read_encoder()
+                    enc_x, enc_y, enc_t = self.robot.read_encoder()
                     ex = abs(cx - enc_x)
                     ey = abs(cy - enc_y)
                     self.err_x_list.append(ex)
@@ -307,7 +307,7 @@ class ScaraTagTracker:
             print("\n[Tracker] Ctrl+C 中断")
         finally:
             self.camera.close()
-            self.scara.close()
+            self.robot.close()
             cv2.destroyAllWindows()
             print("[Tracker] 已退出")
 
@@ -338,11 +338,11 @@ class ScaraTagTracker:
 # CLI 入口
 # ──────────────────────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="SCARA Tag ID=2 追踪验证")
+    parser = argparse.ArgumentParser(description="机械臂 Tag ID=2 追踪验证")
     parser.add_argument("--mock", action="store_true", help="Mock 模式（无物理相机/机械臂）")
     args = parser.parse_args()
 
-    tracker = ScaraTagTracker(mock=args.mock)
+    tracker = RobotTagTracker(mock=args.mock)
     tracker.run()
 
 
