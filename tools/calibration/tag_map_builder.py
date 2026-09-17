@@ -278,15 +278,31 @@ class TagMapBuilder:
 
         return float(np.clip(w_area * w_angle * w_radial, 0.1, 1.0))
 
-    def solve_single_tag_pnp(self, corners: np.ndarray) -> Tuple[bool, np.ndarray, np.ndarray]:
+    def solve_single_tag_pnp(self, corners: np.ndarray,
+                             expected_z_cam: Optional[np.ndarray] = None) -> Tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
         """
         对单标靶执行 PnP 获得其在相机系下的位姿 (rvec, tvec)
         集成 IPPE_SQUARE 翻转二义性智能消歧 (Planar Ambiguity Disambiguation):
         当由于图像噪点导致对称翻转的伪解重投影误差极小时，
         基于物理几何先验（相机俯视拍摄工作台，标靶法向量 Z 轴必须向上立起即 R[1, 2] < 0）
         精准筛选物理真实解，彻底杜绝“Z 轴倒栽葱”或“反向刺入工作台”。
+
+        expected_z_cam: 标靶法向 (Z 轴) 在相机系下的显式先验方向 (与引擎版同接口)。
+        提供后按法向同半球 (dot>0) 过滤; 未提供时使用内置"朝天"先验 (R[1, 2] < 0)。
+        先验下无同向合格解时拒绝输出 (防错优先, 宁缺勿反)。
         """
         corners_2d = corners.reshape((4, 2)).astype(np.float64)
+
+        def _prior_ok(R_c: np.ndarray) -> bool:
+            """候选解法向是否与先验同向: 显式先验用 dot>0, 内置先验用 R[1,2]<0 (朝天)"""
+            if expected_z_cam is not None:
+                z_exp = np.asarray(expected_z_cam, dtype=np.float64).reshape(3)
+                n = float(np.linalg.norm(z_exp))
+                if n <= 1e-9:
+                    return True
+                return float(R_c[:, 2] @ (z_exp / n)) > 0.0
+            return bool(R_c[1, 2] < 0.0)
+
         retval, rvecs, tvecs, reprojErrors = cv2.solvePnPGeneric(
             self.obj_points,
             corners_2d,
@@ -294,42 +310,37 @@ class TagMapBuilder:
             self.dist_coeffs,
             flags=cv2.SOLVEPNP_IPPE_SQUARE
         )
-        if not retval or len(rvecs) == 0:
-            # 降级尝试 ITERATIVE
-            success, rvec, tvec = cv2.solvePnP(
-                self.obj_points,
-                corners_2d,
-                self.camera_matrix,
-                self.dist_coeffs,
-                flags=cv2.SOLVEPNP_ITERATIVE
-            )
-            return success, rvec, tvec
+        if retval and len(rvecs) > 0:
+            best_idx, best_err = -1, float("inf")
+            prior_idx, prior_err = -1, float("inf")
+            for k, (r_k, t_k) in enumerate(zip(rvecs, tvecs)):
+                if float(t_k[2, 0]) <= 0:      # 深度非法 (相机后方), 直接剔除
+                    continue
+                err_k = float(reprojErrors[k][0]) if reprojErrors is not None else 0.0
+                if err_k < best_err:
+                    best_err, best_idx = err_k, k
+                if _prior_ok(cv2.Rodrigues(r_k)[0]) and err_k < prior_err:
+                    prior_err, prior_idx = err_k, k
+            if prior_idx >= 0:
+                return True, rvecs[prior_idx], tvecs[prior_idx]
+            if expected_z_cam is None and best_idx >= 0:
+                # 无显式先验且无朝天合格解: 退回纯误差择优 (保持旧行为)
+                return True, rvecs[best_idx], tvecs[best_idx]
+            # 有显式先验但无同向解: 落入下方兜底 (兜底同样做先验校验)
 
-        if len(rvecs) == 1:
-            return True, rvecs[0], tvecs[0]
-
-        # 当存在 2 个对称候选解时（典型 IPPE 平面双解）
-        err0 = reprojErrors[0][0] if reprojErrors is not None else 0.0
-        err1 = reprojErrors[1][0] if reprojErrors is not None else 0.0
-
-        # 如果两个解的误差非常接近（相差在 2.5 像素以内，处于典型二义性退化带）
-        # 使用工作台法向量向上先验 (在 OpenCV 相机坐标系中，俯视工作台时，向上法向量的 Y 分量 R[1, 2] < 0)
-        best_idx = 0
-        if abs(err0 - err1) < 2.5:
-            R0, _ = cv2.Rodrigues(rvecs[0])
-            R1, _ = cv2.Rodrigues(rvecs[1])
-            # R[:, 2] 为标靶 Z 轴 (法向量) 在相机系下的方向
-            # R[1, 2] 对应相机坐标系 Y 轴 (向下) 的投影。若标靶向上挺拔，则 R[1, 2] 应为负数 (朝向天空)
-            if R0[1, 2] >= 0 and R1[1, 2] < 0:
-                best_idx = 1
-            elif R1[1, 2] >= 0 and R0[1, 2] < 0:
-                best_idx = 0
-            else:
-                best_idx = 0 if err0 <= err1 else 1
-        else:
-            best_idx = 0 if err0 <= err1 else 1
-
-        return True, rvecs[best_idx], tvecs[best_idx]
+        # 降级尝试 ITERATIVE
+        success, rvec, tvec = cv2.solvePnP(
+            self.obj_points,
+            corners_2d,
+            self.camera_matrix,
+            self.dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE
+        )
+        if success and float(tvec[2, 0]) > 0:
+            if _prior_ok(cv2.Rodrigues(rvec)[0]):
+                return True, rvec, tvec
+            return False, None, None           # 与先验反向的翻转解, 拒绝输出
+        return False, None, None
 
     def render_tag_3d_axes(self, img: np.ndarray, corners: np.ndarray, tag_id: int):
         """

@@ -177,9 +177,22 @@ class OfflineVerificationEngine:
         except Exception:
             return None, None, False
 
-    def solve_single_tag_pnp(self, corners_2d: np.ndarray) -> Tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
+    def solve_single_tag_pnp(self, corners_2d: np.ndarray,
+                             expected_z_cam: Optional[np.ndarray] = None) -> Tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
 
-        """根据单帧检出的 4 个 2D 角点解算单标靶实测相机外参位姿 (优先 IPPE_SQUARE，兜底 ITERATIVE)"""
+        """根据单帧检出的 4 个 2D 角点解算单标靶实测相机外参位姿 (优先 IPPE_SQUARE，兜底 ITERATIVE)
+
+        平面靶 PnP 天然存在二义性: IPPE 返回的两个候选解沿靶面内一轴相差约 180°
+        (标靶法向/Z 轴翻转), 斜视 (约 45°) 时两解重投影误差之差缩小到像素噪声量级,
+        仅按误差择优会间歇性选中翻转解。expected_z_cam 为标靶法向 (Z 轴) 在相机系下的
+        先验方向 (来自地图理论位姿或"标靶朝向天空"先验), 提供后剔除法向与先验反向
+        (dot<=0) 的翻转解, 再按重投影误差择优; 先验下无同向合格解时拒绝输出 (防错优先)。
+        """
+        z_exp = None
+        if expected_z_cam is not None:
+            z_exp = np.asarray(expected_z_cam, dtype=np.float64).reshape(3)
+            n = float(np.linalg.norm(z_exp))
+            z_exp = z_exp / n if n > 1e-9 else None
         try:
             c = corners_2d.reshape((4, 2)).astype(np.float64)
             succ, rvecs, tvecs, _ = cv2.solvePnPGeneric(
@@ -188,6 +201,7 @@ class OfflineVerificationEngine:
             )
             if succ and len(rvecs) > 0:
                 best_r, best_t, min_err = None, None, float("inf")
+                prior_r, prior_t, min_err_prior = None, None, float("inf")
                 for r, t in zip(rvecs, tvecs):
                     if t[2, 0] <= 0:
                         continue
@@ -196,8 +210,16 @@ class OfflineVerificationEngine:
                     if err < min_err:
                         min_err = err
                         best_r, best_t = r, t
-                if best_r is not None:
+                    if z_exp is not None:
+                        R_c, _ = cv2.Rodrigues(r)
+                        if float(R_c[:, 2] @ z_exp) > 0.0 and err < min_err_prior:
+                            min_err_prior = err
+                            prior_r, prior_t = r, t
+                if prior_r is not None:
+                    return True, prior_r, prior_t
+                if z_exp is None and best_r is not None:
                     return True, best_r, best_t
+                # 有先验但候选解全部反向/深度非法: 落入兜底 (兜底同样做先验校验)
         except Exception:
             pass
 
@@ -205,6 +227,10 @@ class OfflineVerificationEngine:
             c = corners_2d.reshape((4, 2)).astype(np.float64)
             succ, r, t = cv2.solvePnP(self.obj_points, c, self.camera_matrix, self.dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
             if succ and t[2, 0] > 0:
+                if z_exp is not None:
+                    R_c, _ = cv2.Rodrigues(r)
+                    if float(R_c[:, 2] @ z_exp) <= 0.0:
+                        return False, None, None   # 与先验反向的翻转解, 拒绝输出
                 return True, r, t
         except Exception:
             pass

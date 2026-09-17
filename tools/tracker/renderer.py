@@ -273,7 +273,12 @@ class TrackerRenderer:
         pts = corners.reshape((-1, 2)).astype(np.int32)
         cv2.polylines(canvas, [pts], True, COL_GREEN, 3, cv2.LINE_AA)
         if tr.recog_tag2_on or tr.show_anchors_on:
-            ok_b, rvec_b, tvec_b = tr.engine.solve_single_tag_pnp(corners)
+            # 目标 Tag 法向先验: 世界系已锁定时用"朝向天空"先验消除 IPPE 二义性 180° 翻转
+            z_exp = None
+            if tr.world_locked and tr.locked_rvec is not None:
+                R_lock, _ = cv2.Rodrigues(tr.locked_rvec)
+                z_exp = R_lock @ np.array([0.0, 0.0, 1.0])
+            ok_b, rvec_b, tvec_b = tr.engine.solve_single_tag_pnp(corners, expected_z_cam=z_exp)
             if ok_b:
                 self._draw_studio_prism(canvas, rvec_b, np.asarray(tvec_b).reshape(3, 1), False,
                                         is_target=True)
@@ -309,8 +314,10 @@ class TrackerRenderer:
             # 绿色理论棱柱 (Offline Studio 同款: 30x30 截面 x 75mm 生长高)
             self._draw_studio_prism(canvas, rvec_t, tvec_t, True)
             if tid in det:
-                # 蓝色实测棱柱 (单靶 PnP 位姿)
-                ok_b, rvec_b, tvec_b = tr.engine.solve_single_tag_pnp(det[tid])
+                # 蓝色实测棱柱 (单靶 PnP 位姿); 传入地图理论法向, 消除 IPPE 平面二义性 180° 翻转
+                R_exp, _ = cv2.Rodrigues(rvec_t)
+                ok_b, rvec_b, tvec_b = tr.engine.solve_single_tag_pnp(
+                    det[tid], expected_z_cam=R_exp[:, 2])
                 if ok_b:
                     self._draw_studio_prism(canvas, rvec_b, np.asarray(tvec_b).reshape(3, 1), False)
                     c = det[tid].reshape(4, 2).mean(axis=0).astype(int)
@@ -358,8 +365,18 @@ class TrackerRenderer:
                 draw_text(canvas, str(tid), (int(pc[0]) + 8, int(pc[1]) - 22), 14, COL_GREEN, True)
 
         # 2. 蓝色实测棱柱: 当帧识别到的全部 Tag (单靶 PnP)
+        # 法向先验: 地图内 Tag 用理论位姿法向, 地图外 Tag (如动态目标) 退用"朝向天空"先验
+        sky_z = R @ np.array([0.0, 0.0, 1.0]) if R is not None else None
         for tid, corners in (tr.static_det or {}).items():
-            ok_b, rvec_b, tvec_b = tr.engine.solve_single_tag_pnp(corners)
+            z_exp = None
+            if R is not None:
+                wc = tr.engine.get_tag_world_corners(tid)
+                if wc is not None:
+                    R_t, _ = _tag_local_frame(wc)
+                    z_exp = R @ R_t[:, 2]
+                else:
+                    z_exp = sky_z
+            ok_b, rvec_b, tvec_b = tr.engine.solve_single_tag_pnp(corners, expected_z_cam=z_exp)
             if ok_b:
                 self._draw_studio_prism(canvas, rvec_b, np.asarray(tvec_b).reshape(3, 1), False,
                                         is_target=(tid == tr.target_tag_id))

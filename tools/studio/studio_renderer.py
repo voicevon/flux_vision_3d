@@ -945,7 +945,9 @@ class StudioUIRenderer:
                         is_kept = obs.get("keep", True) and not is_frame_excluded
                         # 仅在有效保留且 obs_mode=='3d' 下才计算并显示实测蓝色棱柱
                         if is_kept and obs_mode == "3d":
-                            succ_single, obs_r, obs_t = studio.engine.solve_single_tag_pnp(c_arr)
+                            # 传入地图理论法向, 消除 IPPE 平面二义性 180° 翻转
+                            succ_single, obs_r, obs_t = studio.engine.solve_single_tag_pnp(
+                                c_arr, expected_z_cam=T_c_t[:3, :3][:, 2])
 
                     # 如果既不画理论绿色棱柱，也不画实测蓝色棱柱，跳过
                     if r_tag is None and obs_r is None:

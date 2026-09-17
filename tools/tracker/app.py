@@ -296,10 +296,13 @@ class RobotOnlineTracker:
         c2 = det.get(self.target_tag_id)
 
         if c2 is not None:
-            ok2, _, t2 = self.engine.solve_single_tag_pnp(c2)
+            # 目标 Tag 法向先验: 已锁定时用"朝向天空"先验消除 IPPE 平面二义性翻转
+            R_lock = (cv2.Rodrigues(self.locked_rvec)[0]
+                      if (self.world_locked and self.locked_rvec is not None) else None)
+            z_exp = None if R_lock is None else R_lock @ np.array([0.0, 0.0, 1.0])
+            ok2, _, t2 = self.engine.solve_single_tag_pnp(c2, expected_z_cam=z_exp)
             if ok2:
-                if self.world_locked and self.locked_rvec is not None:
-                    R_lock, _ = cv2.Rodrigues(self.locked_rvec)
+                if R_lock is not None:
                     p_cam = t2.reshape(3)
                     target_world = R_lock.T @ (p_cam - self.locked_tvec.reshape(3))
                     self.support_ids = ["锁定"]
@@ -343,11 +346,13 @@ class RobotOnlineTracker:
 
                 c2 = det.get(self.target_tag_id)
                 if c2 is not None:
-                    ok2, _, t2 = self.engine.solve_single_tag_pnp(c2)
+                    # 目标 Tag 法向"朝向天空"先验: 用锚定 PnP 旋转把世界 +Z 映到相机系
+                    R_wc, _ = cv2.Rodrigues(rvec)
+                    ok2, _, t2 = self.engine.solve_single_tag_pnp(
+                        c2, expected_z_cam=R_wc @ np.array([0.0, 0.0, 1.0]))
                     if ok2:
-                        R, _ = cv2.Rodrigues(rvec)
                         p_cam = t2.reshape(3)                      # 目标 Tag 中心 (相机系)
-                        sol["target_world"] = R.T @ (p_cam - tvec.reshape(3))  # -> 世界系
+                        sol["target_world"] = R_wc.T @ (p_cam - tvec.reshape(3))  # -> 世界系
         return sol
 
     def _detect_high_precision(self, frame, det):
