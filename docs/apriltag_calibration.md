@@ -201,16 +201,17 @@ tags:
 
 ## 7. 实施工具链矩阵
 
-所有标定与平差工具均集中归纳于 `tools/calibration/` 模块：
+标定流水线工具封装于 `tools/calibration/`；三个顶层标定应用位于 `tools/` 子包 (入口 `app.py`)：
 
 | 工具名称 | 物理路径 | 定位与核心功能 |
 | :--- | :--- | :--- |
+| **工况与场景管理中枢** | `tools/scene_hub/app.py` | 工序 0：采样场景与批次分组管理、三模态视图、黄金闭环 SOP (新建场景→采图→一键生效生产) |
 | **标靶图纸生成** | `tools/calibration/generate_apriltags.py` | 工序 1：生成 0~29 号 16h5 高清标靶与 1:1 A4 排版可打印 PDF |
 | **交互采图向导** | `tools/calibration/tag_capture_wizard.py` | 工序 2：实时视频流 + 双路互补极速检测 + 空格连拍 1080P @ 8fps 原始照片 |
 | **超精重提取引擎** | `tools/calibration/tag_super_extractor.py` | **工序 3（离线超精重提取引擎）**：离线重算，16级致密自适应阈值网格 + 双尺度CLAHE增强 + 2x超分放大 + 正统轮廓拟合解析求交 (CONTOUR)，无损继承历史清洗标注，输出高质量观测清单 |
 | **采图清单画板** | `tools/calibration/tag_manifest_reviewer.py` | **工序 4（交互审核画板）**：原生 GUI 审核画板，鼠标右键上下文菜单（红绿自适应剔除/恢复、局部Refine重算、靶向聚焦）、整帧临时旁路、一键保存并自动触发平差热重载 |
-| **空间建图平差** | `tools/calibration/tag_map_builder.py` | **工序 5A（空间建图平差）**：极限精度 BA 求解器、两阶段平差、MAD清洗、生成 Quiver 矢量图与诊断报告 |
-| **在线 AR 验证** | `tools/tracker/app.py` | **工序 5B（Robot 在线跟踪）**：真实相机实时解算目标 Tag 世界坐标，机械臂"抬起→平移→下探"安全路径联动跟踪，M114 回读末端实际坐标同屏对比偏差用于相机位置校准 |
+| **离线标定综合工作站** | `tools/studio/app.py` | **工序 5A（空间建图平差）**：帧序列资产管理、交互审核、两阶段/迭代剪枝 BA 平差、MAD 清洗、Quiver 矢量图与离线精度体检 |
+| **Robot 在线跟踪** | `tools/tracker/app.py` | **工序 5B（在线跟踪与验证）**：真实相机实时解算目标 Tag 世界坐标，机械臂"抬起→平移→下探"安全路径联动跟踪，M114 回读末端实际坐标同屏对比偏差用于相机位置校准 |
 | **接触标定向导** | `tools/calibration/hand_eye_calibration.py` | 备用通道：SCARA 经典接触式点对物理标定向导 (极端无标靶场景) |
 | **在线定位器** | `src/vision/tag_localizer.py` | 运行时每帧毫秒级检测已知标靶，输出相机外参 $T_{cam\_to\_world}$ |
 

@@ -4,6 +4,25 @@
 
 ---
 
+## [2026-09-17] - tools/ 顶层应用化重构与单靶 PnP 平面二义性根治
+
+### 1. tools/ 目录顶层应用化重构
+- `tools/` 重构为"通用入口 + 顶层应用 + 专用工具链"三层结构：`tracker/`、`studio/`、`scene_hub/` 升级为顶层应用包 (入口统一 `app.py`)，标定流水线工具收纳于 `tools/calibration/`；
+- 原 1400+ 行 `tools/calibration/robot_online_tracker.py` 拆分为四文件：`tools/tracker/app.py` (主控制器)、`camera_controller.py` (相机管理)、`renderer.py` (GUI 渲染)、`common.py` (共享工具)，主循环 15 处调用点同步迁移，ruff/导入/GUI 启动验证通过。
+
+### 2. 单靶 PnP 平面二义性 180° 翻转根治
+- **病因**：`solve_single_tag_pnp` 采用 `SOLVEPNP_IPPE_SQUARE`，平面靶 PnP 天然存在双解二义性 (两解沿靶面内一轴相差约 180°、法向翻转)；斜视 (约 45°) 时两解重投影误差之差缩至像素噪声量级，纯误差择优会间歇性选中翻转解，表现为在线识别蓝棱柱与地图理论绿棱柱相差 180° (Z 轴反向)；
+- **修复**：`src/calibration/offline_engine.py` 与 `tools/calibration/tag_map_builder.py` 的 `solve_single_tag_pnp` 统一新增 `expected_z_cam` 法向先验参数——先剔除法向与先验反向的翻转解再按误差择优，先验下无同向合格解时拒绝输出 (防错优先)；建图版同步补齐深度非法解过滤；
+- **先验接入** (6 处调用点)：地图内 Tag 用 BA 理论位姿法向，地图外 Tag (动态目标) 退用"标靶朝向天空"先验；tracker/studio 渲染与目标测距全部接入；
+- **验证**：合成数据参数扫描 (距离 500~1200mm × 噪声 0.3~1.0px × 边长偏差 0~2%，5400 样本)：无先验翻转率最高 23%，带先验后 **0 翻转**。
+
+### 3. 文档体系重组
+- 删除 9 份历史性文档 (标定审查报告、代码审查报告、体检工具实现计划、`docs/plans/` 7 份已落地设计文档)，问题修复均已由 `tests/test_audit_p0_fixes.py` 等回归锁定；
+- `requirements.md` 删除非功能性需求与里程碑章节 (仅保留功能需求 FR-1~FR-12)，补录 FR-12.8 一键识别单帧闭环；
+- `architecture.md` 工具链矩阵重写为三层结构、测试体系更新至 17 套件。
+
+---
+
 ## [2026-09-15] - 工况与场景管理中枢 (Scene Hub) 架构解耦与零卡顿性能跃升
 
 ### 1. 鼠标悬停与场景加载卡顿彻底根治 (13s $\rightarrow$ 0.004ms)

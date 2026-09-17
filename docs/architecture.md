@@ -23,17 +23,23 @@ graph TD
     end
 
     subgraph L3["第三层：应用交互与标定工具链"]
-        subgraph L3_Root["通用核心应用 (tools/)"]
+        subgraph L3_App["顶层标定应用 (tools/)"]
+            Dashboard["综合控制中心 Dashboard<br>(gui_launcher.py)"]
+            Hub["工况与场景管理中枢<br>Scene Hub (scene_hub/)"]
+            Studio["离线标定综合工作站<br>Studio (studio/)"]
+            Tracker["Robot 在线跟踪<br>(tracker/)"]
+        end
+        subgraph L3_Core["通用核心应用 (tools/)"]
             Viewer["D435 实时相机主视窗"]
             Finder["单帧抓取解算 (find_top_asparagus.py)"]
             CLI["统一控制终端 (cli_menu.py)"]
         end
         subgraph L3_Calib["标定专用工具链 (tools/calibration/)"]
-            TagGen["标靶矢量与PDF生成"]
+            TagGen["标靶图纸生成与管理"]
             Wizard["多视角采图向导"]
+            Extractor["离线超精重提取引擎"]
             Reviewer["采图清单质检画板"]
             MapBuilder["离线极限 BA 空间建图求解器"]
-            Verifier["在线 AR 盲测与时域去噪验证系统"]
             Diagnose["标靶漏检病因切片诊断"]
             HandEye["SCARA 接触式手眼标定"]
         end
@@ -54,6 +60,9 @@ graph TD
     Analyzer --> Viewer
     Localizer --> Analyzer
     MapBuilder --> Localizer
+    Dashboard --> Hub
+    Dashboard --> Studio
+    Dashboard --> Tracker
     CLI --> Viewer
     CLI --> Finder
     CLI --> L3_Calib
@@ -92,48 +101,69 @@ graph TD
 
 | 职责 | 说明 |
 | :--- | :--- |
-| 标靶检测 | 识别视野内的 AprilTag 16h5 标靶 |
+| 标靶检测 | 识别视野内的 AprilTag 16h5 标靶 (CONTOUR 轮廓精修角点) |
 | 地图查询 | 匹配 `config/tags_map.yaml` 中的 3D 空间坐标 |
-| PnP 解算 | `cv2.solvePnPRansac()` 求解相机在机械臂世界系下的外参 |
-| 容错降级 | 检出 $< 2$ 个标靶时沿用历史锁定外参，平滑抗遮挡 |
+| 静止标靶守门 | 原点 Tag 0 (随臂旋转, 动态偏航) 强制排除; 至少 2 枚静止标靶 (8 个 3D-2D 点对) 才参与解算 |
+| PnP 解算 | `cv2.solvePnPRansac()` (SQPNP + ITERATIVE 降级) 求解相机在机械臂世界系下的外参 |
 
 ---
 
 ## 3. 工具链矩阵 (Tools Architecture)
 
-`tools/` 根目录保持极简，仅保留 3 个顶级通用入口应用；所有标定、采图与平差相关工具统一封装于 `tools/calibration/` 子包：
+`tools/` 采用"通用入口 + 顶层应用 + 专用工具链"三层结构：通用入口与顶层标定应用位于 `tools/` 根目录，标定流水线工具封装于 `tools/calibration/` 子包。
 
-### 3.1 根目录核心应用
+### 3.1 通用入口 (`tools/` 根目录)
 
 | 工具 | 文件路径 | 定位与核心功能 |
 | :--- | :--- | :--- |
-| **控制终端主入口** | `tools/cli_menu.py` | 统一入口，集成应用启动、标定二级专区与测试执行 |
+| **综合控制中心 Dashboard** | `tools/gui_launcher.py` | 1280x830 工业大屏，卡片式统一调度全部核心应用与测试入口 |
+| **控制终端 CLI** | `tools/cli_menu.py` | 统一命令行入口，集成应用启动、标定二级专区与测试执行 |
 | **实时相机主视窗** | `tools/d435_viewer.py` | 双流实时预览、鼠标 3D 探测、动态色谱拉伸、G-code 打印 |
 | **单帧抓取解算** | `tools/find_top_asparagus.py` | 载入单帧或最新快照，输出标准抓取位姿与 JSON 报表 |
 
-### 3.2 标定与平差工具链 (`tools/calibration/`)
+### 3.2 顶层标定应用 (`tools/` 子包, 入口 `app.py`)
+
+| 工具 | 文件路径 | 定位与核心功能 |
+| :--- | :--- | :--- |
+| **工况与场景管理中枢** | `tools/scene_hub/app.py` | 采样场景与批次分组管理、三模态视图、黄金闭环 SOP (新建场景→采图→一键生效生产) |
+| **离线标定综合工作站** | `tools/studio/app.py` | 帧序列资产管理、交互审核画板、迭代剪枝 BA 平差、离线精度体检 |
+| **Robot 在线跟踪** | `tools/tracker/app.py` | Tag 世界坐标实时解算、机械臂"抬起→平移→下探"联动跟踪、M114 到位偏差对比 (相机位置校准) |
+
+### 3.3 标定与平差工具链 (`tools/calibration/`)
 
 | 工具 | 文件路径 | 定位与核心功能 |
 | :--- | :--- | :--- |
 | **标靶图纸生成** | `tools/calibration/generate_apriltags.py` | 生成 0~29 号 16h5 高清标靶与 1:1 A4 排版 PDF |
+| **AprilTag 管理器** | `tools/calibration/tag_manager.py` | 左右两栏 GUI：图纸生成 + 30 个 Tag ID 白名单管理 (写回 `config.yaml`) |
 | **交互采图向导** | `tools/calibration/tag_capture_wizard.py` | 实时视频流 + 双路互补检测 + 空格一键连拍多视角相片 |
-| **采图清单质检画板**| `tools/calibration/tag_manifest_reviewer.py` | 轻量级原生 GUI 画板，鼠标点击保留/剔除，连通性实时状态 |
-| **空间平差建图求解器**| `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD清洗、Quiver 图与体检报告 |
-| **Robot 在线跟踪**| `tools/tracker/app.py` | Tag 世界坐标实时解算、机械臂"抬起→平移→下探"联动跟踪、M114 到位偏差对比 (相机位置校准) |
-| **病因深度切片诊断**| `tools/calibration/diagnose_tag_frame.py` | 单帧漏检/残差异常病因分析（反差/面积/梯度/倾角） |
-| **接触式手眼标定向导**| `tools/calibration/hand_eye_calibration.py` | SCARA 经典接触式物理点对标定 (极端无 Tag 备用) |
+| **离线超精重提取引擎** | `tools/calibration/tag_super_extractor.py` | 16 级致密阈值网格 + CLAHE + 2x 超分 + CONTOUR 轮廓拟合，输出高质量观测清单 |
+| **采图清单质检画板** | `tools/calibration/tag_manifest_reviewer.py` | 轻量级原生 GUI 画板，鼠标点击保留/剔除，连通性实时状态 |
+| **空间平差建图求解器** | `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD 清洗、Quiver 图与体检报告 |
+| **病因深度切片诊断** | `tools/calibration/diagnose_tag_frame.py` | 单帧漏检/残差异常病因分析（反差/面积/梯度/倾角） |
+| **接触式手眼标定向导** | `tools/calibration/hand_eye_calibration.py` | SCARA 经典接触式物理点对标定 (极端无 Tag 备用) |
 
 ---
 
 ## 4. 测试验证体系 (Test Suite)
 
-| 测试模块 | 文件路径 | 覆盖范围与断言标准 |
+共 17 个测试套件，按模块分组：
+
+| 分组 | 测试套件 | 覆盖范围 |
 | :--- | :--- | :--- |
-| **真实快照全量测试** | `tests/test_real_snapshot.py` | 20 组现场快照，验证并排分离、顶层识别与 G-code 抓取决策 |
-| **仿真管线回归测试** | `tests/test_mock_pipeline.py` | 无真实相机时的虚拟芦笋点云与三层叠压回归验证 |
-| **空间建图单元测试** | `tests/test_tag_map_builder.py` | 验证多标靶超定 PnP、BA 求解收敛、原点闭环与连通图拓扑阻断 |
-| **在线定位器单元测试**| `tests/test_tag_localizer.py` | 在线单帧外参定位器精度与历史缓存降级 |
-| **接触式标定验证** | `tests/test_hand_eye_calibration.py` | Horn/Kabsch SVD 配准精度与 500+mm 危险深度拦截 |
+| **感知管线** | `tests/test_real_snapshot.py` | 20 组现场快照：并排分离、顶层识别与 G-code 抓取决策 |
+| | `tests/test_mock_pipeline.py` | 无真实相机时的虚拟芦笋点云与三层叠压回归验证 |
+| **建图与 BA** | `tests/test_tag_map_builder.py` | 多标靶超定 PnP、BA 求解收敛、原点闭环与连通图拓扑阻断 |
+| | `tests/test_ba_optimizer.py` | BA 优化器数学模型与鲁棒核 |
+| | `tests/test_covisibility_graph.py` | 共视连通图拓扑守门员 |
+| | `tests/test_manifest_repository.py` | 观测清单仓储与物理有效性前置拦截 |
+| | `tests/test_tag_integration.py` | 标定链路端到端集成 |
+| | `tests/test_audit_p0_fixes.py` | 标定体系审查 P0 问题修复回归锁定 |
+| **在线定位** | `tests/test_tag_localizer.py` | 在线单帧外参定位精度与守门降级 |
+| **GUI 与应用** | `tests/test_gui_launcher.py`、`tests/test_gui_window_manager.py` | Dashboard 调度与动态分辨率窗口管理 |
+| | `tests/test_scene_hub.py`、`tests/test_scene_manager.py` | Scene Hub 渲染状态机与场景管理器 |
+| | `tests/test_tag_offline_studio.py` | Offline Studio 工作站 |
+| | `tests/test_viewport_manager.py`、`tests/test_verification_reporter.py` | 视口管理与精度体检报告生成 |
+| **手眼标定** | `tests/test_hand_eye_calibration.py` | Horn/Kabsch SVD 配准精度与 500+mm 危险深度拦截 |
 
 ---
 

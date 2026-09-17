@@ -402,7 +402,7 @@ python -m unittest tests/test_ba_optimizer.py
 | **[architecture.md](docs/architecture.md)** | 系统整体分层架构、核心领域模型职责与数据总线设计 | 新成员快速上手、架构设计 |
 | **[algorithm_pipeline.md](docs/algorithm_pipeline.md)** | 芦笋 3D 视觉处理管线九大环节数学推导与参数精析 | 算法开发、调优工程师 |
 | **[apriltag_calibration.md](docs/apriltag_calibration.md)** | AprilTag 多标靶建图、两阶段 BA 平差与在线定位方案 | 标定研发、现场部署人员 |
-| **[requirements.md](docs/requirements.md)** | 工业系统功能/非功能需求规格与里程碑进度 | 需求评审、项目管理 |
+| **[requirements.md](docs/requirements.md)** | 工业系统功能需求规格 (FR-1 ~ FR-12) | 需求评审、项目管理 |
 
 ---
 
