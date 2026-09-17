@@ -8,6 +8,11 @@ data/
 *.npy
 *.bag
 
+# 大文件压缩包禁止入库（GitHub 100MB 限制）
+*.rar
+*.zip
+*.7z
+
 # IDE 与环境配置
 .vscode/
 .idea/
