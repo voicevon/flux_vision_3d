@@ -19,7 +19,7 @@ class TestGuiLauncher(unittest.TestCase):
     def test_tools_catalog_integrity(self):
         """测试工具目录数据结构完整性与快捷键不重复"""
         catalog = build_tools_catalog()
-        self.assertEqual(len(catalog), 11)
+        self.assertEqual(len(catalog), 12)
 
         seen_keys = set()
         seen_shortcuts = set()

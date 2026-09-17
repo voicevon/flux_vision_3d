@@ -101,7 +101,7 @@ class ToolCardMeta:
 
 
 def build_tools_catalog() -> List[ToolCardMeta]:
-    """构建全系统核心工具目录：11 张卡片，四大功能分组 (A场景→B Tag标定→C示教标定→D生产调试)"""
+    """构建全系统核心工具目录：12 张卡片，四大功能分组 (A场景→B Tag标定→C示教标定→D生产调试)"""
 
     COLOR_A = (195, 155, 45)   # A 场景总控  : 琥珀金 (Amber)
     COLOR_B = (65,  175, 160)  # B Tag标定   : 精密工业深青 (Teal)
@@ -265,10 +265,34 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             quick_tips="快捷键: [6] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
         ),
 
+        # ===== D — 生产调试 (续，SCARA 机械臂调试) =====
+        ToolCardMeta(
+            key_id="scara_debug",
+            shortcut="7",
+            title="SCARA 机械臂调试 (Flux Loader)",
+            subtitle="串口点动/回零设零/夹爪舵机/搬运宏/G-code 透传",
+            category="D — 生产调试",
+            is_gui=True,
+            command=[sys.executable, "tools/scara_debug/app.py"],
+            tag_color=COLOR_D,
+            summary="【机械臂调试台】MKS Base V1.6 (Marlin) SCARA 调试终端，功能与 CLI 调试器一比一的图形化界面。",
+            details=[
+                "串口连接管理：自动枚举端口、手动输入连接、--mock 仿真模式",
+                "限位诊断 M119 / 一键三轴回零 G28 / 设零 G92 / 坐标刷新 M114 / 释放电机 M84",
+                "笛卡尔与关节角点动 (W/S/A/D/U/J/Q/E + O/L/I/K)，1/10/50mm 三档步长",
+                "Z 轴快捷升降与指定高度，双/单夹爪舵机开闭控制",
+                "直达目标坐标、预设工位跳转 (与 CLI 共享 ~/.flux_loader/presets.json)",
+                "芦笋搬运节拍宏 N 次循环、原生 G-code 指令透传与应答日志"
+            ],
+            inputs=["MKS Base V1.6 串口 (如 COM11)", "几何参数 loader_core/config.py"],
+            outputs=["串口 G-code 指令下发、机械臂动作执行与通信日志"],
+            quick_tips="快捷键: [7] 启动 | 界面内 W/S/A/D 点动 | [G28] 回零 | [ESC] 退出"
+        ),
+
         # ===== D — 生产调试 (续，芦笋抓取) =====
         ToolCardMeta(
             key_id="asparagus_live",
-            shortcut="7",
+            shortcut="8",
             title="芦笋抓取位姿解算 (实时生产)",
             subtitle="硬件相机抓拍解算顶层芦笋/输出 G-code",
             category="D — 生产调试",
@@ -284,7 +308,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense 硬件相机", "config/camera_intrinsics.yaml", "config/tags_map.yaml"],
             outputs=["终端打印机械臂 G-code 指令、JSON 抓取坐标与调试渲染图"],
-            quick_tips="快捷键: [7] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
+            quick_tips="快捷键: [8] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
         ),
 
         # ===== D — 生产调试 (续，系统诊断) =====
@@ -815,7 +839,8 @@ class GuiLauncherApp:
             '4': "tag_studio",           # B
             '5': "robot_online_tracker", # B Robot 在线跟踪
             '6': "d435_live",            # D
-            '7': "asparagus_live",       # D
+            '7': "scara_debug",          # D SCARA 机械臂调试
+            '8': "asparagus_live",       # D
             # 单字母快捷键 (无数字键卡片)
             'h': "hand_eye_calibration",
             't': "sys_diagnose_tests",
@@ -839,7 +864,7 @@ class GuiLauncherApp:
           row 0   A 场景总控 (全宽, 1张)
           rows 1-2  B Tag 标定流水线 (2×2 = 4张)
           row 3   C 示教标定 (1张, 左列)
-          rows 4-6  D 生产调试 (2×3 = 5张)
+          rows 4-6  D 生产调试 (2×3 = 6张)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
@@ -864,7 +889,7 @@ class GuiLauncherApp:
             base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
             return X0, base_y, CW, CH
 
-        if 6 <= idx <= 10:    # D: 生产调试 (2×3 = 5张)
+        if 6 <= idx <= 11:    # D: 生产调试 (2×3 = 6张)
             d = idx - 6
             base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH + CH + GY + LH
             return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
