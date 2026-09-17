@@ -139,9 +139,20 @@ class ScaraDebugApp:
         self.log_lines = deque(maxlen=200)
         self._running = True
 
+        # 下拉框与自动刷新状态
+        self.dd_serial_open = False
+        self.dd_z_open = False
+        self.dd_step_open = False
+        self.auto_refresh = False
+        self.connecting = False
+        self._last_auto_refresh = 0.0
+
         self.renderer = ScaraDebugRenderer()
         self.win_mgr = GuiWindowManager(app_id="scara_debug", base_w=LOGIC_W, base_h=LOGIC_H)
-        self.window_name = "flux_vision_3d | SCARA 机械臂调试终端 (Flux Loader)"
+        # 窗口内部 key 必须纯 ASCII: OpenCV namedWindow 用 ANSI API 创建, 中文名会乱码
+        # 且导致 FindWindowW 无法命中, set_unicode_title 静默失效
+        self.window_name = "flux_vision_3d | scara_debug"
+        self.window_title = "flux_vision_3d | SCARA 机械臂调试终端 (Flux Loader)"
 
         self.refresh_ports()
         self.add_log("[就绪] SCARA 调试终端已启动，请选择串口并点击 [连接]。")
@@ -162,6 +173,17 @@ class ScaraDebugApp:
             self.selected_port = next(
                 (p for p in self.port_list if "COM11" in p.upper()), self.port_list[0])
         self.add_log(f"[串口] 已枚举 {len(self.port_list)} 个端口: {', '.join(self.port_list) or '无'}")
+
+    def select_serial_port(self, port: str) -> None:
+        """下拉框选择端口：若已连接则先断开旧连接 (切换串口)"""
+        if port == self.selected_port:
+            return
+        self.selected_port = port
+        if self.robot.is_connected():
+            self.disconnect()
+            self.add_log(f"[切换] 已断开旧连接，选中新串口 {port}，请点击下拉框 [连接]。")
+        else:
+            self.add_log(f"[串口] 已选择 {port}")
 
     def connect(self) -> None:
         port = self.selected_port
@@ -186,13 +208,6 @@ class ScaraDebugApp:
         self.robot.disconnect()
         self.current_port = ""
         self.add_log("[OK] 已断开串口连接。")
-
-    def reconnect(self) -> None:
-        if self.robot.is_connected():
-            self.disconnect()
-        self.refresh_ports()
-        self.selected_port = ""
-        self.add_log("[提示] 请在列表中点选目标串口后点击 [连接]。")
 
     # ------------------------------------------------------------------
     # 状态与原点
@@ -393,6 +408,12 @@ class ScaraDebugApp:
     # ------------------------------------------------------------------
     # 事件处理
     # ------------------------------------------------------------------
+    def _present_frame(self) -> None:
+        """立即渲染并呈现一帧 (用于连接等阻塞动作前的界面反馈)"""
+        canvas = self.renderer.render(self)
+        cv2.imshow(self.window_name, canvas)
+        cv2.waitKey(30)
+
     def _require_conn(self) -> bool:
         if not self.robot.is_connected():
             self.add_log("[提示] 请先连接串口！")
@@ -402,14 +423,32 @@ class ScaraDebugApp:
     def _on_button(self, bid: str) -> None:
         if bid == "quit":
             self._running = False
+        elif bid == "auto_refresh":
+            self.auto_refresh = not self.auto_refresh
+            self.add_log(f"[自动刷新] {'已开启 (0.3s 周期 M114)' if self.auto_refresh else '已关闭'}。")
+        elif bid.startswith("dd_serial:"):
+            arg = bid.split(":", 1)[1]
+            if arg == "__refresh__":
+                self.refresh_ports()
+            else:
+                self.select_serial_port(arg)
+        elif bid == "conn_toggle":
+            self.dd_serial_open = False
+            if self.robot.is_connected():
+                self.disconnect()
+            else:
+                self.connecting = True
+                self._present_frame()  # 先显示"正在连接..."再阻塞连接
+                try:
+                    self.connect()
+                finally:
+                    self.connecting = False
         elif bid == "refresh_ports":
             self.refresh_ports()
         elif bid == "connect":
             self.connect()
         elif bid == "disconnect":
             self.disconnect()
-        elif bid == "reconnect":
-            self.reconnect()
         elif bid == "refresh_pos":
             self.refresh_pos()
         elif bid == "m119":
@@ -426,13 +465,11 @@ class ScaraDebugApp:
             self.do_z(100.0)
         elif bid == "z_down":
             self.do_z(20.0)
-        elif bid == "z_input":
-            self.do_z()
         elif bid.startswith("grip_"):
             self.do_gripper(bid)
         elif bid.startswith("jog:"):
             self.do_jog(bid.split(":", 1)[1])
-        elif bid.startswith("step:"):
+        elif bid.startswith("dd_step:"):
             self.do_step(bid.split(":", 1)[1])
         elif bid.startswith("preset_del:"):
             self.do_preset_delete(int(bid.split(":", 1)[1]))
@@ -448,9 +485,6 @@ class ScaraDebugApp:
             self.do_macro()
         elif bid == "gcode_input":
             self.do_gcode()
-        elif bid.startswith("port:"):
-            self.selected_port = bid.split(":", 1)[1]
-            self.add_log(f"[串口] 已选择 {self.selected_port}")
 
     def _on_mouse(self, event, x, y, flags, param) -> None:
         # 物理坐标 -> 逻辑坐标
@@ -464,6 +498,39 @@ class ScaraDebugApp:
         self.renderer.mouse_y = max(0, min(LOGIC_H - 1, y))
         if event == cv2.EVENT_LBUTTONDOWN:
             bid = self.renderer.hit_test(self.renderer.mouse_x, self.renderer.mouse_y)
+            # 下拉框开合优先处理
+            if bid == "dd_open:serial":
+                self.dd_serial_open = not self.dd_serial_open
+                self.dd_z_open = False
+                self.dd_step_open = False
+                return
+            if bid == "dd_open:z":
+                self.dd_z_open = not self.dd_z_open and self.robot.is_connected()
+                self.dd_serial_open = False
+                self.dd_step_open = False
+                return
+            if bid == "dd_open:step":
+                self.dd_step_open = not self.dd_step_open
+                self.dd_serial_open = False
+                self.dd_z_open = False
+                return
+            # 任一浮层展开时: 点击浮层项执行动作, 点击其他区域仅收起
+            any_open = self.dd_serial_open or self.dd_z_open or self.dd_step_open
+            if any_open:
+                if self.dd_serial_open and bid.startswith("dd_serial:"):
+                    try:
+                        self._on_button(bid)
+                    except Exception as exc:
+                        log.exception("下拉框动作异常: %s", exc)
+                        self.add_log(f"[ERR] 动作异常: {exc}")
+                elif self.dd_z_open and bid.startswith("dd_z:"):
+                    self.do_z(float(bid.split(":", 1)[1]))
+                elif self.dd_step_open and bid.startswith("dd_step:"):
+                    self.do_step(bid.split(":", 1)[1])
+                self.dd_serial_open = False
+                self.dd_z_open = False
+                self.dd_step_open = False
+                return
             if bid:
                 try:
                     self._on_button(bid)
@@ -490,7 +557,7 @@ class ScaraDebugApp:
     # ------------------------------------------------------------------
     def run(self) -> None:
         self.win_mgr.setup_window(self.window_name, self._on_mouse)
-        self.win_mgr.set_unicode_title(self.window_name)
+        self.win_mgr.set_unicode_title(self.window_title)
         try:
             cv2.resizeWindow(self.window_name, self.win_mgr.canvas_w, self.win_mgr.canvas_h)
         except Exception:
@@ -502,6 +569,15 @@ class ScaraDebugApp:
                 break
             if poll_res.toast_msg:
                 self.add_log(f"[窗口] {poll_res.toast_msg}")
+
+            # 自动刷新坐标 (checkbox 开启后每 0.3s 静默 M114, 不写日志)
+            if self.auto_refresh and self.robot.is_connected() \
+                    and time.time() - self._last_auto_refresh >= 0.3:
+                self._last_auto_refresh = time.time()
+                try:
+                    self.robot.refresh_state()
+                except Exception:
+                    pass
 
             canvas = self.renderer.render(self)
             if self.win_mgr.canvas_w == LOGIC_W and self.win_mgr.canvas_h == LOGIC_H:

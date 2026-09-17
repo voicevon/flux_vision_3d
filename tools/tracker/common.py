@@ -2,11 +2,9 @@
 # -*- coding: utf-8 -*-
 """Robot 在线跟踪 - 共享视觉样式常量与绘制工具 (主控制器与渲染器共用)"""
 
-import os
-
-import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+
+from src.utils.text_rendering import draw_text
 
 # ============================ 视觉样式常量 (BGR, 与 d435_viewer 同源工业深色主题) ============================
 COLOR_BG = (15, 17, 21)         # 工具栏 / 占位背景
@@ -27,44 +25,6 @@ COL_PANEL_BG = (26, 26, 30)
 COL_PANEL_EDGE = (95, 95, 105)
 
 TOOLBAR_H = 44  # 顶部工具栏高度
-
-_FONT_CACHE = {}
-
-
-def draw_text(img, text, pos, font_size=16, color=COL_WHITE, bold=False):
-    """在 OpenCV BGR 图像上绘制中文/西文 (局部轻量 Patch 贴图)"""
-    if not text:
-        return
-    if any(ord(c) > 127 for c in text):
-        key = (font_size, bold)
-        if key not in _FONT_CACHE:
-            try:
-                font_path = "C:/Windows/Fonts/msyh.ttc"
-                if not os.path.exists(font_path):
-                    font_path = "C:/Windows/Fonts/simhei.ttf"
-                _FONT_CACHE[key] = ImageFont.truetype(font_path, font_size)
-            except Exception:
-                _FONT_CACHE[key] = ImageFont.load_default()
-        font = _FONT_CACHE[key]
-        x, y = pos
-        ih, iw = img.shape[:2]
-        if x >= iw or y >= ih or x < 0 or y < 0:
-            return
-        text_w = int(len(text) * font_size * 1.15) + 12
-        text_h = int(font_size * 1.5) + 6
-        x2 = min(iw, x + text_w)
-        y2 = min(ih, y + text_h)
-        if x2 <= x or y2 <= y:
-            return
-        patch_bgr = img[y:y2, x:x2]
-        pil_img = Image.fromarray(cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2RGB))
-        draw = ImageDraw.Draw(pil_img)
-        draw.text((0, 0), text, font=font, fill=(color[2], color[1], color[0]))
-        img[y:y2, x:x2] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-    else:
-        scale = font_size / 28.0
-        cv2.putText(img, text, (pos[0], pos[1] + int(font_size * 0.85)),
-                    cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2 if bold else 1, cv2.LINE_AA)
 
 
 def fmt_point(p, signed=False):

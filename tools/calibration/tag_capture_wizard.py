@@ -42,6 +42,7 @@ from src.calibration.tag_detector import TagDetector
 from src.calibration.camera_service import CameraService
 from src.calibration.prism_renderer import draw_prism, COLORS_MAPPING
 from src.utils.config_guard import load_raw_config
+from src.utils.text_rendering import measure_text, put_text
 from src.utils.logger import get_logger
 
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
@@ -501,8 +502,8 @@ class TagCaptureWizard:
                     badge_y = max(42, min_y - 12)
                     cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + badge_w, badge_y + 8), (20, 20, 20), -1)
                     cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + badge_w, badge_y + 8), tag_color, 1)
-                    cv2.putText(disp_frame, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-                    cv2.putText(disp_frame, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
+                    put_text(disp_frame, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+                    put_text(disp_frame, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
 
                     # 仅在用户显式开启时才做 3D 棱柱投影 (默认关闭，释放全部算力供 8fps 流畅取景)
                     if self.show_3d_axes:
@@ -523,7 +524,7 @@ class TagCaptureWizard:
                 if has_origin_tag:
                     status_text += " | [Tag 0 ORIGIN OK]"
 
-                cv2.putText(disp_frame, status_text, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
+                put_text(disp_frame, status_text, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
 
                 # 第二行显示相机模式、实时FPS与白名单模式
                 if not self.valid_tag_ids:
@@ -541,25 +542,25 @@ class TagCaptureWizard:
                     fps_frames = 0
 
                 info_text = f"FPS: {fps_display:.1f} | Stream: {self.actual_stream_desc} | Contrast: x{self.contrast_boost:.1f}{wl_str}"
-                cv2.putText(disp_frame, info_text, (15, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, wl_color, 1)
+                put_text(disp_frame, info_text, (15, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, wl_color, 1)
 
                 # 右侧计数与保存提示
                 tip_text = f"Saved: {self.image_count} frames | [Space]: Save"
-                (rw, _), _ = cv2.getTextSize(tip_text, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
-                cv2.putText(disp_frame, tip_text, (disp_frame.shape[1] - rw - 15, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
+                (rw, _), _ = measure_text(tip_text, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+                put_text(disp_frame, tip_text, (disp_frame.shape[1] - rw - 15, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
 
                 # 底部控制提示条 (半透明)
                 h_img, w_img = disp_frame.shape[:2]
                 cv2.rectangle(disp_frame, (0, h_img - 35), (w_img, h_img), (15, 15, 15), -1)
                 ctrl_tip = "[Space]: Pic | [Tab]: Preset | [[ / ]]: Exp | [E]: AutoExp | [I/K]: Contrast | [A]: 3D | [W]: WhiteList | [Q]: Exit"
-                cv2.putText(disp_frame, ctrl_tip, (15, h_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1)
+                put_text(disp_frame, ctrl_tip, (15, h_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1)
 
                 # Toast 临时通知提示
                 if time.time() - self.status_toast_time < 2.5 and self.status_toast:
-                    (tw, _), _ = cv2.getTextSize(self.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+                    (tw, _), _ = measure_text(self.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
                     toast_x = (w_img - tw) // 2
                     cv2.rectangle(disp_frame, (toast_x - 12, h_img - 80), (toast_x + tw + 12, h_img - 45), (0, 120, 0), -1)
-                    cv2.putText(disp_frame, self.status_toast, (toast_x, h_img - 57), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                    put_text(disp_frame, self.status_toast, (toast_x, h_img - 57), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
 
                 # 快门白闪反馈
                 if time.time() - self.flash_timer < 0.12:

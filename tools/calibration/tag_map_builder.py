@@ -29,6 +29,7 @@ from src.calibration.manifest_repository import ManifestRepository
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.tag_detector import TagDetector
 from src.calibration.prism_renderer import draw_prism, COLORS_MAPPING
+from src.utils.text_rendering import measure_text, put_text
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -326,8 +327,8 @@ class TagMapBuilder:
             badge_y = max(42, min_y - 12)
             cv2.rectangle(disp, (badge_x - 6, badge_y - 30), (badge_x + 106, badge_y + 8), (20, 20, 20), -1)
             cv2.rectangle(disp, (badge_x - 6, badge_y - 30), (badge_x + 106, badge_y + 8), (0, 255, 255), 1)
-            cv2.putText(disp, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(disp, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
+            put_text(disp, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+            put_text(disp, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
 
             # 绘制 3D 空间坐标系 (实心正四棱柱)
             self.render_tag_3d_axes(disp, corners, tag_id)

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from src.utils.text_rendering import measure_text, put_text
 from tools.studio.studio_ui_common import BA_VIEW_OPTIONS, OBS_VIEW_OPTIONS, draw_dropdown_button
 
 
@@ -24,14 +25,14 @@ class StudioCenterViewMixin:
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (14, 15, 18), -1)
 
         if not studio.image_files:
-            cv2.putText(canvas, "未扫描到采图图像 (data/tag_calibration_images/ 为空)", (x + 100, y + h // 2),
+            put_text(canvas, "未扫描到采图图像 (data/tag_calibration_images/ 为空)", (x + 100, y + h // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (140, 140, 140), 1, cv2.LINE_AA)
             return
 
         cur_file = studio.image_files[studio.current_img_idx]
         bgr = cv2.imread(cur_file)
         if bgr is None:
-            cv2.putText(canvas, f"读取图像文件失败: {cur_file}", (x + 100, y + h // 2),
+            put_text(canvas, f"读取图像文件失败: {cur_file}", (x + 100, y + h // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1, cv2.LINE_AA)
             return
 
@@ -93,14 +94,14 @@ class StudioCenterViewMixin:
 
         # 视口右上角悬浮提示胶囊
         zoom_badge = f"缩放: {studio.zoom_level:.1f}x | 点击Tag: 剔除/恢复(打叉) | 切换模式: V | 拖拽: 右键/中键 | 双击/Z: 重置"
-        (zw, zh), _ = cv2.getTextSize(zoom_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+        (zw, zh), _ = measure_text(zoom_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
         bx1 = x + w - zw - 24
         by1 = y + 10
         bx2 = bx1 + zw + 14
         by2 = by1 + zh + 10
         cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (20, 24, 32), -1)
         cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (70, 75, 88), 1)
-        cv2.putText(canvas, zoom_badge, (bx1 + 7, by1 + zh + 3),
+        put_text(canvas, zoom_badge, (bx1 + 7, by1 + zh + 3),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 210, 230), 1, cv2.LINE_AA)
 
     def overlay_visual_elements(
@@ -149,7 +150,7 @@ class StudioCenterViewMixin:
                 cv2.line(disp_frame, (pts[1][0], pts[1][1]), (pts[3][0], pts[3][1]), (0, 0, 235), 3, cv2.LINE_AA)
                 cv2.polylines(disp_frame, [pts], isClosed=True, color=(40, 40, 180), thickness=2, lineType=cv2.LINE_AA)
                 cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
-                cv2.putText(disp_frame, f"Tag #{tid} [EXCL]", (cx - 42, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 0, 240), 2, cv2.LINE_AA)
+                put_text(disp_frame, f"Tag #{tid} [EXCL]", (cx - 42, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 0, 240), 2, cv2.LINE_AA)
             else:
                 # 收集参与三维相机位姿解算的已知有效标靶
                 w_c = studio.get_tag_world_corners(tid)
@@ -314,7 +315,7 @@ class StudioCenterViewMixin:
                     cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
                     in_map = (studio.get_tag_world_corners(tid) is not None)
                     tag_lbl = f"Tag #{tid}" if in_map else f"Tag #{tid} [未入图]"
-                    cv2.putText(disp_frame, tag_lbl, (cx - 38, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 230, 80), 2, cv2.LINE_AA)
+                    put_text(disp_frame, tag_lbl, (cx - 38, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 230, 80), 2, cv2.LINE_AA)
                     rendered_tids.add(tid)
 
         # 5. 若处于病因切片诊断模式，叠加视野内预测但实测漏检的标靶框 (橙黄色矩形与 Tag 标注)
@@ -328,5 +329,5 @@ class StudioCenterViewMixin:
                     pts_i = np.array(c_pts, dtype=np.int32)
                     cv2.polylines(disp_frame, [pts_i], isClosed=True, color=(0, 140, 255), thickness=2, lineType=cv2.LINE_AA)
                     mcx, mcy = int(np.mean(pts_i[:, 0])), int(np.mean(pts_i[:, 1]))
-                    cv2.putText(disp_frame, f"? Tag #{tid} [漏检预测]", (mcx - 45, mcy),
+                    put_text(disp_frame, f"? Tag #{tid} [漏检预测]", (mcx - 45, mcy),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 2, cv2.LINE_AA)

@@ -37,7 +37,7 @@ except ImportError:
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
 from src.utils.gui_window_manager import GuiWindowManager
-from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -521,7 +521,7 @@ class D435Viewer:
         r_x2, r_y2 = int(w * 0.96), int(h * 0.96)
         # 绘制亮黄色半透明作业有效线
         cv2.rectangle(img, (r_x1, r_y1), (r_x2, r_y2), (0, 220, 255), 1, cv2.LINE_AA)
-        cv2.putText(img, "WORK_ROI (有效分析作业区)", (r_x1 + 8, r_y1 + 18),
+        put_text(img, "WORK_ROI (有效分析作业区)", (r_x1 + 8, r_y1 + 18),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1)
 
     # ================================================================
@@ -649,10 +649,10 @@ class D435Viewer:
         cv2.rectangle(canvas, (x1, y1), (x2, y2), border_col, 1)
 
         display = f"{label} {arrow}"
-        (tw, th), _ = cv2.getTextSize(display, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+        (tw, th), _ = measure_text(display, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
         tx = x1 + max(4, (x2 - x1 - tw) // 2)
         ty = y1 + (y2 - y1 + th) // 2
-        cv2.putText(canvas, display, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, text_col, 1, cv2.LINE_AA)
+        put_text(canvas, display, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, text_col, 1, cv2.LINE_AA)
 
     def _render_dropdown_popup(self, canvas, rect, options, active_key, btn_prefix="DD_RES_"):
         """置顶悬浮下拉列表浮层（抄 studio_renderer.render_dropdown_popup）"""
@@ -689,7 +689,7 @@ class D435Viewer:
 
             cv2.rectangle(canvas, (pop_x1 + 3, iy1), (pop_x2 - 3, iy2), row_bg, -1)
             prefix = "✔ " if is_active else "  "
-            cv2.putText(canvas, prefix + opt_label, (pop_x1 + 8, iy1 + (item_h + 10) // 2 - 2),
+            put_text(canvas, prefix + opt_label, (pop_x1 + 8, iy1 + (item_h + 10) // 2 - 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_col, 1, cv2.LINE_AA)
 
             btn_id = f"{btn_prefix}{opt_key}"
@@ -895,9 +895,9 @@ class D435Viewer:
         """主可视化与交互事件循环 — 不自动开相机，等用户点开启"""
         self._quit_requested = False
 
-        window_name = "RealSense D435 深度相机诊断"
+        window_name = "d435_viewer"  # 窗口 key 纯 ASCII (namedWindow ANSI API)
         self.win_mgr.setup_window(window_name, self.on_mouse)
-        self.win_mgr.set_unicode_title(window_name)
+        self.win_mgr.set_unicode_title("RealSense D435 深度相机诊断")
 
         content_w = 1024
         content_h = 576
@@ -922,9 +922,9 @@ class D435Viewer:
                     content = np.full((content_h, content_w, 3), self.COLOR_BG, dtype=np.uint8)
                     title = "相机未开启"
                     subtitle = "请先选择相机类型和分辨率，然后点击 [开启] 按钮"
-                    cv2.putText(content, title, (content_w // 2 - 140, content_h // 2 - 20),
+                    put_text(content, title, (content_w // 2 - 140, content_h // 2 - 20),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, self.COLOR_ACCENT, 2, cv2.LINE_AA)
-                    cv2.putText(content, subtitle, (content_w // 2 - 200, content_h // 2 + 20),
+                    put_text(content, subtitle, (content_w // 2 - 200, content_h // 2 + 20),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_TEXT_SUB, 1, cv2.LINE_AA)
                     # 拼合
                     tool_area = np.full((self.TOOLBAR_H, content_w, 3), self.COLOR_BG, dtype=np.uint8)
@@ -1049,11 +1049,11 @@ class D435Viewer:
                 # 6. 状态条（画在内容区域顶部）
                 status_info = self._build_status_line(current_fps)
                 cv2.rectangle(final_content, (0, 0), (canvas_w, 26), (25, 30, 38), -1)
-                cv2.putText(final_content, status_info, (10, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 220), 1)
+                put_text(final_content, status_info, (10, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 220), 1)
 
                 # 底部探针栏
                 cv2.rectangle(final_content, (0, canvas_h - 24), (canvas_w, canvas_h), (20, 20, 20), -1)
-                cv2.putText(final_content, probe_text, (10, canvas_h - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+                put_text(final_content, probe_text, (10, canvas_h - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
 
                 # 7. 拼合：工具栏 + 内容区域
                 tool_area = np.full((self.TOOLBAR_H, canvas_w, 3), self.COLOR_BG, dtype=np.uint8)

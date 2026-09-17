@@ -14,60 +14,9 @@ import time
 from typing import Any
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
 
+from src.utils.text_rendering import draw_text, put_text
 from tools.scene_hub.hub_state import HubState
-
-
-# 字体内存缓存
-_FONT_CACHE = {}
-
-
-def draw_text(img: np.ndarray, text: str, pos: tuple[int, int], font_size: int = 16,
-              color: tuple[int, int, int] = (240, 240, 240), bold: bool = False):
-    """在 OpenCV BGR 图像上绘制高质量中文或西文字符 (局部轻量 Patch 贴图，毫秒级极速渲染)"""
-    if not text:
-        return
-
-    # 判断是否包含非 ASCII 字符 (如中文)
-    if any(ord(c) > 127 for c in text):
-        key = (font_size, bold)
-        if key not in _FONT_CACHE:
-            try:
-                font_path = "C:/Windows/Fonts/msyh.ttc"
-                if not os.path.exists(font_path):
-                    font_path = "C:/Windows/Fonts/simhei.ttf"
-                _FONT_CACHE[key] = ImageFont.truetype(font_path, font_size)
-            except Exception:
-                _FONT_CACHE[key] = ImageFont.load_default()
-        font = _FONT_CACHE[key]
-
-        # 核心性能优化：仅对文字所在的微小局部区域进行切片转换，绝不拷贝整幅 1280x720 大图
-        x, y = pos
-        ih, iw = img.shape[:2]
-        if x >= iw or y >= ih or x < 0 or y < 0:
-            return
-
-        # 估算文本包围盒
-        text_w = int(len(text) * font_size * 1.15) + 12
-        text_h = int(font_size * 1.5) + 6
-        x2 = min(iw, x + text_w)
-        y2 = min(ih, y + text_h)
-        if x2 <= x or y2 <= y:
-            return
-
-        patch_bgr = img[y:y2, x:x2]
-        pil_img = Image.fromarray(cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2RGB))
-        draw = ImageDraw.Draw(pil_img)
-        # BGR -> RGB
-        rgb_col = (int(color[2]), int(color[1]), int(color[0]))
-        draw.text((0, 0), text, font=font, fill=rgb_col)
-        res = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-        img[y:y2, x:x2] = res
-    else:
-        scale = font_size / 28.0
-        cv2.putText(img, text, (pos[0], pos[1] + int(font_size * 0.85)),
-                    cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2 if bold else 1, cv2.LINE_AA)
 
 
 class HubRenderer:
@@ -252,7 +201,7 @@ class HubRenderer:
 
         # 1. 系统标题与状态点 (x: 16~390)
         cv2.circle(canvas, (22, 25), 6, (0, 255, 180), -1)
-        cv2.putText(canvas, "flux_vision_3d", (36, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_CYAN, 2, cv2.LINE_AA)
+        put_text(canvas, "flux_vision_3d", (36, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_CYAN, 2, cv2.LINE_AA)
         draw_text(canvas, "| 场景管理中枢", (166, 16), font_size=15, color=self.COLOR_WHITE)
 
         # 2. 三段式视图模式切换 Tab 胶囊组件 (Segmented Tabs, x: 290~530, y: 9~41)
@@ -373,12 +322,12 @@ class HubRenderer:
 
             # 第二行：物理唯一 ID 与张数
             id_subtitle = f"ID: {sc.scene_id[:14]} | {sc.image_count}帧"
-            cv2.putText(canvas, id_subtitle, (20, cy + 39), cv2.FONT_HERSHEY_SIMPLEX, 0.38, self.COLOR_GRAY, 1, cv2.LINE_AA)
+            put_text(canvas, id_subtitle, (20, cy + 39), cv2.FONT_HERSHEY_SIMPLEX, 0.38, self.COLOR_GRAY, 1, cv2.LINE_AA)
 
             # 第三行：平差精度指标
             ba_badge = f"RMSE: {sc.global_rmse_px:.2f}px" if sc.ba_solved else "未平差"
             ba_col = (0, 220, 100) if sc.ba_solved else self.COLOR_DARK_GRAY
-            cv2.putText(canvas, ba_badge, (20, cy + 58), cv2.FONT_HERSHEY_SIMPLEX, 0.38, ba_col, 1, cv2.LINE_AA)
+            put_text(canvas, ba_badge, (20, cy + 58), cv2.FONT_HERSHEY_SIMPLEX, 0.38, ba_col, 1, cv2.LINE_AA)
 
             # ==== 核心设计：谁是【活动场景】，谁的卡片上才拥有 [P 生效生产] 按钮！====
             if is_active:
@@ -566,7 +515,7 @@ class HubRenderer:
 
             base_name = os.path.basename(img_path)
             cv2.rectangle(canvas, (x, y + th - 15), (x + tw, y + th), (10, 10, 14), -1)
-            cv2.putText(canvas, base_name[:12], (x + 3, y + th - 4),
+            put_text(canvas, base_name[:12], (x + 3, y + th - 4),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.33, (0, 255, 180) if is_cur else self.COLOR_GRAY, 1, cv2.LINE_AA)
 
             if is_cur:

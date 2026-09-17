@@ -488,9 +488,9 @@ class TagManager:
     # ================================================================
     def run(self):
         self._quit_requested = False
-        window_name = "AprilTag 管理器"
+        window_name = "tag_manager"  # 窗口 key 纯 ASCII (namedWindow ANSI API)
         self.win_mgr.setup_window(window_name, self.on_mouse)
-        self.win_mgr.set_unicode_title(window_name)
+        self.win_mgr.set_unicode_title("AprilTag 管理器")
 
         # 恢复 active_tab
         try:

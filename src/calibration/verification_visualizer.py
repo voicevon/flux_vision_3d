@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 
-from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
 from src.utils.logger import get_logger
 from src.calibration.prism_renderer import draw_prism, COLORS_THEORY, COLORS_OBSERVED
 
@@ -78,12 +78,12 @@ class VerificationVisualizer:
             ba_c = None
             if proj_ba is not None:
                 ba_c = tuple(proj_ba["top_center"])
-                cv2.putText(img, "BA(绿)", (ba_c[0] + 6, ba_c[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 120), 1, cv2.LINE_AA)
+                put_text(img, "BA(绿)", (ba_c[0] + 6, ba_c[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 120), 1, cv2.LINE_AA)
 
             obs_c = None
             if proj_obs is not None:
                 obs_c = tuple(proj_obs["top_center"])
-                cv2.putText(img, "实测(蓝)", (obs_c[0] + 6, obs_c[1] + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 210, 80), 1, cv2.LINE_AA)
+                put_text(img, "实测(蓝)", (obs_c[0] + 6, obs_c[1] + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 210, 80), 1, cv2.LINE_AA)
 
             # D. 两者顶面中心空间错位拉扯连线 (橙黄连线与红绿小圆点)
             if ba_c is not None and obs_c is not None:
@@ -204,10 +204,10 @@ class VerificationVisualizer:
                 )
 
             mode_badge = "[ 视图: 3D双四棱柱空间对比模式 (按 T 键切换 2D 残差矢量) ]"
-            (mw, mh), _ = cv2.getTextSize(mode_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
+            (mw, mh), _ = measure_text(mode_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
             cv2.rectangle(disp, (14, h - 35), (14 + mw + 16, h - 8), (18, 22, 30), -1)
             cv2.rectangle(disp, (14, h - 35), (14 + mw + 16, h - 8), (0, 220, 180), 1)
-            cv2.putText(disp, mode_badge, (22, h - 17), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 240, 200), 1, cv2.LINE_AA)
+            put_text(disp, mode_badge, (22, h - 17), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 240, 200), 1, cv2.LINE_AA)
 
         else:
             # 模式 B: 2D 角点残差矢量模式
@@ -246,16 +246,16 @@ class VerificationVisualizer:
                 status_text = "[PASS]" if is_good else ("[WARN]" if is_moderate else "[FAIL]")
                 label = f"Tag#{tid} {status_text} {err_px:.2f}px / {err_mm:.2f}mm"
                 badge_bg = (12, 42, 16) if is_good else ((15, 35, 75) if is_moderate else (15, 15, 75))
-                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+                (tw, th), _ = measure_text(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
                 cv2.rectangle(disp, (badge_x - 6, badge_y - 18), (badge_x + tw + 8, badge_y + 4), badge_bg, -1)
                 cv2.rectangle(disp, (badge_x - 6, badge_y - 18), (badge_x + tw + 8, badge_y + 4), proj_color, 1 if is_good else 2)
-                cv2.putText(disp, label, (badge_x, badge_y - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+                put_text(disp, label, (badge_x, badge_y - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
 
             mode_badge = "[ 视图: 2D角点残差矢量模式 (按 T 键切换 3D 双棱柱) ]"
-            (mw, mh), _ = cv2.getTextSize(mode_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
+            (mw, mh), _ = measure_text(mode_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
             cv2.rectangle(disp, (14, h - 35), (14 + mw + 16, h - 8), (18, 22, 30), -1)
             cv2.rectangle(disp, (14, h - 35), (14 + mw + 16, h - 8), (0, 200, 255), 1)
-            cv2.putText(disp, mode_badge, (22, h - 17), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 230, 255), 1, cv2.LINE_AA)
+            put_text(disp, mode_badge, (22, h - 17), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 230, 255), 1, cv2.LINE_AA)
 
         if out_path is not None:
             cv2.imwrite(out_path, disp)

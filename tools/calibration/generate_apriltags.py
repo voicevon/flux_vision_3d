@@ -19,6 +19,7 @@ from reportlab.lib import colors
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
 
+from src.utils.text_rendering import measure_text, put_text
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -93,7 +94,7 @@ def generate_tags(output_dir: str = "data/apriltags_16h5",
         else:
             label = f"Tag #{tag_id:02d} (16h5)"
             
-        cv2.putText(card, label, (margin, margin + tag_pixel_size + 50), 
+        put_text(card, label, (margin, margin + tag_pixel_size + 50), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2, cv2.LINE_AA)
         
         out_png_path = os.path.join(output_dir, f"tag16h5_id_{tag_id:02d}.png")

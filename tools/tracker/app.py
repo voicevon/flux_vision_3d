@@ -710,7 +710,8 @@ class RobotOnlineTracker:
     # ------------------------------ 主循环 ------------------------------
     def run(self):
         """主事件循环 — GUI 先行启动, 相机等用户点击 [开启]"""
-        win_name = "Robot 在线跟踪 | flux_vision_3d"
+        win_name = "robot_online_tracker"  # 窗口 key 纯 ASCII (namedWindow ANSI API)
+        win_title = "Robot 在线跟踪 | flux_vision_3d"
         cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(win_name, 1280, 720)
         # Windows 原生 Unicode API 注入中文标题, 彻底消除标题栏问号乱码 (借鉴 GuiWindowManager)
@@ -719,7 +720,7 @@ class RobotOnlineTracker:
                 import ctypes
                 hwnd = ctypes.windll.user32.FindWindowW(None, win_name)
                 if hwnd:
-                    ctypes.windll.user32.SetWindowTextW(hwnd, win_name)
+                    ctypes.windll.user32.SetWindowTextW(hwnd, win_title)
             except Exception:
                 pass  # GUI 可选功能：标题注入失败不影响窗口使用
         cv2.setMouseCallback(win_name, self._on_mouse)

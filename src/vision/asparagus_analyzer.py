@@ -17,6 +17,8 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
+from src.utils.text_rendering import put_text
+
 
 @dataclass
 class AsparagusTarget:
@@ -280,7 +282,7 @@ class AsparagusAnalyzer:
         cv2.rectangle(h_color, (bar_x - 10, bar_y - 28), (w - 10, bar_y + bar_h + 20), (70, 70, 70), 1)
         
         # 标题
-        cv2.putText(h_color, "Height(mm)", (bar_x - 6, bar_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (220, 220, 220), 1)
+        put_text(h_color, "Height(mm)", (bar_x - 6, bar_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (220, 220, 220), 1)
         
         # 标尺贴图与边框
         h_color[bar_y:bar_y + bar_h, bar_x:bar_x + bar_w] = bar_bgr
@@ -297,7 +299,7 @@ class AsparagusAnalyzer:
         for ratio, text in steps:
             curr_y = bar_y + int(ratio * bar_h)
             cv2.line(h_color, (bar_x + bar_w, curr_y), (bar_x + bar_w + 4, curr_y), (255, 255, 255), 1)
-            cv2.putText(h_color, text, (bar_x + bar_w + 7, curr_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (220, 220, 220), 1)
+            put_text(h_color, text, (bar_x + bar_w + 7, curr_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (220, 220, 220), 1)
             
         return h_color
 
@@ -569,13 +571,13 @@ class AsparagusAnalyzer:
                 # 顶部高亮大文本卡片
                 cv2.rectangle(annotated, (cx_int - 170, cy_int - 56), (cx_int + 230, cy_int - 6), (20, 20, 20), -1)
                 cv2.rectangle(annotated, (cx_int - 170, cy_int - 56), (cx_int + 230, cy_int - 6), (0, 255, 120), 2)
-                cv2.putText(annotated, label_header, (cx_int - 160, cy_int - 35),
+                put_text(annotated, label_header, (cx_int - 160, cy_int - 35),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 120), 2)
-                cv2.putText(annotated, label_pose, (cx_int - 160, cy_int - 16),
+                put_text(annotated, label_pose, (cx_int - 160, cy_int - 16),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.43, (0, 255, 255), 1)
             else:
                 label_simple = f"#{t.id} L:{t.length_mm} D:{t.diam_mm} R:{t.yaw_deg}"
-                cv2.putText(annotated, label_simple, (cx_int - 45, cy_int - 12),
+                put_text(annotated, label_simple, (cx_int - 45, cy_int - 12),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
 
         return annotated

@@ -52,6 +52,7 @@ except ImportError:
     draw_styled_button = None
     draw_segmented_toggle = None
 
+from src.utils.text_rendering import measure_text, put_text
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -795,7 +796,7 @@ class TagManifestReviewer:
         raw_img = cv2.imread(raw_path)
         if raw_img is None:
             raw_img = np.zeros((1080, 1920, 3), dtype=np.uint8)
-            cv2.putText(raw_img, f"Image not found: {raw_path}", (100, 540),
+            put_text(raw_img, f"Image not found: {raw_path}", (100, 540),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
 
         disp = raw_img.copy()
@@ -839,8 +840,8 @@ class TagManifestReviewer:
                 b_border = (255, 80, 240) if is_focus_target else (0, 255, 255)
                 cv2.rectangle(disp, (badge_x - 6, badge_y - 30), (badge_x + b_w, badge_y + 8), (20, 20, 20), -1)
                 cv2.rectangle(disp, (badge_x - 6, badge_y - 30), (badge_x + b_w, badge_y + 8), b_border, 1)
-                cv2.putText(disp, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
-                cv2.putText(disp, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 230, 255), 1, cv2.LINE_AA)
+                put_text(disp, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+                put_text(disp, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 230, 255), 1, cv2.LINE_AA)
 
                 # 3D 正四棱柱 Z 轴 (实心方柱体)
                 try:
@@ -869,7 +870,7 @@ class TagManifestReviewer:
                 b_w = 160 if is_focus_target else 140
                 cv2.rectangle(disp, (badge_x - 6, badge_y - 25), (badge_x + b_w, badge_y + 5), (15, 15, 15), -1)
                 cv2.rectangle(disp, (badge_x - 6, badge_y - 25), (badge_x + b_w, badge_y + 5), (0, 0, 255), 2)
-                cv2.putText(disp, tag_text, (badge_x, badge_y - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 80, 255), 2, cv2.LINE_AA)
+                put_text(disp, tag_text, (badge_x, badge_y - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 80, 255), 2, cv2.LINE_AA)
 
         is_frame_enabled = self.frame_enabled_map.get(curr_key, True)
 
@@ -880,12 +881,12 @@ class TagManifestReviewer:
             cv2.addWeighted(dark_overlay, 0.45, disp, 0.55, 0, disp)
 
             badge_text = "FRAME EXCLUDED / 本帧已临时剔除 (按 X 键恢复启用)"
-            (bw_t, bh_t), _ = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.62, 2)
+            (bw_t, bh_t), _ = measure_text(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.62, 2)
             bx_r = w - bw_t - 25
             by_r = 72
             cv2.rectangle(disp, (bx_r - 12, by_r - 6), (bx_r + bw_t + 12, by_r + bh_t + 10), (0, 0, 160), -1)
             cv2.rectangle(disp, (bx_r - 12, by_r - 6), (bx_r + bw_t + 12, by_r + bh_t + 10), (0, 120, 255), 2)
-            cv2.putText(disp, badge_text, (bx_r, by_r + bh_t + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 2, cv2.LINE_AA)
+            put_text(disp, badge_text, (bx_r, by_r + bh_t + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 2, cv2.LINE_AA)
 
         # 2. 将原始全分辨率绘制帧通过 ViewportManager 等比贴入视口画布
         canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
@@ -911,7 +912,7 @@ class TagManifestReviewer:
             left_info = f"[排查 {self.focus_idx + 1}/{len(self.target_hit_frames)}] {curr_key} | Tag #{self.focus_tag_id} ({self.current_idx + 1}/{len(self.image_keys)} 帧){save_indicator}"
         else:
             left_info = f"[{self.current_idx + 1}/{len(self.image_keys)}] {curr_key} | 观测:{len(observations)} (保留:{num_kept}, 剔除:{num_excl}){save_indicator}"
-        cv2.putText(canvas, left_info, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2, cv2.LINE_AA)
+        put_text(canvas, left_info, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2, cv2.LINE_AA)
 
         # 拓扑连通性安全指示灯
         if self.last_covis_report["is_valid"]:
@@ -922,7 +923,7 @@ class TagManifestReviewer:
             topo_str = f"[ALERT: Tag {unconn} 已失联!]"
             topo_color = (0, 0, 255)
         
-        cv2.putText(canvas, topo_str, (w - 380, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.46, topo_color, 2, cv2.LINE_AA)
+        put_text(canvas, topo_str, (w - 380, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.46, topo_color, 2, cv2.LINE_AA)
 
         # 顶栏第二行：简易提示
         if self.focus_mode and self.target_hit_frames:
@@ -931,7 +932,7 @@ class TagManifestReviewer:
         else:
             tips_text = "操作: 左键翻转剔除/保留; 滚轮无级缩放/中键平移漫游(0复位); 右键标靶弹菜单; [X] 剔除整帧; [Tab] 聚焦; [V] 平差验证"
             tips_color = (0, 220, 255)
-        cv2.putText(canvas, tips_text, (12, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.40, tips_color, 1, cv2.LINE_AA)
+        put_text(canvas, tips_text, (12, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.40, tips_color, 1, cv2.LINE_AA)
 
         # 4. 底部全新 GUI 操作按钮栏 (1:1 独立物理像素绘制，永远常驻在窗口视线正下方)
         tb_y1 = h - tb_h
@@ -1004,12 +1005,12 @@ class TagManifestReviewer:
 
         # 5. Toast 临时浮层通知
         if time.time() - self.toast_time < 2.2 and self.toast_msg:
-            (tw, th), _ = cv2.getTextSize(self.toast_msg, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
+            (tw, th), _ = measure_text(self.toast_msg, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
             toast_x = (w - tw) // 2
             toast_y = h - tb_h - 45
             cv2.rectangle(canvas, (toast_x - 14, toast_y - 24), (toast_x + tw + 14, toast_y + 8), (15, 15, 15), -1)
             cv2.rectangle(canvas, (toast_x - 14, toast_y - 24), (toast_x + tw + 14, toast_y + 8), (0, 230, 255), 2)
-            cv2.putText(canvas, self.toast_msg, (toast_x, toast_y), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 255), 2, cv2.LINE_AA)
+            put_text(canvas, self.toast_msg, (toast_x, toast_y), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 255), 2, cv2.LINE_AA)
 
         # 6. 渲染右键上下文悬浮菜单 (若已激活)
         self.render_context_menu(canvas)
@@ -1039,7 +1040,7 @@ class TagManifestReviewer:
         cv2.rectangle(disp, (mx, my), (mx2, my + header_h), (28, 32, 45), -1)
         cv2.line(disp, (mx, my + header_h), (mx2, my + header_h), (70, 85, 120), 1)
         header_txt = f"Tag #{tid} 操作快捷菜单"
-        cv2.putText(disp, header_txt, (mx + 14, my + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2, cv2.LINE_AA)
+        put_text(disp, header_txt, (mx + 14, my + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2, cv2.LINE_AA)
 
         # 绘制各个选项
         hx, hy = self.mouse_hover_pos
@@ -1056,7 +1057,7 @@ class TagManifestReviewer:
                 cv2.rectangle(disp, (ix1, iy1), (ix2, iy2), (40, 45, 60), 1)
 
             txt_color = (255, 255, 255) if is_hovered else (220, 220, 220)
-            cv2.putText(disp, label, (ix1 + 14, iy1 + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.46, txt_color, 1, cv2.LINE_AA)
+            put_text(disp, label, (ix1 + 14, iy1 + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.46, txt_color, 1, cv2.LINE_AA)
 
     def save_changes(self, quiet: bool = False):
         """将内存中的修改即时写回 tag_observations.yaml (自动持久化)"""

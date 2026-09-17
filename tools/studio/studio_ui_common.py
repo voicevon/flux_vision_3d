@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
-from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
 
 
 # 下拉菜单选项定义
@@ -82,10 +82,10 @@ def draw_dropdown_button(
     cv2.rectangle(canvas, (x1, y1), (x2, y2), border_col, 1)
 
     display_txt = f"{prefix}{label} {arrow}" if prefix else f"{label} {arrow}"
-    (tw, th), _ = cv2.getTextSize(display_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+    (tw, th), _ = measure_text(display_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
     tx = x1 + max(6, (x2 - x1 - tw) // 2)
     ty = y1 + (y2 - y1 + th) // 2
-    cv2.putText(canvas, display_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, text_col, 1, cv2.LINE_AA)
+    put_text(canvas, display_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, text_col, 1, cv2.LINE_AA)
 
 
 def draw_dashboard_button(

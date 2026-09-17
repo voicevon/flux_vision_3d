@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 import cv2
 import numpy as np
 
+from src.utils.text_rendering import measure_text, put_text
 from src.utils.viewport_manager import draw_styled_button
 
 
@@ -33,7 +34,7 @@ class StudioInspectorMixin:
         meta = studio.frame_metrics_cache.get(bname, {})
 
         # 1. 顶部当前帧摘要卡片
-        cv2.putText(canvas, bname, (x + 8, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
+        put_text(canvas, bname, (x + 8, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
 
         # 状态切换按钮 (保留 / 剔除)
         is_excl = meta.get("is_excluded", False)
@@ -52,7 +53,7 @@ class StudioInspectorMixin:
             # 渲染【单帧深度切片病因诊断】面板
             diag_top_y = y + 62
             cv2.line(canvas, (x + 8, diag_top_y), (x + w - 8, diag_top_y), (45, 48, 58), 1)
-            cv2.putText(canvas, "单帧病因切片诊断", (x + 8, diag_top_y + 16),
+            put_text(canvas, "单帧病因切片诊断", (x + 8, diag_top_y + 16),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 215, 255), 1, cv2.LINE_AA)
 
             diag = getattr(studio, "current_diagnostics", {})
@@ -61,35 +62,35 @@ class StudioInspectorMixin:
             # 指标1：清晰度 Laplace
             lap = diag.get("sharpness", diag.get("laplacian_var", 0.0))
             lap_g = diag.get("sharpness_grade", "")
-            cv2.putText(canvas, f"清晰度: {lap:.1f} {lap_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
+            put_text(canvas, f"清晰度: {lap:.1f} {lap_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
             cy += 20
 
             # 指标2：对比度 RMS
             c_rms = diag.get("contrast", diag.get("contrast_rms", 0.0))
             c_g = diag.get("contrast_grade", "")
-            cv2.putText(canvas, f"对比度: {c_rms:.1f} {c_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
+            put_text(canvas, f"对比度: {c_rms:.1f} {c_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
             cy += 20
 
             # 指标3：平均亮度 Mean
             m_lum = diag.get("brightness", diag.get("mean_intensity", 0.0))
             b_g = diag.get("brightness_grade", "")
-            cv2.putText(canvas, f"亮度: {m_lum:.1f} {b_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
+            put_text(canvas, f"亮度: {m_lum:.1f} {b_g}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (200, 205, 215), 1, cv2.LINE_AA)
             cy += 24
 
             # 拒检四边形候选
             rej_c = diag.get("rejected_quads_count", diag.get("false_rejections_count", 0))
-            cv2.putText(canvas, f"畸变/超小候选: {rej_c}个", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (170, 175, 185), 1, cv2.LINE_AA)
+            put_text(canvas, f"畸变/超小候选: {rej_c}个", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (170, 175, 185), 1, cv2.LINE_AA)
             cy += 20
 
             # 理论漏检标靶
             missing = diag.get("missing_projected_tags", []) or diag.get("missing_theoretical_tags", [])
             if missing:
                 m_tids = ",".join([f"#{m['tag_id']}" for m in missing])
-                cv2.putText(canvas, f"理论漏检: {len(missing)}个", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 140, 255), 1, cv2.LINE_AA)
+                put_text(canvas, f"理论漏检: {len(missing)}个", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 140, 255), 1, cv2.LINE_AA)
                 cy += 18
-                cv2.putText(canvas, f"目标: {m_tids}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 180, 255), 1, cv2.LINE_AA)
+                put_text(canvas, f"目标: {m_tids}", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 180, 255), 1, cv2.LINE_AA)
             else:
-                cv2.putText(canvas, "理论漏检: 无 (全捕获)", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 220, 100), 1, cv2.LINE_AA)
+                put_text(canvas, "理论漏检: 无 (全捕获)", (x + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 220, 100), 1, cv2.LINE_AA)
 
         else:
             # 渲染常规【标靶与残差清单】面板 (按照残差降序排序: 离差最大排在最上方)
@@ -101,7 +102,7 @@ class StudioInspectorMixin:
             tags_meta = (getattr(studio, "tags_map_data", {}) or {}).get("tags", {})
             if not tags_meta and hasattr(studio, "data_mgr"):
                 tags_meta = (getattr(studio.data_mgr, "tags_map_data", {}) or {}).get("tags", {})
-            cv2.putText(canvas, f"标靶残差+世界XYZ ({len(obs_list)}) 降序↓", (x + 8, list_y + 16),
+            put_text(canvas, f"标靶残差+世界XYZ ({len(obs_list)}) 降序↓", (x + 8, list_y + 16),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 220, 255), 1, cv2.LINE_AA)
 
             # 按残差降序排序：离差最大的坏标靶置顶优先显示
@@ -129,7 +130,7 @@ class StudioInspectorMixin:
                 cv2.circle(canvas, (rx1 + 10, ry1 + 11), 3, dot_c, -1)
 
                 t_col = (230, 230, 230) if keep else (120, 120, 120)
-                cv2.putText(canvas, f"#{tid}", (rx1 + 18, ry1 + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.46, t_col, 1, cv2.LINE_AA)
+                put_text(canvas, f"#{tid}", (rx1 + 18, ry1 + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.46, t_col, 1, cv2.LINE_AA)
 
                 err_str = f"{err_val:.2f}px" if keep else "EXCL"
                 if not keep:
@@ -140,8 +141,8 @@ class StudioInspectorMixin:
                     err_c = (0, 200, 255)  # 离差偏大 (>0.5px) 醒目金黄
                 else:
                     err_c = (0, 230, 80)   # 优良 (<=0.5px) 荧光绿
-                (ew, _), _ = cv2.getTextSize(err_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
-                cv2.putText(canvas, err_str, (rx2 - ew - 6, ry1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.52, err_c, 1, cv2.LINE_AA)
+                (ew, _), _ = measure_text(err_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+                put_text(canvas, err_str, (rx2 - ew - 6, ry1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.52, err_c, 1, cv2.LINE_AA)
 
                 # 第二行: FR-9.6 世界系坐标 XYZ (mm)
                 rec = tags_meta.get(tid) or {}
@@ -152,7 +153,7 @@ class StudioInspectorMixin:
                 else:
                     xyz_str = "XYZ: --"
                     xyz_c = (110, 115, 125)
-                cv2.putText(canvas, xyz_str, (rx1 + 18, ry1 + 31), cv2.FONT_HERSHEY_SIMPLEX, 0.36, xyz_c, 1, cv2.LINE_AA)
+                put_text(canvas, xyz_str, (rx1 + 18, ry1 + 31), cv2.FONT_HERSHEY_SIMPLEX, 0.36, xyz_c, 1, cv2.LINE_AA)
 
                 row_y += row_h
                 if row_y > diag_y - 12:
@@ -191,7 +192,7 @@ class StudioInspectorMixin:
         r = getattr(studio.ba_runner, "prune_round", 1)
         max_r = getattr(studio.ba_runner, "max_prune_rounds", 10)
         title_txt = f"工序 5-Auto: 迭代残差剪枝平差监控 (第 {r}/{max_r} 轮)..."
-        cv2.putText(canvas, title_txt, (cx1 + 20, cy1 + 28),
+        put_text(canvas, title_txt, (cx1 + 20, cy1 + 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
 
         # 急停按钮 (右上角)
@@ -208,8 +209,8 @@ class StudioInspectorMixin:
         pct = max(0.0, min(1.0, studio.ba_progress))
         pct_int = int(round(pct * 100))
         pct_str = f"{pct_int}%"
-        (pw, _), _ = cv2.getTextSize(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 2)
-        cv2.putText(canvas, pct_str, (btn_x1 - pw - 14, cy1 + 28),
+        (pw, _), _ = measure_text(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 2)
+        put_text(canvas, pct_str, (btn_x1 - pw - 14, cy1 + 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 180, 0), 2, cv2.LINE_AA)
 
         bar_x1 = cx1 + 20
@@ -244,16 +245,16 @@ class StudioInspectorMixin:
         txt_c = f"当前残差: {curr_rmse:.2f}px"
         txt_d = f"累计改善: ↓{cum_delta:.2f}px ({cum_pct:.1f}%)"
 
-        cv2.putText(canvas, txt_p, (bar_x1 + 14, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
-        cv2.putText(canvas, txt_i, (bar_x1 + 160, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 185, 195), 1, cv2.LINE_AA)
-        cv2.putText(canvas, txt_c, (bar_x1 + 330, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 210, 100), 1, cv2.LINE_AA)
-        cv2.putText(canvas, txt_d, (bar_x1 + 500, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 120), 1, cv2.LINE_AA)
+        put_text(canvas, txt_p, (bar_x1 + 14, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+        put_text(canvas, txt_i, (bar_x1 + 160, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 185, 195), 1, cv2.LINE_AA)
+        put_text(canvas, txt_c, (bar_x1 + 330, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 210, 100), 1, cv2.LINE_AA)
+        put_text(canvas, txt_d, (bar_x1 + 500, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 120), 1, cv2.LINE_AA)
 
         # 4. 当前运行主阶段与动态细节
         stg_txt = studio.ba_stage_text or "智能迭代剪枝平差管线推进中..."
         sub_txt = studio.ba_sub_text or "正在执行全场景 BA 平差与共视安全守门..."
-        cv2.putText(canvas, stg_txt, (cx1 + 20, cy1 + 104), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
-        cv2.putText(canvas, sub_txt, (cx1 + 20, cy1 + 122), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 80), 1, cv2.LINE_AA)
+        put_text(canvas, stg_txt, (cx1 + 20, cy1 + 104), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+        put_text(canvas, sub_txt, (cx1 + 20, cy1 + 122), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 80), 1, cv2.LINE_AA)
 
         # 5. 【核心实时报告表格】 (Live Settlement Table)
         tbl_x1 = bar_x1
@@ -278,11 +279,11 @@ class StudioInspectorMixin:
         tx3 = tx2 + c_before_w
         tx4 = tx3 + c_after_w
 
-        cv2.putText(canvas, "轮次", (tx0, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
-        cv2.putText(canvas, "淘汰坏样本 (图像 / Tag / 离差)", (tx1 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
-        cv2.putText(canvas, "平差前残差", (tx2 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
-        cv2.putText(canvas, "平差后残差", (tx3 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
-        cv2.putText(canvas, "进步幅度", (tx4 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        put_text(canvas, "轮次", (tx0, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        put_text(canvas, "淘汰坏样本 (图像 / Tag / 离差)", (tx1 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        put_text(canvas, "平差前残差", (tx2 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        put_text(canvas, "平差后残差", (tx3 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
+        put_text(canvas, "进步幅度", (tx4 + 6, tbl_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 205, 215), 1, cv2.LINE_AA)
 
         # 动态行组合: 历史完成轮次 + 当前正在求解轮次
         display_rows = []
@@ -309,7 +310,7 @@ class StudioInspectorMixin:
         if not rows_to_show:
             cv2.rectangle(canvas, (tbl_x1, curr_row_y), (tbl_x1 + tbl_w, curr_row_y + tr_h * 2), (20, 22, 28), -1)
             cv2.rectangle(canvas, (tbl_x1, curr_row_y), (tbl_x1 + tbl_w, curr_row_y + tr_h * 2), (45, 50, 62), 1)
-            cv2.putText(canvas, "正在执行首轮共视拓扑分析与基准残差排查，即将生成实时对比明细...",
+            put_text(canvas, "正在执行首轮共视拓扑分析与基准残差排查，即将生成实时对比明细...",
                         (tbl_x1 + 18, curr_row_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 150, 165), 1, cv2.LINE_AA)
             curr_row_y += tr_h * 2
         else:
@@ -328,15 +329,15 @@ class StudioInspectorMixin:
                 # 限制文字长度避免溢出
                 s_item = item_s if len(item_s) <= 38 else item_s[:35] + "..."
 
-                cv2.putText(canvas, rnd_s, (tx0, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_txt, 1, cv2.LINE_AA)
-                cv2.putText(canvas, s_item, (tx1 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, col_txt, 1, cv2.LINE_AA)
-                cv2.putText(canvas, b_s, (tx2 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (160, 170, 185), 1, cv2.LINE_AA)
-                cv2.putText(canvas, a_s, (tx3 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_txt, 1, cv2.LINE_AA)
-                cv2.putText(canvas, d_s, (tx4 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, delta_col, 1 if is_active else 2, cv2.LINE_AA)
+                put_text(canvas, rnd_s, (tx0, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_txt, 1, cv2.LINE_AA)
+                put_text(canvas, s_item, (tx1 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, col_txt, 1, cv2.LINE_AA)
+                put_text(canvas, b_s, (tx2 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (160, 170, 185), 1, cv2.LINE_AA)
+                put_text(canvas, a_s, (tx3 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_txt, 1, cv2.LINE_AA)
+                put_text(canvas, d_s, (tx4 + 6, ry1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.36, delta_col, 1 if is_active else 2, cv2.LINE_AA)
 
         # 6. 底栏停机说明
         tip_txt = "收敛准则: 单轮改善 < 0.010 px 触发边际最优收敛 | 共视拓扑守门确保几何不退化 | 随时按 Space 急停"
-        cv2.putText(canvas, tip_txt, (cx1 + 20, cy1 + card_h - 14),
+        put_text(canvas, tip_txt, (cx1 + 20, cy1 + card_h - 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.34, (130, 140, 155), 1, cv2.LINE_AA)
 
     def render_prune_settlement_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
@@ -353,12 +354,12 @@ class StudioInspectorMixin:
         cv2.rectangle(canvas, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (0, 230, 100), 2)
 
         # 1. 顶部标题与收敛徽章
-        cv2.putText(canvas, "智能残差剪枝平差结算单 (Auto-Prune Settlement)", (cx1 + 22, cy1 + 30),
+        put_text(canvas, "智能残差剪枝平差结算单 (Auto-Prune Settlement)", (cx1 + 22, cy1 + 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
 
         reason = s_data.get("stop_reason", "最优收敛")
-        (rw, _), _ = cv2.getTextSize(f"[{reason}]", cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
-        cv2.putText(canvas, f"[{reason}]", (cx1 + card_w - 22 - rw, cy1 + 30),
+        (rw, _), _ = measure_text(f"[{reason}]", cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+        put_text(canvas, f"[{reason}]", (cx1 + card_w - 22 - rw, cy1 + 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 180), 1, cv2.LINE_AA)
 
         cv2.line(canvas, (cx1 + 22, cy1 + 44), (cx1 + card_w - 22, cy1 + 44), (50, 58, 72), 1)
@@ -375,28 +376,28 @@ class StudioInspectorMixin:
 
         y_c = cy1 + 72
         # RMSE 对比
-        cv2.putText(canvas, "全局像面 RMSE:", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 205, 215), 1, cv2.LINE_AA)
+        put_text(canvas, "全局像面 RMSE:", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 205, 215), 1, cv2.LINE_AA)
         rmse_str = f"{init_rmse:.3f} px  ->  {final_rmse:.3f} px"
-        cv2.putText(canvas, rmse_str, (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 100), 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"(误差显著降低 {drop_pct:.1f}%)", (cx1 + 445, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 220, 255), 1, cv2.LINE_AA)
+        put_text(canvas, rmse_str, (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 100), 2, cv2.LINE_AA)
+        put_text(canvas, f"(误差显著降低 {drop_pct:.1f}%)", (cx1 + 445, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 220, 255), 1, cv2.LINE_AA)
 
         y_c += 28
         # 物理毫米对比
-        cv2.putText(canvas, "空间物理偏差 (中位):", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 205, 215), 1, cv2.LINE_AA)
+        put_text(canvas, "空间物理偏差 (中位):", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 205, 215), 1, cv2.LINE_AA)
         mm_str = f"{init_mm:.2f} mm  ->  {final_mm:.2f} mm"
-        cv2.putText(canvas, mm_str, (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 100), 2, cv2.LINE_AA)
+        put_text(canvas, mm_str, (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 100), 2, cv2.LINE_AA)
 
         y_c += 28
         # 轮次与剔除汇总
-        cv2.putText(canvas, f"迭代执行: {rounds} 轮", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 185, 195), 1, cv2.LINE_AA)
-        cv2.putText(canvas, f"累计淘汰外点: {pruned_cnt} 个 (已受共视拓扑严格保护)", (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 180, 0), 1, cv2.LINE_AA)
+        put_text(canvas, f"迭代执行: {rounds} 轮", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 185, 195), 1, cv2.LINE_AA)
+        put_text(canvas, f"累计淘汰外点: {pruned_cnt} 个 (已受共视拓扑严格保护)", (cx1 + 175, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 180, 0), 1, cv2.LINE_AA)
 
         y_c += 16
         cv2.line(canvas, (cx1 + 22, y_c), (cx1 + card_w - 22, y_c), (45, 52, 65), 1)
         y_c += 20
 
         # 3. 逐轮剔除明细 (最多展示最近 3 轮)
-        cv2.putText(canvas, "各轮剪枝与收敛明细:", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 165, 175), 1, cv2.LINE_AA)
+        put_text(canvas, "各轮剪枝与收敛明细:", (cx1 + 24, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 165, 175), 1, cv2.LINE_AA)
         y_c += 18
         hist = s_data.get("history", [])
         show_hist = hist[-3:] if len(hist) > 3 else hist
@@ -407,12 +408,12 @@ class StudioInspectorMixin:
             d_rmse = h_item.get("delta_rmse", 0.0)
             a_rmse = h_item.get("rmse_after", 0.0)
             log_line = f"轮次 #{r_num}: 淘汰 [{p_str}] -> RMSE降至 {a_rmse:.3f}px (改善: {d_rmse:.3f}px)"
-            cv2.putText(canvas, log_line, (cx1 + 32, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 210, 220), 1, cv2.LINE_AA)
+            put_text(canvas, log_line, (cx1 + 32, y_c), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 210, 220), 1, cv2.LINE_AA)
             y_c += 20
 
         # 4. 底部决策操作与提示
         card_hint = "左侧列表已自动展开逐帧多轮残差演进矩阵大表 (按 X 键可自由收放)"
-        cv2.putText(canvas, card_hint, (cx1 + 24, cy1 + card_h - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 220, 255), 1, cv2.LINE_AA)
+        put_text(canvas, card_hint, (cx1 + 24, cy1 + card_h - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 220, 255), 1, cv2.LINE_AA)
 
         btn_y1 = cy1 + card_h - 44
         btn_y2 = btn_y1 + 32

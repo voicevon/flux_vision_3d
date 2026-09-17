@@ -16,6 +16,7 @@ import numpy as np
 import cv2
 
 from src.utils.logger import get_logger
+from src.utils.text_rendering import put_text
 
 log = get_logger(__name__)
 
@@ -91,7 +92,7 @@ def export_diagnostic_report(final_tags_map: Dict[str, Any],
 
         # 绘制顶部半透明状态条
         cv2.rectangle(quiver_img, (0, 0), (w, 50), (20, 24, 30), -1)
-        cv2.putText(quiver_img, f"BA 2D Residual Field (Quiver x20) - {f_name} | RMSE: {rmse_px:.3f}px",
+        put_text(quiver_img, f"BA 2D Residual Field (Quiver x20) - {f_name} | RMSE: {rmse_px:.3f}px",
                     (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2, cv2.LINE_AA)
 
         for obs in obs_items:
@@ -118,7 +119,7 @@ def export_diagnostic_report(final_tags_map: Dict[str, Any],
 
             center = np.mean(c_obs, axis=0).astype(int)
             lbl = f"Tag #{tid}: {obs['rmse_px']:.2f}px" + (" [OUTLIER]" if is_outlier else "")
-            cv2.putText(quiver_img, lbl, (center[0] - 40, center[1] - 10),
+            put_text(quiver_img, lbl, (center[0] - 40, center[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
 
         out_quiver_path = os.path.join(vis_dir, os.path.splitext(f_name)[0] + "_quiver.png")

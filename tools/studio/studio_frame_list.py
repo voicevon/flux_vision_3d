@@ -12,6 +12,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from src.utils.text_rendering import measure_text, put_text
 from src.utils.viewport_manager import draw_styled_button
 from tools.studio.studio_ui_common import FILTER_MODE_OPTIONS, SORT_MODE_OPTIONS, draw_dropdown_button
 
@@ -80,7 +81,7 @@ class StudioFrameListMixin:
 
         filtered_indices = studio._get_filtered_indices()
         if not filtered_indices:
-            cv2.putText(canvas, "当前筛选条件下无图像", (x + 60, y + header_h + 45),
+            put_text(canvas, "当前筛选条件下无图像", (x + 60, y + header_h + 45),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.44, (120, 120, 120), 1, cv2.LINE_AA)
             return
 
@@ -106,8 +107,8 @@ class StudioFrameListMixin:
             c_drop_w = 68
 
             # 表头固定列
-            cv2.putText(canvas, "图像帧", (x + 14, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 205, 215), 1, cv2.LINE_AA)
-            cv2.putText(canvas, "Tag", (x + 14 + c_name_w, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 205, 215), 1, cv2.LINE_AA)
+            put_text(canvas, "图像帧", (x + 14, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 205, 215), 1, cv2.LINE_AA)
+            put_text(canvas, "Tag", (x + 14 + c_name_w, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 205, 215), 1, cv2.LINE_AA)
 
             cur_col_x = x + 14 + c_name_w + c_tag_w
             # 动态平差轮次表头列 (R0, R1, R2, ..., R10)
@@ -118,11 +119,11 @@ class StudioFrameListMixin:
                 # 最新一轮列高亮底框
                 if is_latest_col and len(active_headers) > 1:
                     cv2.rectangle(canvas, (cur_col_x - 2, th_y1 + 2), (cur_col_x + c_round_w - 4, th_y2 - 2), (25, 60, 75), -1)
-                cv2.putText(canvas, h_name, (cur_col_x + 6, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, th_color, 1 if not is_latest_col else 2, cv2.LINE_AA)
+                put_text(canvas, h_name, (cur_col_x + 6, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, th_color, 1 if not is_latest_col else 2, cv2.LINE_AA)
                 cur_col_x += c_round_w
 
             # 累计改善降幅列
-            cv2.putText(canvas, "累计降幅", (cur_col_x + 4, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 240, 120), 1, cv2.LINE_AA)
+            put_text(canvas, "累计降幅", (cur_col_x + 4, th_y1 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 240, 120), 1, cv2.LINE_AA)
 
             # 绘制逐帧矩阵数据行
             for row_idx in range(visible_count):
@@ -171,11 +172,11 @@ class StudioFrameListMixin:
                 name_stem = bname.replace(".png", "").replace(".jpg", "")
                 short_name = name_stem if len(name_stem) <= 10 else name_stem[:9] + "…"
                 name_col = (255, 255, 255) if is_selected else (200, 205, 215)
-                cv2.putText(canvas, short_name, (x + 22, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, name_col, 1, cv2.LINE_AA)
+                put_text(canvas, short_name, (x + 22, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, name_col, 1, cv2.LINE_AA)
 
                 # Tag 数量
                 tag_cnt = meta.get("tag_count", 0)
-                cv2.putText(canvas, f"{tag_cnt}T", (x + 14 + c_name_w, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (140, 150, 165), 1, cv2.LINE_AA)
+                put_text(canvas, f"{tag_cnt}T", (x + 14 + c_name_w, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (140, 150, 165), 1, cv2.LINE_AA)
 
                 # 各轮次残差单元格值 (R0, R1, ..., R10)
                 row_vals = matrix.get(bname, [])
@@ -192,7 +193,7 @@ class StudioFrameListMixin:
                     if val is None or is_excl:
                         v_txt = "EXCL" if is_excl else "--"
                         v_col = (90, 95, 110) if not is_excl else (0, 0, 200)
-                        cv2.putText(canvas, v_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.32, v_col, 1, cv2.LINE_AA)
+                        put_text(canvas, v_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.32, v_col, 1, cv2.LINE_AA)
                     else:
                         v_txt = f"{val:.1f}" if val >= 100.0 else f"{val:.2f}"
                         if val > 1.0:
@@ -201,7 +202,7 @@ class StudioFrameListMixin:
                             v_col = (0, 220, 255)
                         else:
                             v_col = (0, 240, 100)
-                        cv2.putText(canvas, v_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, v_col, 1, cv2.LINE_AA)
+                        put_text(canvas, v_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, v_col, 1, cv2.LINE_AA)
                     r_col_x += c_round_w
 
                 # 累计降幅百分比
@@ -228,7 +229,7 @@ class StudioFrameListMixin:
                     pct_txt = "--"
                     pct_col = (110, 115, 125)
 
-                cv2.putText(canvas, pct_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, pct_col, 1, cv2.LINE_AA)
+                put_text(canvas, pct_txt, (r_col_x + 4, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, pct_col, 1, cv2.LINE_AA)
 
         else:
             # ==================== 【模式 B: 高信息密度垂直紧凑帧列表】 ====================
@@ -283,18 +284,18 @@ class StudioFrameListMixin:
                 # 文件名
                 txt_col = (255, 255, 255) if is_selected else (200, 200, 200)
                 short_name = bname if len(bname) <= 15 else bname[:12] + "..."
-                cv2.putText(canvas, short_name, (x + 28, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_col, 1, cv2.LINE_AA)
+                put_text(canvas, short_name, (x + 28, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_col, 1, cv2.LINE_AA)
 
                 # Tag 计数
                 tag_cnt = meta.get("tag_count", 0)
                 t_str = f"{tag_cnt}T"
-                cv2.putText(canvas, t_str, (x + 168, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 160, 175), 1, cv2.LINE_AA)
+                put_text(canvas, t_str, (x + 168, dot_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 160, 175), 1, cv2.LINE_AA)
 
                 # 平均残差数值与降幅
                 if is_excl:
-                    cv2.putText(canvas, "EXCL", (x + 218, dot_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 240), 1, cv2.LINE_AA)
+                    put_text(canvas, "EXCL", (x + 218, dot_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 240), 1, cv2.LINE_AA)
                 else:
                     err_val = meta.get('mean_err', 0.0)
                     err_str = f"{err_val:.2f}px"
                     err_col = (0, 200, 255) if err_val > 0.5 else (0, 240, 100)
-                    cv2.putText(canvas, err_str, (x + 218, dot_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.40, err_col, 1, cv2.LINE_AA)
+                    put_text(canvas, err_str, (x + 218, dot_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.40, err_col, 1, cv2.LINE_AA)

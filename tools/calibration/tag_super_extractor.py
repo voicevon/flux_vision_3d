@@ -40,6 +40,7 @@ DEFAULT_MANIFEST_PATH = os.path.join(DEFAULT_IMAGE_DIR, "tag_observations.yaml")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 from src.utils.config_guard import load_raw_config
+from src.utils.text_rendering import measure_text, put_text
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -282,14 +283,14 @@ class TagSuperExtractor:
             sub_info = f"Cell:{metrics['cell_size_px'][0]}px | [{ch_name}]"
             cv2.rectangle(disp, (badge_x - 6, badge_y - 28), (badge_x + 130, badge_y + 8), (15, 15, 15), -1)
             cv2.rectangle(disp, (badge_x - 6, badge_y - 28), (badge_x + 130, badge_y + 8), border_col, 1)
-            cv2.putText(disp, t_title, (badge_x, badge_y - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(disp, sub_info, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1, cv2.LINE_AA)
+            put_text(disp, t_title, (badge_x, badge_y - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+            put_text(disp, sub_info, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1, cv2.LINE_AA)
 
         # 顶部统计条
         cv2.rectangle(disp, (0, 0), (w, 42), (18, 18, 18), -1)
         cv2.line(disp, (0, 42), (w, 42), (65, 65, 65), 1)
         stat_txt = f"【工序3 离线超精提取】文件: {os.path.basename(raw_img_path)} | 检出标靶: {len(detections)} 个 | 0.01px 亚像素精修已锁定"
-        cv2.putText(disp, stat_txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 240, 255), 1, cv2.LINE_AA)
+        put_text(disp, stat_txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 240, 255), 1, cv2.LINE_AA)
 
         cv2.imwrite(out_path, disp)
 

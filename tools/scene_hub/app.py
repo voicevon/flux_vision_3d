@@ -64,7 +64,9 @@ class SceneHubApp:
         self.scene_mgr = CalibrationSceneManager()
         self.state = HubState(self.scene_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
-        self.window_name = "flux_vision_3d | 工况与场景管理中枢 (Scene Hub)"
+        # 窗口内部 key 必须纯 ASCII (namedWindow ANSI API), 中文标题走 set_unicode_title
+        self.window_name = "flux_vision_3d | scene-hub"
+        self.window_title = "flux_vision_3d | 工况与场景管理中枢 (Scene Hub)"
         self._running = True
 
         if self.win_mgr.scale_pct != 100 or self.win_mgr.canvas_w != 1280 or self.win_mgr.canvas_h != 720:
@@ -74,7 +76,7 @@ class SceneHubApp:
         """主事件循环"""
         # 使用 GuiWindowManager 挂载原生窗口、记忆尺寸与 Unicode 标题
         self.win_mgr.setup_window(self.window_name, self._on_mouse_event)
-        self.win_mgr.set_unicode_title(self.window_name)
+        self.win_mgr.set_unicode_title(self.window_title)
 
         try:
             cv2.resizeWindow(self.window_name, self.win_mgr.canvas_w, self.win_mgr.canvas_h)

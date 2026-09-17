@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Tuple
 import cv2
 import numpy as np
 
-from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
 
 # 共享常量与模块级绘制函数已迁移至 studio_ui_common, 此处 re-import 保持
 # 既有外部导入路径 (from tools.studio.studio_renderer import ...) 兼容可用。
@@ -171,8 +171,8 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
         cv2.line(canvas, (0, top_h), (w, top_h), (55, 60, 72), 1)
 
         # 1. LOGO
-        cv2.putText(canvas, "OFFLINE STUDIO", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 220, 255), 2, cv2.LINE_AA)
-        (logo_w, _), _ = cv2.getTextSize("OFFLINE STUDIO", cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
+        put_text(canvas, "OFFLINE STUDIO", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 220, 255), 2, cv2.LINE_AA)
+        (logo_w, _), _ = measure_text("OFFLINE STUDIO", cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
 
         # 2. LOGO 右侧紧邻的全局快捷动作按钮
         mx, my = studio.mouse_pos
@@ -375,11 +375,11 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
         pct = max(0.0, min(1.0, studio.ba_progress))
         pct_int = int(round(pct * 100))
 
-        cv2.putText(canvas, "[BA] 全局平差整体收敛进度", (cx1 + 22, cy1 + 26),
+        put_text(canvas, "[BA] 全局平差整体收敛进度", (cx1 + 22, cy1 + 26),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
         pct_str = f"{pct_int}%"
-        (pw, _), _ = cv2.getTextSize(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
-        cv2.putText(canvas, pct_str, (cx1 + card_w - 22 - pw, cy1 + 26),
+        (pw, _), _ = measure_text(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
+        put_text(canvas, pct_str, (cx1 + card_w - 22 - pw, cy1 + 26),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 235, 255), 2, cv2.LINE_AA)
 
         bar_x1 = cx1 + 22
@@ -397,7 +397,7 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
             cv2.line(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y1), (180, 245, 255), 1)
 
         stage_txt = studio.ba_stage_text or "准备进入优化平差管线..."
-        cv2.putText(canvas, stage_txt, (cx1 + 22, cy1 + 62),
+        put_text(canvas, stage_txt, (cx1 + 22, cy1 + 62),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 215, 240), 1, cv2.LINE_AA)
 
         cv2.line(canvas, (cx1 + 22, cy1 + 74), (cx1 + card_w - 22, cy1 + 74), (45, 48, 60), 1)
@@ -406,11 +406,11 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
         sub_pct = max(0.0, min(1.0, studio.ba_sub_progress))
         sub_pct_int = int(round(sub_pct * 100))
 
-        cv2.putText(canvas, "优化器实时迭代收敛监控 (Sub-Iteration)", (cx1 + 22, cy1 + 94),
+        put_text(canvas, "优化器实时迭代收敛监控 (Sub-Iteration)", (cx1 + 22, cy1 + 94),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 205, 215), 1, cv2.LINE_AA)
         sub_pct_str = f"{sub_pct_int}%"
-        (spw, _), _ = cv2.getTextSize(sub_pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 2)
-        cv2.putText(canvas, sub_pct_str, (cx1 + card_w - 22 - spw, cy1 + 94),
+        (spw, _), _ = measure_text(sub_pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 2)
+        put_text(canvas, sub_pct_str, (cx1 + card_w - 22 - spw, cy1 + 94),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 180, 255), 2, cv2.LINE_AA)
 
         sbar_y1 = cy1 + 102
@@ -424,7 +424,7 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
             cv2.line(canvas, (bar_x1, sbar_y1), (bar_x1 + sub_fill_w, sbar_y1), (120, 220, 255), 1)
 
         sub_txt = studio.ba_sub_text or "等待当前阶段迭代步进推进..."
-        cv2.putText(canvas, sub_txt, (cx1 + 22, cy1 + 132),
+        put_text(canvas, sub_txt, (cx1 + 22, cy1 + 132),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1, cv2.LINE_AA)
 
     def render_extract_loading_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
@@ -443,11 +443,11 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
         pct = max(0.0, min(1.0, getattr(studio, "extract_progress", 0.0)))
         pct_int = int(round(pct * 100))
 
-        cv2.putText(canvas, "工序 3: 全局全量图像超精重提取", (cx1 + 22, cy1 + 28),
+        put_text(canvas, "工序 3: 全局全量图像超精重提取", (cx1 + 22, cy1 + 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
         pct_str = f"{pct_int}%"
-        (pw, _), _ = cv2.getTextSize(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
-        cv2.putText(canvas, pct_str, (cx1 + card_w - 22 - pw, cy1 + 28),
+        (pw, _), _ = measure_text(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
+        put_text(canvas, pct_str, (cx1 + card_w - 22 - pw, cy1 + 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 235, 255), 2, cv2.LINE_AA)
 
         bar_x1 = cx1 + 22
@@ -465,11 +465,11 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
             cv2.line(canvas, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y1), (180, 245, 255), 1)
 
         stage_txt = getattr(studio, "extract_stage_text", "") or "正在全量调用多尺度增强与正交亚像素精修..."
-        cv2.putText(canvas, stage_txt, (cx1 + 22, cy1 + 80),
+        put_text(canvas, stage_txt, (cx1 + 22, cy1 + 80),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 215, 240), 1, cv2.LINE_AA)
 
     def render_toast(self, studio: Any, canvas: np.ndarray, w: int, h: int, bot_h: int):
-        (tw, _), _ = cv2.getTextSize(studio.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
+        (tw, _), _ = measure_text(studio.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
         tx1 = (w - tw) // 2 - 16
         ty1 = h - bot_h - 46
         tx2 = tx1 + tw + 32
@@ -477,7 +477,7 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
 
         cv2.rectangle(canvas, (tx1, ty1), (tx2, ty2), (120, 30, 100), -1)
         cv2.rectangle(canvas, (tx1, ty1), (tx2, ty2), (220, 60, 180), 1)
-        cv2.putText(canvas, studio.status_toast, (tx1 + 16, ty1 + 21),
+        put_text(canvas, studio.status_toast, (tx1 + 16, ty1 + 21),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2, cv2.LINE_AA)
 
     def render_dropdown_popup(
@@ -523,8 +523,8 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
 
             cv2.rectangle(canvas, (pop_x1 + 3, iy1), (pop_x2 - 3, iy2), row_bg, -1)
             prefix = "✔ " if is_active else "  "
-            (tw, th), _ = cv2.getTextSize(prefix + opt_label, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
-            cv2.putText(canvas, prefix + opt_label, (pop_x1 + 8, iy1 + (item_h + th) // 2 - 2),
+            (tw, th), _ = measure_text(prefix + opt_label, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+            put_text(canvas, prefix + opt_label, (pop_x1 + 8, iy1 + (item_h + th) // 2 - 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_col, 1, cv2.LINE_AA)
 
             btn_id = f"DD_SELECT_{studio.active_dropdown}_{opt_key}"

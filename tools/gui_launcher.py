@@ -29,7 +29,7 @@ if PROJECT_ROOT not in sys.path:
 GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
 
 from src.calibration.scene_manager import CalibrationSceneManager
-from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
 from src.utils.logger import get_logger
 from tools.env_utils import check_env_status
 
@@ -1093,7 +1093,7 @@ class GuiLauncherApp:
             # 运行模式微标
             mode_text = "GUI" if tool.is_gui else "CMD"
             mode_color = (0, 190, 150) if tool.is_gui else (135, 150, 170)
-            cv2.putText(canvas, mode_text, (cx + cw - max(30, int(45 * s)), cy + max(14, int(24 * s))),
+            put_text(canvas, mode_text, (cx + cw - max(30, int(45 * s)), cy + max(14, int(24 * s))),
                         cv2.FONT_HERSHEY_SIMPLEX, max(0.24, 0.32 * s), mode_color, 1, cv2.LINE_AA)
 
     def _render_inspector_panel(self, canvas: np.ndarray, tool: ToolCardMeta, split_x: int):

@@ -15,6 +15,8 @@ from typing import Dict, Optional
 import cv2
 import numpy as np
 
+from src.utils.text_rendering import put_text
+
 # Studio 双棱柱配色 (VerificationVisualizer 历史样式)
 COLORS_THEORY = dict(  # BA 理论 (翡翠绿)
     side=(0, 185, 60), cap=(50, 240, 100), edge=(0, 255, 100),
@@ -95,10 +97,10 @@ def draw_prism(
     if draw_axes:
         p_x, p_y, p_orig = tuple(proj[9]), tuple(proj[10]), tuple(proj[11])
         cv2.line(img, p_orig, p_x, AXIS_X_COLOR, 2, cv2.LINE_AA)
-        cv2.putText(img, "X", p_x, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
+        put_text(img, "X", p_x, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
         cv2.line(img, p_orig, p_y, AXIS_Y_COLOR, 2, cv2.LINE_AA)
-        cv2.putText(img, "Y", p_y, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
-        cv2.putText(img, "Z", (tc[0] + 5, tc[1] - 5),
+        put_text(img, "Y", p_y, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
+        put_text(img, "Z", (tc[0] + 5, tc[1] - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, AXIS_Z_LABEL_COLOR, 2, cv2.LINE_AA)
 
     return {"bottom": b, "top": t, "top_center": np.array(tc), "origin": proj[11] if draw_axes else None}

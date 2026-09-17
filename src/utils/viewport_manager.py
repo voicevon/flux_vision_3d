@@ -23,6 +23,8 @@ from typing import Tuple, Optional
 import numpy as np
 import cv2
 
+from src.utils.text_rendering import measure_text, put_text
+
 # Windows API 可用性检测
 if sys.platform == "win32":
     try:
@@ -405,7 +407,7 @@ class ViewportManager:
             cv2.rectangle(canvas, (zx1, zy1), (zx2, zy2), (0, 215, 255), 1)
 
             pill_txt = f"[{self.user_zoom:.1f}x 放大 | 中键拖拽 | 0复位]"
-            cv2.putText(canvas, pill_txt, (zx1 + 8, zy1 + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1, cv2.LINE_AA)
+            put_text(canvas, pill_txt, (zx1 + 8, zy1 + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1, cv2.LINE_AA)
 
         return canvas
 
@@ -477,10 +479,10 @@ def draw_styled_button(
     cv2.rectangle(canvas, (x1, y1), (x2, y2), tuple(border_col), border_thickness)
 
     # 文本居中对齐
-    (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+    (lw, lh), _ = measure_text(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
     tx = x1 + max(4, (x2 - x1 - lw) // 2)
     ty = y1 + (y2 - y1 + lh) // 2
-    cv2.putText(canvas, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, font_scale, tuple(text_col), 1, cv2.LINE_AA)
+    put_text(canvas, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, font_scale, tuple(text_col), 1, cv2.LINE_AA)
     return is_hover
 
 
@@ -549,10 +551,10 @@ def draw_segmented_toggle(
         if i == num_opts - 1 and shortcut:
             disp_txt += f" ({shortcut})"
 
-        (tw, th), _ = cv2.getTextSize(disp_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.40, font_thick)
+        (tw, th), _ = measure_text(disp_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.40, font_thick)
         tx = sx1 + max(4, (sx2 - sx1 - tw) // 2)
         ty = y1 + (y2 - y1 + th) // 2
-        cv2.putText(canvas, disp_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_color, font_thick, cv2.LINE_AA)
+        put_text(canvas, disp_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_color, font_thick, cv2.LINE_AA)
 
         # 中间分隔线
         if i > 0:
@@ -611,11 +613,11 @@ def draw_dropdown_box(
         display_text += f" ({shortcut})"
     display_text += f"  {arrow_char}"
 
-    (tw, th), _ = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+    (tw, th), _ = measure_text(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
     tx = x1 + max(6, (x2 - x1 - tw) // 2)
     ty = y1 + (y2 - y1 + th) // 2
     txt_color = (255, 255, 255) if (is_open or is_hover_main) else (210, 215, 225)
-    cv2.putText(canvas, display_text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_color, 1, cv2.LINE_AA)
+    put_text(canvas, display_text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_color, 1, cv2.LINE_AA)
 
     item_rects = [("DROPDOWN_TOGGLE", (x1, y1, x2, y2))]
     menu_bounding_rect = None
@@ -663,7 +665,7 @@ def draw_dropdown_box(
                 thick = 1
 
             item_text = f" {bullet} {opt_lbl}"
-            cv2.putText(canvas, item_text, (ix1 + 8, iy1 + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, col, thick, cv2.LINE_AA)
+            put_text(canvas, item_text, (ix1 + 8, iy1 + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, col, thick, cv2.LINE_AA)
 
             item_rects.append((f"SELECT_{opt_key}", (ix1, iy1, ix2, iy2)))
 

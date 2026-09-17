@@ -40,6 +40,7 @@ DIAGNOSTICS_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_diagnostic
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 from src.utils.config_guard import load_raw_config
+from src.utils.text_rendering import measure_text, put_text
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -206,7 +207,7 @@ def run_full_dataset_comparison():
             # 区分原点 Tag 0
             label = f"Tag #{tid} (ORIGIN)" if tid == 0 else f"Tag #{tid}"
             color = (0, 200, 255) if tid == 0 else (0, 255, 0)
-            cv2.putText(disp, label, (cx - 40, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            put_text(disp, label, (cx - 40, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         # 保存单帧诊断图至 tag_calibration_diagnostics
         diag_img_name = f"diagnose_{fname}"
