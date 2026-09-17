@@ -16,14 +16,18 @@ import os
 import sys
 import yaml
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import Tuple
+from src.utils.logger import get_logger
 
 # 解决 Windows 控制台中文输出编码
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
+
+
+log = get_logger(__name__)
 
 
 def compute_rigid_transform_svd(pts_cam: np.ndarray, pts_robot: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
@@ -72,7 +76,7 @@ def compute_rigid_transform_svd(pts_cam: np.ndarray, pts_robot: np.ndarray) -> T
 def save_matrix_to_config(t_matrix: np.ndarray, config_path: str = "config.yaml") -> bool:
     """将解算出的 4x4 齐次变换矩阵回写至 config.yaml"""
     if not os.path.exists(config_path):
-        print(f"[ERROR] 找不到配置文件: {config_path}")
+        log.warning(f"找不到配置文件: {config_path}")
         return False
 
     try:
@@ -92,10 +96,10 @@ def save_matrix_to_config(t_matrix: np.ndarray, config_path: str = "config.yaml"
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
-        print(f"[OK] 标定矩阵已成功写入配置文件: {config_path}")
+        log.info(f"[OK] 标定矩阵已成功写入配置文件: {config_path}")
         return True
     except Exception as e:
-        print(f"[ERROR] 写入 config.yaml 失败: {e}")
+        log.warning(f"写入 config.yaml 失败: {e}")
         return False
 
 
@@ -129,7 +133,7 @@ def run_demo_calibration(config_path: str = "config.yaml"):
     t_ground_truth = np.array([185.0, 310.0, -480.0])
     pts_robot = (r_ground_truth @ pts_cam.T).T + t_ground_truth + noise
 
-    print(f"参与配准的点对数量: {len(pts_cam)} 点")
+    log.info(f"参与配准的点对数量: {len(pts_cam)} 点")
     print("-" * 70)
     print(f"{'标定点':<8}{'相机测量 (Xc, Yc, Zc) mm':<32}{'机械臂示教 (Xr, Yr, Zr) mm'}")
     print("-" * 70)
@@ -146,13 +150,13 @@ def run_demo_calibration(config_path: str = "config.yaml"):
     t_4x4[:3, :3] = r_mat
     t_4x4[:3, 3] = t_vec
 
-    print(f"\n[SVD 解算成功] 标定均方根重投影误差 (RMSE): {rmse:.3f} mm")
+    log.info(f"\n[SVD 解算成功] 标定均方根重投影误差 (RMSE): {rmse:.3f} mm")
     if rmse < 1.0:
-        print("[评价] 精度极高 (RMSE < 1.0mm)，完全达到工业夹持装配标准！")
+        log.info("[评价] 精度极高 (RMSE < 1.0mm)，完全达到工业夹持装配标准！")
     elif rmse < 3.0:
-        print("[评价] 精度良好 (RMSE < 3.0mm)，满足普通分拣需求。")
+        log.info("[评价] 精度良好 (RMSE < 3.0mm)，满足普通分拣需求。")
     else:
-        print("[警告] 误差偏大 (RMSE >= 3.0mm)，建议复查示教点触碰精度。")
+        log.warning("[警告] 误差偏大 (RMSE >= 3.0mm)，建议复查示教点触碰精度。")
 
     print("\n齐次变换矩阵 T_cam_to_scara (4x4):")
     for row in t_4x4:
@@ -190,31 +194,31 @@ def run_interactive_calibration(config_path: str = "config.yaml"):
         if c_input.lower() == 'c':
             pts_cam_list.clear()
             pts_robot_list.clear()
-            print("  [INFO] 已清空所有点。")
+            log.info("  已清空所有点。")
             continue
 
         try:
             c_vals = [float(x) for x in c_input.replace(",", " ").split()]
             if len(c_vals) != 3:
-                print("  [!] 输入格式错误，需要恰好 3 个数值 (X, Y, Z)")
+                log.warning("  [!] 输入格式错误，需要恰好 3 个数值 (X, Y, Z)")
                 continue
         except ValueError:
-            print("  [!] 数值解析失败，请重新输入")
+            log.warning("  [!] 数值解析失败，请重新输入")
             continue
 
         r_input = input(f"  请输入点 #{pt_idx} 机械臂坐标 [Xr, Yr, Zr] (以逗号或空格分隔): ").strip()
         try:
             r_vals = [float(x) for x in r_input.replace(",", " ").split()]
             if len(r_vals) != 3:
-                print("  [!] 输入格式错误，需要恰好 3 个数值 (X, Y, Z)")
+                log.warning("  [!] 输入格式错误，需要恰好 3 个数值 (X, Y, Z)")
                 continue
         except ValueError:
-            print("  [!] 数值解析失败，请重新输入")
+            log.warning("  [!] 数值解析失败，请重新输入")
             continue
 
         pts_cam_list.append(c_vals)
         pts_robot_list.append(r_vals)
-        print(f"  [OK] 已记录点 #{pt_idx}: 相机={c_vals} -> 机械臂={r_vals}")
+        log.info(f"  [OK] 已记录点 #{pt_idx}: 相机={c_vals} -> 机械臂={r_vals}")
 
         if len(pts_cam_list) >= 4:
             ans = input("  当前已录入 4 个及以上点，是否立即开始计算? (y/n/继续输入): ").strip().lower()
@@ -222,7 +226,7 @@ def run_interactive_calibration(config_path: str = "config.yaml"):
                 break
 
     if len(pts_cam_list) < 3:
-        print("\n[!] 标定点不足 3 个，无法计算变换矩阵。标定退出。")
+        log.error("\n[!] 标定点不足 3 个，无法计算变换矩阵。标定退出。")
         return
 
     pts_cam = np.array(pts_cam_list, dtype=float)
@@ -235,7 +239,7 @@ def run_interactive_calibration(config_path: str = "config.yaml"):
         t_4x4[:3, 3] = t_vec
 
         print("\n" + "=" * 70)
-        print(f"[标定解算成功] 均方根误差 (RMSE): {rmse:.3f} mm")
+        log.info(f"[标定解算成功] 均方根误差 (RMSE): {rmse:.3f} mm")
         print("4x4 齐次变换矩阵 T_cam_to_scara:")
         for row in t_4x4:
             print("  [ " + ", ".join(f"{val:10.5f}" for val in row) + " ]")
@@ -244,12 +248,12 @@ def run_interactive_calibration(config_path: str = "config.yaml"):
         confirm = input("\n是否将此标定矩阵保存并更新至 config.yaml? (y/n): ").strip().lower()
         if confirm == 'y':
             save_matrix_to_config(t_4x4, config_path)
-            print("[SUCCESS] 手眼标定已完成，视觉系统后续将直接输出机械臂世界坐标！\n")
+            log.info("[SUCCESS] 手眼标定已完成，视觉系统后续将直接输出机械臂世界坐标！\n")
         else:
-            print("[INFO] 用户取消保存。")
+            log.info("用户取消保存。")
 
     except Exception as e:
-        print(f"[ERROR] 标定计算失败: {e}")
+        log.warning(f"标定计算失败: {e}")
 
 
 def main():
@@ -272,7 +276,7 @@ def main():
     elif choice == "2":
         run_demo_calibration(cfg_path)
     else:
-        print("已退出。")
+        log.error("已退出。")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ GUI 控制中心自动化单元测试 (tests/test_gui_launcher.py)
 
 import unittest
 import numpy as np
-import cv2
 
 from tools.gui_launcher import GuiLauncherApp, build_tools_catalog, ToolCardMeta
 

@@ -13,13 +13,20 @@
 
 import os
 import math
-from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any, Set, Callable
 import numpy as np
 import cv2
 from scipy.optimize import least_squares
 
 from src.calibration.covisibility_graph import CovisibilityGraphAnalyzer, CovisibilityGraphError
+from src.calibration.ba_report import compute_3d_uncertainties, export_diagnostic_report
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
+
+# 两阶段 BA 最小二乘统一收敛容差 (ftol/xtol/gtol 三项同值)
+_BA_CONVERGE_TOL = 1e-5
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -115,7 +122,7 @@ class BundleAdjustmentOptimizer:
 
         all_detected_tags = set(report["all_tags"])
         if report["critical_bridges"]:
-            print(f"[NOTE] 提示：发现 {len(report['critical_bridges'])} 对标靶仅由单张图共视支撑 (关键桥梁): {report['critical_bridges']}")
+            log.info(f"[NOTE] 提示：发现 {len(report['critical_bridges'])} 对标靶仅由单张图共视支撑 (关键桥梁): {report['critical_bridges']}")
 
         # 2. 生成高质量初值 (多标靶联合超定 PnP 初值传递，杜绝单链累积误差与翻转)
         base_static_id = x_align_tag_id if x_align_tag_id in all_detected_tags else min(all_detected_tags)
@@ -176,7 +183,7 @@ class BundleAdjustmentOptimizer:
             raise RuntimeError(f"以下标靶未能完成初值初始化: {missing_tags}")
 
         active_frames = sorted(list(camera_poses_init.keys()))
-        print(f"[+] 初值推导完成: 成功初始化 {len(tag_poses_init)} 个标靶位姿，{len(active_frames)} 个采图机位位姿")
+        log.info(f"[+] 初值推导完成: 成功初始化 {len(tag_poses_init)} 个标靶位姿，{len(active_frames)} 个采图机位位姿")
 
         # 3. 计算每个观测点的初始权重 (观测加权)
         obs_weights = {}
@@ -293,8 +300,8 @@ class BundleAdjustmentOptimizer:
                                     "sub_progress": sub_pct,
                                     "call_count": self.call_count
                                 })
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.warning(f"[BA] 优化进度回调异常 (已忽略): {e}")
                     return res
                 return _wrapped
 
@@ -311,7 +318,7 @@ class BundleAdjustmentOptimizer:
                 "call_count": 0
             })
 
-        print("[*] 正在执行 Phase 1 阶段一：基于 Cauchy 鲁棒核的粗差清洗与全局收敛...")
+        log.info("[*] 正在执行 Phase 1 阶段一：基于 Cauchy 鲁棒核的粗差清洗与全局收敛...")
         monitor1 = _OptimizationMonitor(stage=1, stage_name="粗差清洗收敛", max_iters=30, cb=callback)
         res_stage1 = least_squares(
             monitor1.wrap_residuals(residuals_func, obs_weights, None), x0,
@@ -319,9 +326,9 @@ class BundleAdjustmentOptimizer:
             loss='cauchy',
             f_scale=1.5,
             x_scale='jac',
-            ftol=1e-5,
-            xtol=1e-5,
-            gtol=1e-5,
+            ftol=_BA_CONVERGE_TOL,
+            xtol=_BA_CONVERGE_TOL,
+            gtol=_BA_CONVERGE_TOL,
             max_nfev=200,
             verbose=0
         )
@@ -362,10 +369,10 @@ class BundleAdjustmentOptimizer:
                 outliers_detected.add((f, t_id))
 
         if outliers_detected:
-            print(f"[CLEAN] 自动清洗识别出 {len(outliers_detected)} 个潜在粗差/远景噪点观测 (MAD 门限 > {outlier_thresh:.2f}px, 中位数={med_e:.2f}px):")
+            log.info(f"[CLEAN] 自动清洗识别出 {len(outliers_detected)} 个潜在粗差/远景噪点观测 (MAD 门限 > {outlier_thresh:.2f}px, 中位数={med_e:.2f}px):")
             for f, t_id in sorted(list(outliers_detected)):
                 f_name = active_frame_names[f] if f < len(active_frame_names) else f"frame_{f}"
-                print(f"        - [{f_name}] Tag #{t_id}")
+                log.info(f"        - [{f_name}] Tag #{t_id}")
 
         max_iters_p2 = 35
         if callback:
@@ -379,7 +386,7 @@ class BundleAdjustmentOptimizer:
                 "call_count": 0
             })
 
-        print("[*] 正在执行 Phase 1 阶段二：微容差 (ftol=1e-5) 极致深层平差收敛...")
+        log.info("[*] 正在执行 Phase 1 阶段二：微容差 (ftol=1e-5) 极致深层平差收敛...")
         monitor2 = _OptimizationMonitor(stage=2, stage_name="微容差深度平差", max_iters=max_iters_p2, cb=callback)
         res_stage2 = least_squares(
             monitor2.wrap_residuals(residuals_func, obs_weights, outliers_detected), res_stage1.x,
@@ -387,9 +394,9 @@ class BundleAdjustmentOptimizer:
             loss='cauchy',
             f_scale=1.0,
             x_scale='jac',
-            ftol=1e-5,
-            xtol=1e-5,
-            gtol=1e-5,
+            ftol=_BA_CONVERGE_TOL,
+            xtol=_BA_CONVERGE_TOL,
+            gtol=_BA_CONVERGE_TOL,
             max_nfev=200,
             verbose=0
         )
@@ -432,7 +439,7 @@ class BundleAdjustmentOptimizer:
                         clean_residuals.extend(diff.flatten())
 
         rmse_px = float(np.sqrt(np.mean(np.array(clean_residuals) ** 2)))
-        print(f"[OK] 两阶段 BA 极限优化完成！有效观测像面 RMSE: {rmse_px:.3f} 像素 (迭代次数: {res_stage2.nfev})")
+        log.info(f"[OK] 两阶段 BA 极限优化完成！有效观测像面 RMSE: {rmse_px:.3f} 像素 (迭代次数: {res_stage2.nfev})")
 
         # 5. 计算 3D 标靶空间坐标一阶协方差置信区间 (Uncertainty Estimation)
         tag_uncertainties = self.compute_3d_uncertainties(
@@ -493,45 +500,13 @@ class BundleAdjustmentOptimizer:
                 rmse_px=rmse_px
             )
         except Exception as e:
-            print(f"[WARN] 导出深度诊断报告异常 (已安全忽略): {e}")
+            log.warning(f"[WARN] 导出深度诊断报告异常 (已安全忽略): {e}")
 
         return final_tags_map
 
     def compute_3d_uncertainties(self, jacobian, static_tags, base_id, sigma_res_px) -> Dict[int, Dict[str, float]]:
-        """
-        基于平差最优解雅可比矩阵 J 计算参数协方差：
-        Cov = inv(J^T J) * sigma_res^2
-        提取每个标靶 3D 位置分量 (tv_x, tv_y, tv_z) 的 3-sigma 空间置信区间 (单位: mm)
-        """
-        uncertainties = {base_id: {"sigma_x_mm": 0.0, "sigma_y_mm": 0.0, "sigma_z_mm": 0.0, "sigma_3d_mm": 0.0}}
-        if jacobian is None:
-            return uncertainties
-        try:
-            J = jacobian
-            if hasattr(J, "toarray"):
-                J = J.toarray()
-            JTJ = J.T @ J
-            JTJ_reg = JTJ + np.eye(JTJ.shape[0]) * 1e-6
-            cov = np.linalg.pinv(JTJ_reg) * (sigma_res_px ** 2)
-
-            for idx, tid in enumerate(static_tags):
-                t_offset = idx * 6 + 3
-                var_x = max(0.0, float(cov[t_offset, t_offset]))
-                var_y = max(0.0, float(cov[t_offset + 1, t_offset + 1]))
-                var_z = max(0.0, float(cov[t_offset + 2, t_offset + 2]))
-                sx = round(float(np.sqrt(var_x) * 3.0), 3)
-                sy = round(float(np.sqrt(var_y) * 3.0), 3)
-                sz = round(float(np.sqrt(var_z) * 3.0), 3)
-                s3d = round(float(np.sqrt(var_x + var_y + var_z) * 3.0), 3)
-                uncertainties[tid] = {
-                    "sigma_x_mm": sx,
-                    "sigma_y_mm": sy,
-                    "sigma_z_mm": sz,
-                    "sigma_3d_mm": s3d
-                }
-        except Exception:
-            pass
-        return uncertainties
+        """标靶 3D 置信区间计算（委托 ba_report 纯函数实现）"""
+        return compute_3d_uncertainties(jacobian, static_tags, base_id, sigma_res_px)
 
     def export_diagnostic_report(self,
                                  final_tags_map: Dict[str, Any],
@@ -541,116 +516,16 @@ class BundleAdjustmentOptimizer:
                                  outliers_detected: Set[Tuple[int, int]],
                                  rmse_px: float,
                                  report_dir: str = "data/tag_calibration_verification") -> str:
-        """
-        生成 2D 像面 Quiver 残差矢量场并输出详尽的 Markdown 精度体检报告
-        """
-        os.makedirs(report_dir, exist_ok=True)
-        vis_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "visualized")
-        os.makedirs(vis_dir, exist_ok=True)
-
-        # 1. 针对每张图绘制 2D 像面 Quiver 矢量场分析图
-        frame_grouped = {}
-        for item in detailed_obs_res:
-            frame_grouped.setdefault(item["frame_name"], []).append(item)
-
-        for f_name, obs_items in frame_grouped.items():
-            img_path = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", f_name)
-            if not os.path.exists(img_path):
-                continue
-            base_img = cv2.imread(img_path)
-            if base_img is None:
-                continue
-
-            h, w = base_img.shape[:2]
-            quiver_img = base_img.copy()
-
-            # 绘制顶部半透明状态条
-            cv2.rectangle(quiver_img, (0, 0), (w, 50), (20, 24, 30), -1)
-            cv2.putText(quiver_img, f"BA 2D Residual Field (Quiver x20) - {f_name} | RMSE: {rmse_px:.3f}px",
-                        (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2, cv2.LINE_AA)
-
-            for obs in obs_items:
-                tid = obs["tag_id"]
-                c_obs = obs["corners_obs"]
-                c_proj = obs["corners_proj"]
-                is_outlier = obs["is_outlier"]
-
-                poly_color = (0, 0, 255) if is_outlier else (0, 255, 0)
-                cv2.polylines(quiver_img, [c_obs.astype(np.int32)], True, poly_color, 2)
-
-                scale = 20.0
-                for pt_o, pt_p in zip(c_obs, c_proj):
-                    dx = (pt_p[0] - pt_o[0]) * scale
-                    dy = (pt_p[1] - pt_o[1]) * scale
-                    p_start = (int(round(pt_o[0])), int(round(pt_o[1])))
-                    p_end = (int(round(pt_o[0] + dx)), int(round(pt_o[1] + dy)))
-                    
-                    cv2.circle(quiver_img, p_start, 3, (0, 255, 0), -1)
-                    cv2.drawMarker(quiver_img, (int(round(pt_p[0])), int(round(pt_p[1]))), (0, 255, 255), 
-                                   markerType=cv2.MARKER_CROSS, markerSize=6, thickness=1)
-                    cv2.arrowedLine(quiver_img, p_start, p_end, (0, 0, 255) if is_outlier else (0, 165, 255), 
-                                    2, tipLength=0.3)
-
-                center = np.mean(c_obs, axis=0).astype(int)
-                lbl = f"Tag #{tid}: {obs['rmse_px']:.2f}px" + (" [OUTLIER]" if is_outlier else "")
-                cv2.putText(quiver_img, lbl, (center[0] - 40, center[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
-
-            out_quiver_path = os.path.join(vis_dir, os.path.splitext(f_name)[0] + "_quiver.png")
-            cv2.imwrite(out_quiver_path, quiver_img)
-
-        # 2. 编写 Markdown 综合体检报告
-        report_file = os.path.join(report_dir, "ba_precision_diagnostic_report.md")
-        lines = [
-            "# AprilTag 离线 BA 空间平差精度体检与深度诊断报告",
-            f"\n> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
-            f"> 评价结论: **{'[优异 PASS]' if rmse_px <= 0.8 else '[良好 ACCEPTABLE]'}** (重投影有效 RMSE: **{rmse_px:.3f} px**)\n",
-            "## 1. 平差全局核心指标",
-            "| 指标项 | 测量值 | 工业判定门限 | 状态 |",
-            "| :--- | :--- | :--- | :--- |",
-            f"| **重投影均方根误差 (RMSE)** | **{rmse_px:.3f} px** | $\\le 0.50$ px | {'PASS' if rmse_px <= 0.5 else 'WARN'} |",
-            f"| **参与优化图像帧数** | {final_tags_map.get('calibrated_images_count', 0)} 帧 | $\\ge 10$ 帧 | PASS |",
-            f"| **空间标靶总数** | {len(final_tags_map.get('tags', {}))} 个 | $\\ge 6$ 个 | PASS |",
-            f"| **自动识别清洗离群观测** | {len(outliers_detected)} 项 | $\\le 5$ 项 | {'PASS' if len(outliers_detected) <= 5 else 'WARN'} |",
-            "\n## 2. 标靶 3D 空间绝对坐标与 $3\\sigma$ 置信度分析",
-            "| 标靶 ID | 空间 X (mm) | 空间 Y (mm) | 空间 Z (mm) | $3\\sigma$ 空间不确定度 (mm) | $3\\sigma$ Z轴深度向 (mm) |",
-            "| :---: | :---: | :---: | :---: | :---: | :---: |"
-        ]
-
-        tags_dict = final_tags_map.get("tags", {})
-        for tid in sorted(tags_dict.keys()):
-            info = tags_dict[tid]
-            pos = info.get("position_mm", [0, 0, 0])
-            unc = tag_uncertainties.get(tid, {})
-            s3d = unc.get("sigma_3d_mm", 0.0)
-            sz = unc.get("sigma_z_mm", 0.0)
-            lines.append(f"| Tag #{tid:2d} | {pos[0]:8.2f} | {pos[1]:8.2f} | {pos[2]:8.2f} | $\\pm${s3d:5.2f} mm | $\\pm${sz:5.2f} mm |")
-
-        lines.extend([
-            "\n## 3. 各采图机位重投影残差分布",
-            "| 图像文件名 | 观测标靶数 | 平均重投影误差 (px) | 最大误差标靶 | 状态 |",
-            "| :--- | :---: | :---: | :--- | :---: |"
-        ])
-
-        for f_name, obs_items in sorted(frame_grouped.items()):
-            valid_e = [o["rmse_px"] for o in obs_items if not o["is_outlier"]]
-            f_mean = float(np.mean(valid_e)) if valid_e else 0.0
-            max_item = max(obs_items, key=lambda x: x["rmse_px"])
-            max_str = f"Tag #{max_item['tag_id']} ({max_item['rmse_px']:.2f}px)"
-            status_str = "PASS" if f_mean <= 0.8 else "WARN"
-            lines.append(f"| {f_name:15s} | {len(obs_items):2d} 个 | {f_mean:6.2f} px | {max_str:20s} | {status_str} |")
-
-        lines.extend([
-            "\n## 4. 2D 残差矢量场 (Quiver Plot) 说明",
-            "- 分析图像已输出至目录: `data/tag_calibration_images/visualized/*_quiver.png`；",
-            "- 红色箭头代表角点残差矢量 (已统一放大 20 倍)，用于辨识相机内参畸变是否完全对称消除；",
-            "- 若箭头呈完全各向同性发散，说明系统误差已被彻底吸收，剩余均为传感器随机白噪声。"
-        ])
-
-        with open(report_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        print(f"[OK] 深度精度体检与诊断报告已生成至: {report_file}")
-        return report_file
+        """Quiver 残差矢量场与 Markdown 精度体检报告生成（委托 ba_report 纯函数实现）"""
+        return export_diagnostic_report(
+            final_tags_map=final_tags_map,
+            detailed_obs_res=detailed_obs_res,
+            active_frame_names=active_frame_names,
+            tag_uncertainties=tag_uncertainties,
+            outliers_detected=outliers_detected,
+            rmse_px=rmse_px,
+            report_dir=report_dir
+        )
 
     def apply_baseline_scale(self, 
                              tag_poses: Dict[int, np.ndarray],
@@ -666,7 +541,7 @@ class BundleAdjustmentOptimizer:
         :return: (scaled_tag_poses, scale_factor, real_marker_size_mm)
         """
         if tag_id_a not in tag_poses or tag_id_b not in tag_poses:
-            print(f"[WARN] 尺度标定失败：标靶 {tag_id_a} 或 {tag_id_b} 未在重构地图中！保持名义尺度。")
+            log.warning(f"[WARN] 尺度标定失败：标靶 {tag_id_a} 或 {tag_id_b} 未在重构地图中！保持名义尺度。")
             return tag_poses, 1.0, self.marker_size_mm
 
         p_a = tag_poses[tag_id_a][:3, 3]
@@ -674,19 +549,19 @@ class BundleAdjustmentOptimizer:
         nominal_dist = float(np.linalg.norm(p_a - p_b))
 
         if nominal_dist < 1e-4:
-            print(f"[WARN] 标靶 {tag_id_a} 与 {tag_id_b} 距离过近，无法用作尺度基线！")
+            log.warning(f"[WARN] 标靶 {tag_id_a} 与 {tag_id_b} 距离过近，无法用作尺度基线！")
             return tag_poses, 1.0, self.marker_size_mm
 
         scale_factor = float(real_distance_mm) / nominal_dist
         real_marker_size = self.marker_size_mm * scale_factor
 
-        print(f"\n[+] ====== 双标靶中心基线绝对尺度校准 (Metric Baseline Gauge) ======")
-        print(f"  -> 基准标靶对: Tag #{tag_id_a} <---> Tag #{tag_id_b}")
-        print(f"  -> 当前名义欧氏距离: {nominal_dist:.2f} mm")
-        print(f"  -> 现场测量实际距离: {real_distance_mm:.2f} mm")
-        print(f"  -> 尺度修正系数 (Scale): {scale_factor:.6f}")
-        print(f"  -> 反算单个 Tag 真实物理边长: {real_marker_size:.2f} mm (名义初值: {self.marker_size_mm:.2f} mm)")
-        print(f"===================================================================\n")
+        log.info(f"\n[+] ====== 双标靶中心基线绝对尺度校准 (Metric Baseline Gauge) ======")
+        log.info(f"  -> 基准标靶对: Tag #{tag_id_a} <---> Tag #{tag_id_b}")
+        log.info(f"  -> 当前名义欧氏距离: {nominal_dist:.2f} mm")
+        log.info(f"  -> 现场测量实际距离: {real_distance_mm:.2f} mm")
+        log.info(f"  -> 尺度修正系数 (Scale): {scale_factor:.6f}")
+        log.info(f"  -> 反算单个 Tag 真实物理边长: {real_marker_size:.2f} mm (名义初值: {self.marker_size_mm:.2f} mm)")
+        log.info(f"===================================================================\n")
 
         scaled_poses = {}
         for t_id, T in tag_poses.items():
@@ -780,7 +655,7 @@ class BundleAdjustmentOptimizer:
             },
             "tags": {}
         }
-        print(f"[+] [ANCHOR] FR-9.6 世界系绝对锚定完成: Tag {origin_id} -> {p0_w.tolist()} mm, "
+        log.info(f"[+] [ANCHOR] FR-9.6 世界系绝对锚定完成: Tag {origin_id} -> {p0_w.tolist()} mm, "
               f"Tag {align_id} -> {p1_w.tolist()} mm, 尺度因子: {scale:.6f}, "
               f"反算真实边长: {self.marker_size_mm:.2f} mm")
 
@@ -818,7 +693,7 @@ class BundleAdjustmentOptimizer:
             p_origin = tag_poses[origin_tag_id][:3, 3].copy()
         else:
             p_origin = np.zeros(3)
-            print(f"[WARN] 未在有效图像中检出 Tag {origin_tag_id}，将以参考标靶相对对齐！")
+            log.warning(f"[WARN] 未在有效图像中检出 Tag {origin_tag_id}，将以参考标靶相对对齐！")
 
         yaw_rad = 0.0
         aligned_x_target_id = x_align_tag_id
@@ -826,11 +701,11 @@ class BundleAdjustmentOptimizer:
         if origin_tag_id in tag_poses and x_align_tag_id in tag_poses:
             vec_x = tag_poses[x_align_tag_id][:3, 3] - p_origin
             yaw_rad = math.atan2(vec_x[1], vec_x[0])
-            print(f"[+] [ALIGN] 成功锚定基准 Tag {origin_tag_id} -> Tag {x_align_tag_id}，坐标系 X 轴对齐旋转角: {-math.degrees(yaw_rad):.2f}°")
+            log.info(f"[+] [ALIGN] 成功锚定基准 Tag {origin_tag_id} -> Tag {x_align_tag_id}，坐标系 X 轴对齐旋转角: {-math.degrees(yaw_rad):.2f}°")
         else:
             # 指定对齐标靶缺失，打印显式告警
             available_tags = [tid for tid in tag_poses.keys() if tid != origin_tag_id]
-            print(f"[WARN] [ALIGN] 指定的 X 轴对齐标靶 Tag {x_align_tag_id} 不在解算标靶中 (可用静态标靶: {sorted(available_tags)})！")
+            log.warning(f"[WARN] [ALIGN] 指定的 X 轴对齐标靶 Tag {x_align_tag_id} 不在解算标靶中 (可用静态标靶: {sorted(available_tags)})！")
             
             # 自适应寻找候选远端标靶（水平距离最大且在有效范围内的标靶）
             if available_tags and origin_tag_id in tag_poses:
@@ -843,9 +718,9 @@ class BundleAdjustmentOptimizer:
                 aligned_x_target_id = fallback_id
                 vec_x = tag_poses[fallback_id][:3, 3] - p_origin
                 yaw_rad = math.atan2(vec_x[1], vec_x[0])
-                print(f"[!] [ALIGN] 自动降级使用最远端刚体标靶 Tag {fallback_id} (距离 {candidate_dists[0][0]:.1f}mm) 进行 X 轴定向校正: {-math.degrees(yaw_rad):.2f}°")
+                log.warning(f"[!] [ALIGN] 自动降级使用最远端刚体标靶 Tag {fallback_id} (距离 {candidate_dists[0][0]:.1f}mm) 进行 X 轴定向校正: {-math.degrees(yaw_rad):.2f}°")
             else:
-                print(f"[ERROR] [ALIGN] 无法进行世界 X 轴对齐，世界系方向将退化保持为基准标靶印刷朝向！")
+                log.error(f"[ERROR] [ALIGN] 无法进行世界 X 轴对齐，世界系方向将退化保持为基准标靶印刷朝向！")
 
         aligned_map["x_axis_align_tag_id"] = aligned_x_target_id
 

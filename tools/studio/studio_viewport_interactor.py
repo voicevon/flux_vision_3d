@@ -46,7 +46,7 @@ class StudioViewportInteractor:
                     self.win_h = h
                     return True
         except Exception:
-            pass
+            pass  # GUI 可选功能：窗口矩形查询失败按尺寸未变处理
         return False
 
     def reset(self):

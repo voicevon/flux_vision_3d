@@ -16,7 +16,8 @@ from tools.tracker.common import (
     COLOR_ACCENT, COLOR_BG, COLOR_BORDER, COLOR_BORDER_SEL, COLOR_CARD_BG,
     COLOR_CARD_SEL, COLOR_TEXT_SUB, COL_BLUE, COL_CYAN, COL_GRAY, COL_GREEN,
     COL_PANEL_BG, COL_PANEL_EDGE, COL_RED, COL_WHITE, COL_YELLOW, TOOLBAR_H,
-    _PRISM_PTS, _tag_local_frame, draw_text, fmt_point)
+    PRISM_HW_MM, PRISM_HEIGHT_MM, _tag_local_frame, draw_text, fmt_point)
+from src.calibration.prism_renderer import draw_prism, COLORS_THEORY, COLORS_OBSERVED
 
 
 class TrackerRenderer:
@@ -233,36 +234,21 @@ class TrackerRenderer:
 
     # ------------------------------ 棱柱与叠加层 ------------------------------
     def _draw_studio_prism(self, canvas, rvec, tvec, is_theory, is_target=False):
-        """Offline Studio 同款四棱柱 (VerificationVisualizer 参数一致):
-        截面 30x30mm (半宽15) x 生长高度 75mm, 半透明填充 + 棱线描边 + 顶面中心点;
-        is_theory=True 翡翠绿(BA理论) / False 科技天蓝(实测);
+        """统一 PrismRenderer Studio 同款四棱柱: 截面 30x30mm x 生长高度 75mm,
+        半透明填充 + 棱线描边 + 顶面中心点; is_theory=True 翡翠绿(BA理论) / False 科技天蓝(实测);
         目标 Tag 额外绘制底面中心点与中心生长轴 (至固定高顶面中心)。
         """
         K, dist = self.tr.engine.camera_matrix, self.tr.engine.dist_coeffs
-        proj = cv2.projectPoints(_PRISM_PTS, rvec, tvec, K, dist)[0].reshape(-1, 2).astype(int)
-        b, t, tc = proj[0:4], proj[4:8], tuple(proj[8])
-        if is_theory:
-            side_c, cap_c, edge_c, top_c, dot_c = \
-                (0, 185, 60), (50, 240, 100), (0, 255, 100), (120, 255, 160), (0, 255, 120)
-        else:
-            side_c, cap_c, edge_c, top_c, dot_c = \
-                (235, 125, 20), (255, 175, 50), (255, 195, 70), (255, 255, 255), (255, 200, 60)
-        overlay = canvas.copy()
-        for i in range(4):
-            j = (i + 1) % 4
-            cv2.fillPoly(overlay, [np.array([b[i], b[j], t[j], t[i]], dtype=np.int32)], side_c)
-        cv2.fillPoly(overlay, [t], cap_c)
-        cv2.addWeighted(overlay, 0.35, canvas, 0.65, 0, canvas)
-        cv2.polylines(canvas, [b], True, edge_c, 2, cv2.LINE_AA)
-        cv2.polylines(canvas, [t], True, top_c, 2, cv2.LINE_AA)
-        for i in range(4):
-            cv2.line(canvas, tuple(b[i]), tuple(t[i]), edge_c, 2, cv2.LINE_AA)
-        cv2.circle(canvas, tc, 4, dot_c, -1, cv2.LINE_AA)      # 生长固定高后的顶面中心点
-        if is_target:                                          # 目标 Tag: 底面中心点 + 中心生长轴
+        proj = draw_prism(canvas, K, dist, rvec, tvec,
+                          half_w=PRISM_HW_MM, height=PRISM_HEIGHT_MM,
+                          colors=COLORS_THEORY if is_theory else COLORS_OBSERVED,
+                          alpha=0.35)
+        if is_target:
+            dot_c = COLORS_THEORY["dot"] if is_theory else COLORS_OBSERVED["dot"]
             pb = cv2.projectPoints(np.array([[0.0, 0.0, 0.0]]), rvec, tvec, K, dist)[0]
             pb = tuple(pb.reshape(2).astype(int))
-            cv2.circle(canvas, pb, 4, dot_c, -1, cv2.LINE_AA)
-            cv2.line(canvas, pb, tc, dot_c, 1, cv2.LINE_AA)
+            cv2.circle(canvas, pb, 4, dot_c, -1, cv2.LINE_AA)     # 底面中心点
+            cv2.line(canvas, pb, tuple(proj["top_center"]), dot_c, 1, cv2.LINE_AA)
 
     def draw_overlay(self, canvas, det):
         """叠加层: 目标 Tag 绿色高亮框 + Studio 同款蓝色实测棱柱 (含底面/顶面中心点)"""

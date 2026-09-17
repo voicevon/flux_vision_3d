@@ -16,7 +16,7 @@ import tempfile
 import unittest
 import yaml
 
-from src.calibration.scene_manager import CalibrationScene, CalibrationSceneManager
+from src.calibration.scene_manager import CalibrationSceneManager
 
 
 class TestCalibrationSceneManager(unittest.TestCase):

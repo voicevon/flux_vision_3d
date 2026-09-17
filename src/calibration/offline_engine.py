@@ -8,10 +8,11 @@
   3. 既可作为 GUI 交互工作台的计算内核，亦可作为 CI/CD 自动化流水线的无头引擎。
 """
 
-import os
 import cv2
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
+
+from src.calibration.tag_detector import TagDetector
 
 
 class OfflineVerificationEngine:
@@ -48,9 +49,12 @@ class OfflineVerificationEngine:
             [-s, -s, 0.0]
         ], dtype=np.float64)
 
-        # 双路互补检测器初始化 (用于独立原图复检模式)
-        self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_16h5)
-        self.detector_bright, self.detector_dark = self._build_detectors()
+        # 双路互补检测器 (统一收编至 TagDetector, 委托属性保持外部引用兼容)
+        self.tag_detector = TagDetector(valid_tag_ids=valid_tag_ids)
+        self.dictionary = self.tag_detector.dictionary
+        self.detector_bright = self.tag_detector.detector_bright
+        self.detector_dark = self.tag_detector.detector_dark
+        self.refine_corners_subpix = self.tag_detector.refine_corners_subpix
 
     def set_marker_size_mm(self, size_mm: float) -> None:
         """更新标靶物理边长并重建单靶 PnP 物理角点模型 (与地图 BA 反算真实边长保持一致)"""
@@ -65,78 +69,9 @@ class OfflineVerificationEngine:
             [-s, -s, 0.0]
         ], dtype=np.float64)
 
-    def _build_detectors(self):
-        """构建双路互补检测器 (高光路与暗部动态拉伸路)"""
-        def make_params(thresh_c, min_otsu):
-            p = cv2.aruco.DetectorParameters()
-            p.adaptiveThreshWinSizeMin = 3
-            p.adaptiveThreshWinSizeMax = 43
-            p.adaptiveThreshWinSizeStep = 8
-            p.adaptiveThreshConstant = thresh_c
-            p.minOtsuStdDev = min_otsu
-            p.minMarkerPerimeterRate = 0.008
-            p.maxMarkerPerimeterRate = 4.0
-            p.polygonalApproxAccuracyRate = 0.09
-            p.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-            p.perspectiveRemovePixelPerCell = 10
-            p.errorCorrectionRate = 0.50
-            p.perspectiveRemoveIgnoredMarginPerCell = 0.15
-            p.maxErroneousBitsInBorderRate = 0.30
-            return p
-
-        det_bright = cv2.aruco.ArucoDetector(self.dictionary, make_params(5.5, 0.55))
-        det_dark = cv2.aruco.ArucoDetector(self.dictionary, make_params(2.5, 0.45))
-        return det_bright, det_dark
-
     def detect_tags(self, image: np.ndarray) -> Dict[int, np.ndarray]:
-        """双路互补融合检测标靶角点"""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        results = {}
-
-        # 路 1: 高光路
-        c1, ids1, _ = self.detector_bright.detectMarkers(gray)
-        if ids1 is not None:
-            for idx, tag_id in enumerate(ids1.flatten()):
-                tid = int(tag_id)
-                if self.valid_tag_ids and tid not in self.valid_tag_ids:
-                    continue
-                results[tid] = c1[idx].reshape((4, 2))
-
-        # 路 2: 低反差路 (动态百分比拉伸)
-        p_low, p_high = np.percentile(gray[::4, ::4], (2, 98))
-        if p_high > p_low + 10:
-            gray_s = np.clip((gray.astype(np.float32) - p_low) * (255.0 / (p_high - p_low)), 0, 255).astype(np.uint8)
-        else:
-            gray_s = gray
-
-        c2, ids2, _ = self.detector_dark.detectMarkers(gray_s)
-        if ids2 is not None:
-            for idx, tag_id in enumerate(ids2.flatten()):
-                tid = int(tag_id)
-                if self.valid_tag_ids and tid not in self.valid_tag_ids:
-                    continue
-                if tid not in results:
-                    results[tid] = c2[idx].reshape((4, 2))
-
-        # 亚像素精修
-        for tid in list(results.keys()):
-            results[tid] = self._refine_corners(gray, results[tid])
-
-        return results
-
-    def _refine_corners(self, gray: np.ndarray, corners: np.ndarray) -> np.ndarray:
-        """亚像素角点精修"""
-        try:
-            pts = corners.reshape((4, 2)).astype(np.float32)
-            side = (np.linalg.norm(pts[0] - pts[1]) + np.linalg.norm(pts[1] - pts[2])) / 2.0
-            hw = int(np.clip(side * 0.06, 3, 9))
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.001)
-            refined = cv2.cornerSubPix(gray, pts.copy(), (hw, hw), (-1, -1), criteria)
-            if np.max(np.linalg.norm(refined - pts, axis=1)) > 2.5:
-                return pts.astype(np.float64)
-            return refined.astype(np.float64)
-        except Exception:
-            return corners.astype(np.float64)
+        """双路互补融合检测标靶角点 (委托统一 TagDetector, 含白名单过滤与亚像素精修)"""
+        return self.tag_detector.detect_tags(image, refine=True)
 
     def get_tag_world_transform(self, tag_id: int) -> Optional[np.ndarray]:
         """获取标靶在世界坐标系下的 4x4 变换矩阵"""

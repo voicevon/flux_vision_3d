@@ -17,14 +17,11 @@
 
 import os
 import sys
-import glob
-import copy
-import math
 import time
 import yaml
 import argparse
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Any
 import numpy as np
 import cv2
 
@@ -36,11 +33,16 @@ if sys.platform == "win32":
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
     except Exception:
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
 DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
 DEFAULT_MANIFEST_PATH = os.path.join(DEFAULT_IMAGE_DIR, "tag_observations.yaml")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+
+from src.utils.config_guard import load_raw_config
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class TagSuperExtractor:
@@ -71,15 +73,10 @@ class TagSuperExtractor:
         self.clahe_16 = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(16, 16))
 
     def _load_valid_tag_ids(self) -> List[int]:
-        if os.path.exists(CONFIG_PATH):
-            try:
-                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
-                ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
-                if ids:
-                    return [int(x) for x in ids]
-            except Exception:
-                pass
+        cfg = load_raw_config(CONFIG_PATH)
+        ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
+        if ids:
+            return [int(x) for x in ids]
         return list(range(30))
 
     def _build_dense_detector(self) -> cv2.aruco.ArucoDetector:
@@ -345,7 +342,7 @@ class TagSuperExtractor:
         ])
 
         if not disk_files:
-            print(f"[WARN] 采图目录为空: {self.image_dir}")
+            log.warning(f"采图目录为空: {self.image_dir}")
             return {}
 
         print("\n" + "=" * 80)
@@ -439,7 +436,7 @@ class TagSuperExtractor:
             self.generate_annotated_visualization(f_path, detections, vis_out_path)
 
             tag_ids_str = str(sorted(list(detections.keys())))
-            print(f"  [{idx+1:02d}/{len(disk_files):02d}] {base_name:<14} -> 检出 {len(detections):2d} 个标靶: {tag_ids_str:<32} (耗时: {t_cost:.1f}ms)", flush=True)
+            log.info(f"  [{idx+1:02d}/{len(disk_files):02d}] {base_name:<14} -> 检出 {len(detections):2d} 个标靶: {tag_ids_str:<32} (耗时: {t_cost:.1f}ms)")
 
         total_time = time.time() - t0_all
 
@@ -460,7 +457,7 @@ class TagSuperExtractor:
             with open(self.manifest_path, "w", encoding="utf-8") as f:
                 f.write(header_comments)
                 yaml.dump(manifest_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-            print(f"\n[OK] 超精提取观测清单已成功写盘: {self.manifest_path}")
+            log.info(f"\n[OK] 超精提取观测清单已成功写盘: {self.manifest_path}")
 
         print("\n" + "=" * 80)
         print("  【工序 3 超精提取全景体检大成报表】")

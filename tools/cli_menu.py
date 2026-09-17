@@ -10,9 +10,7 @@ flux_vision_3d 交互式 CLI 控制台与工具导航菜单
 import os
 import sys
 import glob
-import time
 import subprocess
-from datetime import datetime
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
@@ -20,13 +18,16 @@ if PROJECT_ROOT not in sys.path:
 os.chdir(PROJECT_ROOT)
 
 from tools.env_utils import check_env_status  # noqa: E402
+from src.utils.logger import get_logger  # noqa: E402
+
+log = get_logger(__name__)
 
 # Windows 终端色彩支持
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
     os.system("")
 
 # 终端 ANSI 色彩定义
@@ -147,7 +148,7 @@ def pause_prompt():
     try:
         input()
     except (EOFError, KeyboardInterrupt):
-        pass
+        pass  # 用户中断/输入流关闭时直接继续，属预期路径
 
 
 def ensure_camera_connected():
@@ -247,7 +248,7 @@ def run_tag_capture_wizard(status=None):
     
     res = subprocess.run(cmd)
     if res.returncode != 0:
-        print(f"\n{C_RED}[异常退出] 采图向导异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
+        log.warning(f"\n{C_RED}[异常退出] 采图向导异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
         pause_prompt()
     elif active_scene:
         active_scene.refresh_stats()
@@ -311,7 +312,7 @@ def run_robot_online_tracker():
 
     res = subprocess.run([sys.executable, "tools/tracker/app.py"])
     if res.returncode != 0:
-        print(f"\n{C_RED}[异常退出] Robot 在线跟踪异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
+        log.warning(f"\n{C_RED}[异常退出] Robot 在线跟踪异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
         pause_prompt()
 
 
@@ -345,8 +346,8 @@ def run_clear_calib_dataset(status=None):
         for f in files:
             try:
                 os.remove(f)
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"删除旧采图文件失败: {f}: {e}")
         if active_scene:
             active_scene.refresh_stats()
             active_scene.save_meta()
@@ -375,7 +376,7 @@ def run_tag_whitelist_manager():
                     raw_cfg = yaml.safe_load(f) or {}
                 current_ids = raw_cfg.get("calibration", {}).get("valid_tag_ids", [])
             except Exception as e:
-                print(f"{C_RED}[WARN] 读取 config.yaml 异常: {e}{C_RESET}")
+                log.warning(f"{C_RED}读取 config.yaml 异常: {e}{C_RESET}")
 
         if not current_ids:
             print(f" 当前运行模式: {C_CYAN}{C_BOLD}【全量探索模式】(放行所有检测到的 16h5 标靶 ID 0~29){C_RESET}")
@@ -408,7 +409,7 @@ def run_tag_whitelist_manager():
                     yaml.dump(raw_cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
                 print(f"\n{C_GREEN}[OK] 成功切换为【全量探索模式】！config.yaml 中 valid_tag_ids 已清空。{C_RESET}")
             except Exception as e:
-                print(f"\n{C_RED}[ERROR] 保存失败: {e}{C_RESET}")
+                log.warning(f"\n{C_RED}保存失败: {e}{C_RESET}")
             pause_prompt()
         elif sub_choice == '3':
             print(f"\n请输入新的标靶 ID 列表，支持逗号分隔和连续范围，例如: {C_GREEN}0, 1, 2, 4, 11-14{C_RESET}")
@@ -438,7 +439,7 @@ def run_tag_whitelist_manager():
                     yaml.dump(raw_cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
                 print(f"\n{C_GREEN}[OK] 白名单已成功更新为: {final_list} (已保存至 config.yaml){C_RESET}")
             except Exception as e:
-                print(f"\n{C_RED}[ERROR] 输入解析或保存失败: {e}，请检查输入格式 (如 0, 1, 2){C_RESET}")
+                log.warning(f"\n{C_RED}输入解析或保存失败: {e}，请检查输入格式 (如 0, 1, 2){C_RESET}")
             pause_prompt()
         elif sub_choice in ('B', '0'):
             break
@@ -458,9 +459,9 @@ def run_open_visualized_dir(status=None):
             subprocess.run(["open", vis_dir])
         else:
             subprocess.run(["xdg-open", vis_dir])
-        print(f"{C_GREEN}[OK] 已在操作系统资源管理器中弹出该目录窗口，您可以直接双击观察带标注的图示化分析图像。{C_RESET}")
+        log.info(f"{C_GREEN}[OK] 已在操作系统资源管理器中弹出该目录窗口，您可以直接双击观察带标注的图示化分析图像。{C_RESET}")
     except Exception as e:
-        print(f"{C_RED}[WARN] 无法自动弹出窗口，请手动访问: {vis_dir} ({e}){C_RESET}")
+        log.warning(f"{C_RED}无法自动弹出窗口，请手动访问: {vis_dir} ({e}){C_RESET}")
 
 
 def run_open_observations_manifest():
@@ -475,7 +476,7 @@ def run_open_observations_manifest():
     print(f"\n{C_CYAN}[启动]{C_RESET} 正在启动 AprilTag 观测样本轻量级交互审核画板...")
     res = subprocess.run([sys.executable, "tools/calibration/tag_manifest_reviewer.py"])
     if res.returncode != 0:
-        print(f"{C_YELLOW}[回退]{C_RESET} 无法正常启动图形画板，正在尝试在系统默认文本编辑器中打开 YAML 清单...")
+        log.warning(f"{C_YELLOW}[回退]{C_RESET} 无法正常启动图形画板，正在尝试在系统默认文本编辑器中打开 YAML 清单...")
         try:
             if sys.platform == "win32":
                 os.startfile(manifest_path)
@@ -484,7 +485,7 @@ def run_open_observations_manifest():
             else:
                 subprocess.run(["xdg-open", manifest_path])
         except Exception as e:
-            print(f"{C_RED}[WARN] 无法自动打开编辑器: {e}，请手动编辑该文件。{C_RESET}")
+            log.warning(f"{C_RED}无法自动打开编辑器: {e}，请手动编辑该文件。{C_RESET}")
         pause_prompt()
 
 
@@ -498,7 +499,7 @@ def run_offline_studio(status=None):
     print(f"\n{C_CYAN}[旗舰工作站]{C_RESET} 正在启动 AprilTag 离线标定综合工作站 (当前沙盒: {C_GREEN}{scene_name}{C_RESET})...")
     res = subprocess.run(cmd)
     if res.returncode != 0:
-        print(f"\n{C_RED}[异常退出] 离线综合工作站异常退出 (退出码: {res.returncode}){C_RESET}")
+        log.warning(f"\n{C_RED}[异常退出] 离线综合工作站异常退出 (退出码: {res.returncode}){C_RESET}")
         pause_prompt()
     elif active_scene:
         active_scene.refresh_stats()
@@ -513,7 +514,7 @@ def run_gui_launcher():
         res = subprocess.run(cmd)
         return res.returncode == 0
     except Exception as e:
-        print(f"\n{C_YELLOW}[提示]{C_RESET} 无法启动 GUI 控制中心 ({e})，返回终端控制台...")
+        log.warning(f"\n{C_YELLOW}[提示]{C_RESET} 无法启动 GUI 控制中心 ({e})，返回终端控制台...")
         return False
 
 
@@ -524,10 +525,10 @@ def run_scene_hub(status=None):
     try:
         res = subprocess.run(cmd)
         if res.returncode != 0:
-            print(f"\n{C_YELLOW}[提示]{C_RESET} GUI 驾驶舱异常退出 (退出码: {res.returncode})，切入文本式命令行场景管理器...")
+            log.warning(f"\n{C_YELLOW}[提示]{C_RESET} GUI 驾驶舱异常退出 (退出码: {res.returncode})，切入文本式命令行场景管理器...")
             submenu_scene_manager(status.get('scene_mgr') if status else None)
     except Exception as e:
-        print(f"\n{C_YELLOW}[回退]{C_RESET} 无法启动 GUI 驾驶舱 ({e})，切入文本式命令行场景管理器...")
+        log.warning(f"\n{C_YELLOW}[回退]{C_RESET} 无法启动 GUI 驾驶舱 ({e})，切入文本式命令行场景管理器...")
         submenu_scene_manager(status.get('scene_mgr') if status else None)
 
 
@@ -539,7 +540,7 @@ def submenu_scene_manager(scene_mgr):
             from src.calibration.scene_manager import CalibrationSceneManager
             scene_mgr = CalibrationSceneManager()
         except Exception as e:
-            print(f"{C_RED}[错误] 场景管理器未能正常加载: {e}{C_RESET}")
+            log.warning(f"{C_RED}场景管理器未能正常加载: {e}{C_RESET}")
             pause_prompt()
             return
 
@@ -813,8 +814,8 @@ def main():
         try:
             if run_gui_launcher():
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"GUI 控制中心启动失败，回退终端模式: {e}")
 
     # 终端文本交互模式
     while True:

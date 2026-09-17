@@ -8,15 +8,11 @@
 
 import os
 import json
-import time
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import cv2
-import numpy as np
-
-from src.utils.gui_window_manager import GuiWindowManager, WindowPollResult
+from src.utils.gui_window_manager import GuiWindowManager
 
 
 class TestGuiWindowManager(unittest.TestCase):

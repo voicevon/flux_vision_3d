@@ -25,7 +25,7 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except (AttributeError, ValueError):
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
 import yaml
 
@@ -38,18 +38,25 @@ try:
 except (ImportError, RuntimeError):
     DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
 
+from src.calibration.tag_detector import TagDetector
+from src.calibration.camera_service import CameraService
+from src.calibration.prism_renderer import draw_prism, COLORS_MAPPING
+from src.utils.config_guard import load_raw_config
+from src.utils.logger import get_logger
+
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 try:
-    from src.utils.window_helper import force_window_focus
+    from tools.window_helper import force_window_focus
 except ImportError:
     force_window_focus = None
 
 try:
     import pyrealsense2 as rs
-    HAVE_REALSENSE = True
 except ImportError:
-    HAVE_REALSENSE = False
+    rs = None
+
+log = get_logger(__name__)
 
 
 class TagCaptureWizard:
@@ -60,11 +67,11 @@ class TagCaptureWizard:
         os.makedirs(self.output_dir, exist_ok=True)
 
         # 硬件与运行时状态 (必须先声明，严禁在后续被覆盖为 None)
-        self.pipeline = None
         self.is_running = False
         self.flash_timer = 0.0
         self.actual_stream_desc = "1080P Full HD"
-        self.last_valid_frame = None
+        # 统一取流服务: 硬件启停/帧读取/Mock 仿真全部委托 CameraService
+        self._cam_srv = CameraService()
 
         # 默认反差与环境光配置 (优先读取 config.yaml)
         self.contrast_boost = 1.8
@@ -82,9 +89,13 @@ class TagCaptureWizard:
         self.show_3d_axes = False          # 采图向导默认关闭繁重 3D 棱柱，专注极速跟手与轻量取景
         self.load_config()
 
-        # 初始化 AprilTag 16h5 超高灵敏度检测器
-        self.tag_family = cv2.aruco.DICT_APRILTAG_16h5
-        self.dictionary = cv2.aruco.getPredefinedDictionary(self.tag_family)
+        # 初始化 AprilTag 16h5 统一检测器 (dictionary 供 generateImageMarker 复用)
+        self.tag_detector = TagDetector(
+            valid_tag_ids=self.valid_tag_ids,
+            min_perimeter_rate=self.min_perimeter_rate,
+            enable_auto_stretch=self.enable_auto_stretch
+        )
+        self.dictionary = self.tag_detector.dictionary
         self.rebuild_detector()
 
         # 加载相机内参与 3D 空间坐标投影模型 (支持实心加粗 5mm Z轴与 XYZ 空间坐标系渲染)
@@ -114,19 +125,18 @@ class TagCaptureWizard:
         existing = glob.glob(os.path.join(self.output_dir, "view_*.png"))
         self.image_count = len(existing)
 
-        # 最终启动物理相机流 (唯一启动入口)
-        if not self.mock_mode and HAVE_REALSENSE:
+        # 最终启动物理相机流 (唯一启动入口; 无 SDK/无设备时服务内部优雅切 Mock)
+        if not self.mock_mode:
             self._init_realsense()
         else:
-            self.mock_mode = True
-            print("[INFO] 处于仿真模式 (--mock) 或未检测到 RealSense 驱动，将使用模拟视觉流。")
+            self._cam_srv.enter_mock()
+            log.info("处于仿真模式 (--mock)，将使用模拟视觉流。")
 
     def load_config(self):
-        """读取 config.yaml 中的反差与光线配置"""
-        if os.path.exists(self.config_path):
+        """读取 config.yaml 中的反差与光线配置 (统一走 config_guard)"""
+        cfg = load_raw_config(self.config_path)
+        if cfg:
             try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
                 det_cfg = cfg.get("calibration", {}).get("tag_detection", {})
                 self.valid_tag_ids = [int(x) for x in cfg.get("calibration", {}).get("valid_tag_ids", [])]
                 self.contrast_boost = float(det_cfg.get("contrast_boost", self.contrast_boost))
@@ -136,17 +146,14 @@ class TagCaptureWizard:
                 self.adaptive_thresh_constant = float(det_cfg.get("adaptive_thresh_constant", self.adaptive_thresh_constant))
                 self.min_perimeter_rate = float(det_cfg.get("min_perimeter_rate", self.min_perimeter_rate))
                 whitelist_desc = f", 物理白名单={self.valid_tag_ids}" if self.valid_tag_ids else ""
-                print(f"[OK] 已成功加载反差配置: 对比度x{self.contrast_boost:.1f}, CLAHE={self.clahe_clip_limit:.1f}{whitelist_desc}")
+                log.info(f"[OK] 已成功加载反差配置: 对比度x{self.contrast_boost:.1f}, CLAHE={self.clahe_clip_limit:.1f}{whitelist_desc}")
             except Exception as e:
-                print(f"[WARN] 加载 config.yaml 异常: {e}")
+                log.warning(f"加载 config.yaml 异常: {e}")
 
     def save_config(self):
         """将当前调整满意的反差参数写回 config.yaml"""
         try:
-            cfg = {}
-            if os.path.exists(self.config_path):
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
+            cfg = load_raw_config(self.config_path)
 
             if "calibration" not in cfg:
                 cfg["calibration"] = {}
@@ -164,10 +171,10 @@ class TagCaptureWizard:
                 yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
             self.set_toast(f"参数已持久化保存至 config.yaml！")
-            print(f"\n[OK] 当前反差与光线配置已成功写入: {self.config_path}")
+            log.info(f"\n[OK] 当前反差与光线配置已成功写入: {self.config_path}")
         except Exception as e:
             self.set_toast(f"保存失败: {e}")
-            print(f"[ERROR] 保存 config.yaml 失败: {e}")
+            log.warning(f"保存 config.yaml 失败: {e}")
 
     def set_toast(self, msg: str):
         self.status_toast = msg
@@ -175,153 +182,32 @@ class TagCaptureWizard:
 
     def rebuild_detector(self):
         """根据当前参数重构检测器 (仅重构检测器算法参数，绝不动硬件连接)"""
-        # 核心防卡死与实时帧率优化：
-        # 1. 窗口扫描步长优化为 10，大幅削减无谓的多边形生成
-        # 2. 最小周长门限由 0.006 提升为 0.018 (40mm 标靶即使在 1m 外周长亦大于 60 像素)，彻底过滤 15,000+ 个背景微弱噪点
-        # 针对现场黑度不够纯、局部反光与远景小标靶的优化：
-        # 1. 窗口扫描步长优化为 8，兼顾极速与细密采样
-        # 2. 极低反差门限 (minOtsuStdDev=0.45)，彻底解决纸张发灰、黑度不够纯导致的漏检
-        # 3. 周长门限放宽至 0.008，支持远距小标靶
-        # 4. 白名单硬锁保护下允许 0.50 汉明纠错，救活墨色不匀与倾斜透视标靶
-        
-        # 基础参数模版
-        def make_params(thresh_c, min_otsu):
-            p = cv2.aruco.DetectorParameters()
-            p.adaptiveThreshWinSizeMin = 3
-            p.adaptiveThreshWinSizeMax = 43
-            p.adaptiveThreshWinSizeStep = 8
-            p.adaptiveThreshConstant = thresh_c
-            p.minOtsuStdDev = min_otsu
-            p.minMarkerPerimeterRate = max(0.008, self.min_perimeter_rate)
-            p.maxMarkerPerimeterRate = 4.0
-            p.polygonalApproxAccuracyRate = 0.09
-            p.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-            p.perspectiveRemovePixelPerCell = 10
-            p.errorCorrectionRate = 0.50
-            p.perspectiveRemoveIgnoredMarginPerCell = 0.15
-            p.maxErroneousBitsInBorderRate = 0.30
-            return p
-
-        # 构建两路互补检测器：
-        # 路 A: 抗反光/高亮清晰路 (C=5.5, 适合高光、灯光直射视角)
-        self.params_bright = make_params(thresh_c=5.5, min_otsu=0.55)
-        self.detector_bright = cv2.aruco.ArucoDetector(self.dictionary, self.params_bright)
-        
-        # 路 B: 低反差/黑度不纯路 (C=2.5, min_otsu=0.45, 适合背光、发灰视角)
-        self.params_dark = make_params(thresh_c=2.5, min_otsu=0.45)
-        self.detector_dark = cv2.aruco.ArucoDetector(self.dictionary, self.params_dark)
-        self.detector = self.detector_bright
-
-        self.clahe = cv2.createCLAHE(clipLimit=self.clahe_clip_limit, tileGridSize=(8, 8))
+        self.tag_detector.set_params(
+            valid_tag_ids=self.valid_tag_ids,
+            min_perimeter_rate=self.min_perimeter_rate,
+            enable_auto_stretch=self.enable_auto_stretch
+        )
 
     def _init_realsense(self):
-        try:
-            ctx = rs.context()
-            devices = list(ctx.query_devices())
-            if not devices:
-                print("[WARN] 未检测到物理相机设备，切至 --mock 仿真模式")
-                self.mock_mode = True
-                return
-
-            dev = devices[0]
-            usb_desc = dev.get_info(rs.camera_info.usb_type_descriptor) if dev.supports(rs.camera_info.usb_type_descriptor) else "Unknown"
-            print(f"[INFO] 正在连接相机: {dev.get_info(rs.camera_info.name)} (USB 模式: {usb_desc})")
-
-            self.pipeline = rs.pipeline()
-            config = rs.config()
-
-            # 优先启用 1080P 超高清模式 (降低帧率至 8fps，像素量暴增 2.25 倍大幅提升小标靶识别率)
-            started = False
-            try:
-                config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 8)
-                self.pipeline.start(config)
-                self.actual_stream_desc = "1920x1080 @ 8fps (1080P 超清)"
-                print("[OK] RealSense D435 彩色流启动成功: 1920x1080 @ 8fps (超高像素模式)")
-                started = True
-            except Exception as e_1080:
-                print(f"[INFO] 1080P 请求未满足 ({e_1080})，尝试 720P 高清模式...")
-
-            if not started:
-                # 备用 720P
-                if "2." in usb_desc:
-                    config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 15)
-                    self.actual_stream_desc = "1280x720 @ 15fps"
-                else:
-                    config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
-                    self.actual_stream_desc = "1280x720 @ 30fps"
-
-                self.pipeline.start(config)
-                print(f"[OK] RealSense D435 彩色相机启动成功 ({self.actual_stream_desc})！")
-
-            # 预热抛弃前 5 帧，让感光元件自动曝光稳定
-            for _ in range(5):
-                self.pipeline.wait_for_frames(timeout_ms=2500)
-
-            # 获取物理彩色传感器句柄，支持实时快捷调控硬件曝光与增益
-            prof = self.pipeline.get_active_profile()
-            for s in prof.get_device().query_sensors():
-                if s.is_color_sensor():
-                    self.color_sensor = s
-                    break
-
-        except Exception as e:
-            # 二级回退: 尝试标称 640x480
-            try:
-                print(f"[WARN] 高清流启动失败 ({e})，正在尝试 640x480 兼容模式...")
-                config = rs.config()
-                config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-                self.pipeline.start(config)
-                self.actual_stream_desc = "640x480 @ 30fps"
-                for _ in range(5):
-                    self.pipeline.wait_for_frames(timeout_ms=2500)
-                print("[OK] RealSense D435 以 640x480 兼容模式启动成功！")
-            except Exception as e2:
-                print(f"[WARN] 启动物理相机失败: {e2}，自动切换至 --mock 仿真模式")
-                self.mock_mode = True
-                self.pipeline = None
-
-    def _generate_mock_frame(self, frame_idx: int) -> np.ndarray:
-        """生成包含移动 AprilTag 的合成演示帧"""
-        frame = np.full((720, 1280, 3), 40, dtype=np.uint8)
-        for x in range(0, 1280, 80):
-            cv2.line(frame, (x, 0), (x, 720), (55, 55, 55), 1)
-        for y in range(0, 720, 80):
-            cv2.line(frame, (0, y), (1280, y), (55, 55, 55), 1)
-
-        t = frame_idx * 0.05
-        tag_configs = [
-            (0, int(350 + 40 * np.sin(t)), int(300 + 30 * np.cos(t)), 90),
-            (1, int(650 + 30 * np.cos(t)), int(280 + 20 * np.sin(t)), 85),
-            (2, int(850 + 20 * np.sin(t * 0.8)), int(450 + 25 * np.cos(t * 0.8)), 80),
-            (3, int(450 + 35 * np.cos(t * 1.2)), int(500 + 15 * np.sin(t * 1.2)), 75),
-        ]
-
-        for tag_id, cx, cy, sz in tag_configs:
-            hs = sz // 2
-            x1, y1 = max(0, cx - hs), max(0, cy - hs)
-            x2, y2 = min(1280, cx + hs), min(720, cy + hs)
-            tag_img = cv2.aruco.generateImageMarker(self.dictionary, tag_id, sz)
-            tag_bgr = cv2.cvtColor(tag_img, cv2.COLOR_GRAY2BGR)
-            h_sub, w_sub = y2 - y1, x2 - x1
-            if h_sub > 0 and w_sub > 0:
-                frame[y1:y2, x1:x2] = tag_bgr[:h_sub, :w_sub]
-
-        return frame
+        """启动 RealSense 彩色流 (委托统一 CameraService)：
+        1080P 超清优先 (8fps 高像素模式提升小标靶识别率)，逐级回退 720P/640x480，
+        全部失败时服务内部优雅切入 Mock 仿真模式。"""
+        self._cam_srv.start_realsense(
+            1920, 1080, fps=8,
+            fallbacks=((1280, 720, 15), (640, 480, 30)),
+            mock_fallback=True)
+        self.mock_mode = self._cam_srv.is_mock
+        self.color_sensor = self._cam_srv.color_sensor
+        if not self.mock_mode:
+            self.actual_stream_desc = self._cam_srv.stream_desc
 
     def get_frame(self, frame_idx: int) -> np.ndarray:
-        """获取当前视频帧 (BGR)"""
-        if not self.mock_mode and self.pipeline is not None:
-            try:
-                frames = self.pipeline.wait_for_frames(timeout_ms=2500)
-                color_frame = frames.get_color_frame()
-                if color_frame:
-                    self.last_valid_frame = np.asanyarray(color_frame.get_data())
-                    return self.last_valid_frame
-            except Exception as e:
-                if self.last_valid_frame is not None:
-                    return self.last_valid_frame
-                print(f"[WARN] 获取相机帧超时: {e}")
-        return self._generate_mock_frame(frame_idx)
+        """获取当前视频帧 (BGR): 硬件帧优先, 瞬时失败回退最近有效帧, Mock 生成仿真帧"""
+        if not self.mock_mode:
+            frame = self._cam_srv.read_frame(timeout_ms=2500)
+            if frame is not None:
+                return frame
+        return self._cam_srv.make_mock_frame(frame_idx)
 
     def save_image(self, raw_frame: np.ndarray, annotated_frame: np.ndarray = None) -> str:
         """
@@ -341,10 +227,10 @@ class TagCaptureWizard:
             vis_filename = f"view_{self.image_count:04d}_annotated.png"
             vis_filepath = os.path.join(vis_dir, vis_filename)
             cv2.imwrite(vis_filepath, annotated_frame)
-            print(f"[CAPTURE] 快照 #{self.image_count} 拍摄成功: 原图存入 {raw_filename} | 图示化标注存入 visualized/{vis_filename}")
+            log.info(f"[CAPTURE] 快照 #{self.image_count} 拍摄成功: 原图存入 {raw_filename} | 图示化标注存入 visualized/{vis_filename}")
         else:
             vis_filepath = ""
-            print(f"[CAPTURE] 成功拍摄并保存快照 #{self.image_count}: {raw_filepath}")
+            log.info(f"[CAPTURE] 成功拍摄并保存快照 #{self.image_count}: {raw_filepath}")
 
         # 若已有 tag_observations.yaml 存在，自动将该帧增量追加进观测清单
         manifest_path = os.path.join(self.output_dir, "tag_observations.yaml")
@@ -393,7 +279,7 @@ class TagCaptureWizard:
                 manifest_data["summary"]["total_kept"] = total_kept
                 with open(manifest_path, "w", encoding="utf-8") as f:
                     yaml.dump(manifest_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-                print(f"  [AUTO-SYNC] 已将快照 #{self.image_count} 自动同步录入清单 {manifest_path} (检出 {len(obs_list)} 个标靶)")
+                log.info(f"  [AUTO-SYNC] 已将快照 #{self.image_count} 自动同步录入清单 {manifest_path} (检出 {len(obs_list)} 个标靶)")
 
         # 同步更新活动场景元数据
         try:
@@ -403,7 +289,7 @@ class TagCaptureWizard:
                 active_sc.refresh_stats()
                 active_sc.save_meta()
         except Exception as e:
-            print(f"[WARN] 场景元数据刷新失败 (非致命): {e}")
+            log.warning(f"场景元数据刷新失败 (非致命): {e}")
 
         self.flash_timer = time.time()
         return raw_filepath
@@ -489,49 +375,11 @@ class TagCaptureWizard:
 
     def detect_tags_robust(self, raw_frame: np.ndarray):
         """
-        极速自适应双路检测 (Fast-Path Adaptive Detection)：
-        - 优先执行极速路 1 (原图灰度 + 较严二值门限)，单次仅需 ~25ms；
-        - 若已稳定检出充足已知标靶 (>=2) 且未处于强制拉伸预设，直接短路返回，彻底消除拖影；
-        - 若路 1 检出标靶不足 2 个，或处于低反差强力预设，才自适应执行路 2 (动态拉伸路) 补充暗部；
-        - 兼顾 8fps 满帧跟手与 100% 极限召回。
+        极速自适应双路检测 (委托统一 TagDetector fast 路)：
+        高光路检出 >= 2 个白名单标靶且未强制拉伸时短路返回，消除拖影；
+        否则自动执行暗部动态拉伸路补齐低反差/黑度不纯标靶 (实时取流不做精修)。
         """
-        if len(raw_frame.shape) == 3:
-            gray_raw = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
-        else:
-            gray_raw = raw_frame
-
-        found = {}
-
-        # 路 1: 针对清晰/高光/反光区域 (极速单路)
-        c1, ids1, _ = self.detector_bright.detectMarkers(gray_raw)
-        if ids1 is not None and len(ids1) > 0:
-            for i, tid in enumerate(ids1.flatten()):
-                tid_int = int(tid)
-                if self.valid_tag_ids and tid_int not in self.valid_tag_ids:
-                    continue
-                found[tid_int] = c1[i]
-
-        # 快速短路：若普通路已检出满足共视条件的已知标靶，跳过耗时的二次动态拉伸
-        if len(found) >= 2 and not self.enable_auto_stretch:
-            return found
-
-        # 路 2: 针对暗部/低反差/打印黑度不够纯区域 (动态拉伸 + 宽松门限)
-        p_low, p_high = np.percentile(gray_raw[::4, ::4], (2, 98))
-        if p_high > p_low + 10:
-            gray_stretch = np.clip((gray_raw.astype(np.float32) - p_low) * (255.0 / (p_high - p_low)), 0, 255).astype(np.uint8)
-        else:
-            gray_stretch = gray_raw
-
-        c2, ids2, _ = self.detector_dark.detectMarkers(gray_stretch)
-        if ids2 is not None and len(ids2) > 0:
-            for i, tid in enumerate(ids2.flatten()):
-                tid_int = int(tid)
-                if self.valid_tag_ids and tid_int not in self.valid_tag_ids:
-                    continue
-                if tid_int not in found:
-                    found[tid_int] = c2[i]
-
-        return found
+        return self.tag_detector.detect_tags(raw_frame, fast=True, refine=False)
 
     def render_tag_3d_axes(self, img: np.ndarray, corners: np.ndarray, tag_id: int):
         """
@@ -570,64 +418,10 @@ class TagCaptureWizard:
                 best_idx = 0 if err0 <= err1 else 1
             rvec, tvec = rvecs[best_idx], tvecs[best_idx]
 
-        hw = 15.0   # 截面半宽 15mm，整体截面边长为 30.0mm x 30.0mm
-        L = 80.0    # 柱体长度 80mm (约原高度 2/3)
-
-        # 8 个 3D 角点: 底面 4 点 (Z=0), 顶面 4 点 (Z=L)
-        pts_3d = np.array([
-            # 底面 4 点
-            [-hw, -hw, 0.0],
-            [ hw, -hw, 0.0],
-            [ hw,  hw, 0.0],
-            [-hw,  hw, 0.0],
-            # 顶面 4 点
-            [-hw, -hw, L],
-            [ hw, -hw, L],
-            [ hw,  hw, L],
-            [-hw,  hw, L],
-            # 顶面中心
-            [0.0, 0.0, L],
-            # X 轴与 Y 轴参考端点 (从中心伸出 25mm，突出棱柱外侧)
-            [25.0, 0.0, 0.0],
-            [0.0, 25.0, 0.0],
-            [0.0, 0.0, 0.0]
-        ], dtype=np.float64)
-
-        proj, _ = cv2.projectPoints(pts_3d, rvec, tvec, self.camera_matrix, self.dist_coeffs)
-        proj = proj.reshape((-1, 2)).astype(int)
-
-        b_pts = proj[0:4] # 底面 4 点
-        t_pts = proj[4:8] # 顶面 4 点
-        top_center = tuple(proj[8])
-        p_x = tuple(proj[9])
-        p_y = tuple(proj[10])
-        p_orig = tuple(proj[11])
-
-        # 1. 绘制 X 轴 (红色) 和 Y 轴 (绿色)
-        cv2.line(img, p_orig, p_x, (0, 0, 240), 2, cv2.LINE_AA)
-        cv2.putText(img, 'X', p_x, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
-        cv2.line(img, p_orig, p_y, (0, 220, 0), 2, cv2.LINE_AA)
-        cv2.putText(img, 'Y', p_y, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
-
-        # 2. 半透明填充 4 个侧面与顶面 (呈现实心方柱体立体质感)
-        overlay = img.copy()
-        for i in range(4):
-            next_i = (i + 1) % 4
-            side_poly = np.array([b_pts[i], b_pts[next_i], t_pts[next_i], t_pts[i]], dtype=np.int32)
-            cv2.fillPoly(overlay, [side_poly], (240, 160, 30)) # BGR: 浅蓝/青
-        cv2.fillPoly(overlay, [t_pts], (255, 220, 90))         # 顶面高光
-        cv2.addWeighted(overlay, 0.42, img, 0.58, 0, img)
-
-        # 3. 绘制 12 条棱线 (高清晰边框)
-        cv2.polylines(img, [b_pts], isClosed=True, color=(180, 80, 0), thickness=2, lineType=cv2.LINE_AA)
-        for i in range(4):
-            cv2.line(img, tuple(b_pts[i]), tuple(t_pts[i]), (255, 130, 0), 2, cv2.LINE_AA)
-        cv2.polylines(img, [t_pts], isClosed=True, color=(255, 240, 120), thickness=2, lineType=cv2.LINE_AA)
-
-        # 4. 顶面中心标注点与文字 (简洁工业标定, 仅保留 Z 轴标识)
-        cv2.circle(img, top_center, 3, (255, 255, 255), -1, cv2.LINE_AA)
-        cv2.putText(img, 'Z', (top_center[0] + 5, top_center[1] - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 230, 80), 2, cv2.LINE_AA)
+        # 统一 PrismRenderer: 实心正四棱柱 (半透明 + 12 棱线 + 顶盖) + XYZ 坐标轴
+        draw_prism(img, self.camera_matrix, self.dist_coeffs, rvec, tvec,
+                   half_w=15.0, height=80.0, colors=COLORS_MAPPING,
+                   alpha=0.42, draw_axes=True, axis_len=25.0)
 
     def run(self):
         """运行交互式采图主循环"""
@@ -778,7 +572,7 @@ class TagCaptureWizard:
                 key = cv2.waitKey(10) & 0xFF
 
                 if key in (ord('q'), ord('Q'), 27):  # Q or ESC
-                    print(f"\n[INFO] 采图向导结束。当前数据集共计 {self.image_count} 帧。")
+                    log.info(f"\n采图向导结束。当前数据集共计 {self.image_count} 帧。")
                     break
                 elif key == 32:  # Space
                     self.save_image(raw_frame, disp_frame)
@@ -827,14 +621,10 @@ class TagCaptureWizard:
                             except OSError:
                                 pass  # 文件被占用/已删除/权限不足 — 合法窄异常
                         self.image_count = 0
-                        print("[OK] 原图与图示化文件目录已全部清空。")
+                        log.info("[OK] 原图与图示化文件目录已全部清空。")
 
         finally:
-            if self.pipeline is not None:
-                try:
-                    self.pipeline.stop()
-                except Exception as e:
-                    print(f"[WARN] pipeline.stop 异常 (非致命): {e}")
+            self._cam_srv.stop()
             cv2.destroyAllWindows()
 
 

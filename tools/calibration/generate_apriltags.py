@@ -8,12 +8,20 @@ AprilTag 16h5 标靶高清生成与排版工具
 """
 
 import os
+import sys
 import cv2
 import numpy as np
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.lib import colors
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, PROJECT_ROOT)
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def generate_tags(output_dir: str = "data/apriltags_16h5",
@@ -38,7 +46,7 @@ def generate_tags(output_dir: str = "data/apriltags_16h5",
     
     generated_png_files = []
     raw_marker_files = []
-    print(f"[*] 开始生成 AprilTag 16h5 标靶 (ID 00 ~ {tag_count - 1:02d})...")
+    log.info(f"[*] 开始生成 AprilTag 16h5 标靶 (ID 00 ~ {tag_count - 1:02d})...")
 
     # 准备 5 列 x 6 行 PNG 总览网格图 (方便快速屏幕查看)
     cols = 5
@@ -101,26 +109,26 @@ def generate_tags(output_dir: str = "data/apriltags_16h5",
     # 保存 PNG 总览大图
     grid_png_path = os.path.join(output_dir, "apriltags_16h5_all_grid.png")
     cv2.imwrite(grid_png_path, grid_img)
-    print(f"[OK] 成功生成 {tag_count} 个独立高清标靶 PNG 文件: tag16h5_id_00.png ~ tag16h5_id_{tag_count - 1:02d}.png")
-    print(f"[OK] 成功生成总览排版 PNG: {grid_png_path}")
+    log.info(f"[OK] 成功生成 {tag_count} 个独立高清标靶 PNG 文件: tag16h5_id_00.png ~ tag16h5_id_{tag_count - 1:02d}.png")
+    log.info(f"[OK] 成功生成总览排版 PNG: {grid_png_path}")
 
     # =========================================================================
     # 生成高精度、严格 1:1 比例的 A4 打印 PDF 文件 (30 个标靶排于同一页)
     # =========================================================================
     pdf_path = os.path.join(output_dir, "apriltags_16h5_grid_a4.pdf")
     build_a4_pdf(pdf_path, raw_marker_files, tag_count=tag_count)
-    print(f"[OK] 成功生成严格 1:1 A4 排版 PDF 文件: {pdf_path}")
+    log.info(f"[OK] 成功生成严格 1:1 A4 排版 PDF 文件: {pdf_path}")
 
     # 清理临时 raw_markers
     for f in raw_marker_files:
         try:
             os.remove(f)
         except OSError:
-            pass
+            pass  # 清理容错：临时文件删除失败不影响成品交付
     try:
         os.rmdir(raw_marker_dir)
     except OSError:
-        pass
+        pass  # 清理容错：临时目录删除失败不影响成品交付
 
     return pdf_path
 

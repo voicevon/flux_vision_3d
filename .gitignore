@@ -17,3 +17,6 @@ data/
 .vscode/
 .idea/
 *.log
+
+# 工具缓存
+.ruff_cache/

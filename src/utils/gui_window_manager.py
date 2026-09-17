@@ -25,7 +25,7 @@ import json
 import time
 import atexit
 from dataclasses import dataclass
-from typing import Optional, Tuple, Any, Callable
+from typing import Optional, Tuple, Callable
 import cv2
 
 # 项目根路径与全局配置文件定位

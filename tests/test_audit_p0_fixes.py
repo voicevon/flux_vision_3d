@@ -13,7 +13,6 @@ import numpy as np
 import os
 import yaml
 import tempfile
-import cv2
 
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.vision.tag_localizer import TagLocalizer

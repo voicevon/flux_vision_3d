@@ -25,7 +25,7 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
 try:
     import pyrealsense2 as rs
@@ -38,6 +38,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
 from src.utils.gui_window_manager import GuiWindowManager
 from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class D435Viewer:
@@ -182,9 +185,9 @@ class D435Viewer:
                             try:
                                 from src.vision.tag_localizer import TagLocalizer
                                 self.tag_localizer = TagLocalizer(tags_map_path=tags_map_path)
-                                print(f"[D435Viewer] AprilTag 地图已加载: {tags_map_path}")
+                                log.info(f"[D435Viewer] AprilTag 地图已加载: {tags_map_path}")
                             except Exception as e:
-                                print(f"[D435Viewer] AprilTag 定位器加载失败: {e}")
+                                log.warning(f"[D435Viewer] AprilTag 定位器加载失败: {e}")
                     if "robot" in loaded:
                         self.safe_z = float(loaded["robot"].get("safe_z_mm", 80.0))
                         self.drop_x = float(loaded["robot"].get("drop_x_mm", 220.0))
@@ -248,14 +251,14 @@ class D435Viewer:
         dev_sn = dev.get_info(rs.camera_info.serial_number)
         usb_desc = dev.get_info(rs.camera_info.usb_type_descriptor) if dev.supports(rs.camera_info.usb_type_descriptor) else "Unknown"
 
-        print(f"[INFO] 成功连接设备: {dev_name} (S/N: {dev_sn}, USB 模式: {usb_desc})")
+        log.info(f"成功连接设备: {dev_name} (S/N: {dev_sn}, USB 模式: {usb_desc})")
 
         c_w, c_h, fps = self.cfg["color"]["width"], self.cfg["color"]["height"], self.cfg["color"]["fps"]
         d_w, d_h = self.cfg["depth"]["width"], self.cfg["depth"]["height"]
 
         if "2." in usb_desc:
-            print("[WARN] [!] 检测到当前相机工作在 USB 2.1 带宽下（建议连接电脑蓝色 USB 3.0 端口）。")
-            print("[INFO] [*] 正在自动启用 USB 2.1 自适应高清/流畅流配置...")
+            log.warning("[!] 检测到当前相机工作在 USB 2.1 带宽下（建议连接电脑蓝色 USB 3.0 端口）。")
+            log.info("[*] 正在自动启用 USB 2.1 自适应高清/流畅流配置...")
             self.rs_config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 15)
             self.rs_config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 15)
         else:
@@ -281,15 +284,15 @@ class D435Viewer:
             if adv_mode.is_enabled():
                 depth_sensor = profile.get_device().first_depth_sensor()
                 depth_sensor.set_option(rs.option.visual_preset, float(self.cfg.get("visual_preset", 3)))
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"设置 RealSense 视觉预设失败: {e}")
         # 激光
         try:
             depth_sensor = profile.get_device().first_depth_sensor()
             if depth_sensor.supports(rs.option.laser_power):
                 depth_sensor.set_option(rs.option.laser_power, float(self.cfg.get("laser_power", 120)))
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"设置 RealSense 激光功率失败: {e}")
 
     def _on_dropdown_select(self, dropdown_name, payload):
         """通用下拉选项选择回调"""
@@ -306,7 +309,7 @@ class D435Viewer:
             self._toggle_camera(force_off=True)
         self.camera_type = cam_key
         self._save_viewer_state()
-        print(f"[INFO] 相机类型已切换为: {dict(self.camera_options).get(cam_key, cam_key)}")
+        log.info(f"相机类型已切换为: {dict(self.camera_options).get(cam_key, cam_key)}")
 
     def _toggle_camera(self, force_off=False):
         """开启或关闭相机 pipeline"""
@@ -316,18 +319,18 @@ class D435Viewer:
                 try:
                     self.pipeline.stop()
                 except Exception:
-                    pass
+                    pass  # 相机停止失败无伤大雅，后续会重置状态
             elif self.usb_capture:
                 try:
                     self.usb_capture.release()
                 except Exception:
-                    pass
+                    pass  # 相机释放失败无伤大雅，后续会重置状态
                 self.usb_capture = None
             self.pipeline_running = False
             self.is_paused = False
             self.paused_color_frame = None
             self.paused_depth_frame = None
-            print("[INFO] 相机已关闭")
+            log.info("相机已关闭")
         else:
             # 开启
             try:
@@ -336,9 +339,9 @@ class D435Viewer:
                 elif self.camera_type == "usb":
                     self._start_usb()
                 self.pipeline_running = True
-                print(f"[INFO] 相机已开启 ({dict(self.camera_options).get(self.camera_type, self.camera_type)})")
+                log.info(f"相机已开启 ({dict(self.camera_options).get(self.camera_type, self.camera_type)})")
             except Exception as e:
-                print(f"[ERROR] 相机开启失败: {e}")
+                log.warning(f"相机开启失败: {e}")
                 self.pipeline_running = False
         self._save_viewer_state()
 
@@ -357,7 +360,6 @@ class D435Viewer:
         self.actual_w = new_w
         self.actual_h = new_h
         # USB 没有内参，用 dummy 让其他代码不崩
-        import types
         class _DummyIntrinsics:
             fx = fy = 500.0
             ppx = new_w / 2.0
@@ -402,14 +404,14 @@ class D435Viewer:
                 self.actual_h = new_h
 
             self._save_viewer_state()
-            print(f"[INFO] 分辨率切换成功: {res_key}")
+            log.info(f"分辨率切换成功: {res_key}")
         except Exception as e:
-            print(f"[ERROR] 分辨率切换失败: {e}")
+            log.warning(f"分辨率切换失败: {e}")
             if was_running and not self.pipeline_running:
                 try:
                     self._toggle_camera()
                 except Exception:
-                    pass
+                    pass  # 恢复相机失败的善后尝试，原始错误已在上方记录
 
     def _restore_stream_settings(self):
         """根据当前 toolbar 状态恢复激光、滤波等流设置"""
@@ -424,8 +426,8 @@ class D435Viewer:
                 depth_sensor.set_option(rs.option.laser_power, float(self.cfg.get("laser_power", 120)))
             # 滤波
             # (滤波是 processing block 级别的，不通过设备 options 控制)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"恢复 RealSense 流设置失败: {e}")
 
     def on_mouse(self, event, x, y, flags, param):
         """鼠标移动/点击事件处理（含顶部工具栏 + 下拉菜单 hit-testing）"""
@@ -554,8 +556,8 @@ class D435Viewer:
                 self.resolution = state["resolution"]
             if "camera_type" in state and any(k == state["camera_type"] for k, _ in self.camera_options):
                 self.camera_type = state["camera_type"]
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"恢复查看器工具栏状态失败，使用默认配置: {e}")
 
     def _save_viewer_state(self):
         """保存工具栏 toggle 状态到 gui_settings.json"""
@@ -594,8 +596,8 @@ class D435Viewer:
             os.makedirs(os.path.dirname(settings_file), exist_ok=True)
             with open(settings_file, "w", encoding="utf-8") as f:
                 json.dump(root, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"保存查看器工具栏状态失败: {e}")
 
     # ================================================================
     # 顶部工具栏
@@ -779,8 +781,8 @@ class D435Viewer:
                     depth_sensor = self.pipeline.get_active_profile().get_device().first_depth_sensor()
                     if depth_sensor.supports(rs.option.emitter_enabled):
                         depth_sensor.set_option(rs.option.emitter_enabled, 1.0 if self.laser_enabled else 0.0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning(f"切换激光发射器状态失败: {e}")
         elif action_id == "toggle_pause":
             self.is_paused = not self.is_paused
         elif action_id == "zoom_in":
@@ -1006,7 +1008,7 @@ class D435Viewer:
                         curr_t = time.time()
                         if getattr(self, '_last_err_print_t', 0) + 3.0 < curr_t:
                             self._last_err_print_t = curr_t
-                            print(f"\n[ERROR in analyze] 感知解算发生异常: {e}")
+                            log.warning(f"\n感知解算发生异常: {e}")
                         display_color_image = color_image.copy()
                 else:
                     display_color_image = color_image.copy()
@@ -1161,17 +1163,17 @@ class D435Viewer:
                 try:
                     self.pipeline.stop()
                 except Exception:
-                    pass
+                    pass  # 清理容错：退出时停止失败无伤大雅
             # USB
             if self.usb_capture:
                 try:
                     self.usb_capture.release()
                 except Exception:
-                    pass
+                    pass  # 清理容错：退出时释放失败无伤大雅
                 self.usb_capture = None
             self.pipeline_running = False
             cv2.destroyAllWindows()
-            print("[INFO] 采集与可视化窗口已安全退出。")
+            log.info("采集与可视化窗口已安全退出。")
 
     @staticmethod
     def _letterbox(src, dst_w, dst_h, bg_color=(15, 17, 21)):
@@ -1275,7 +1277,7 @@ class D435Viewer:
                         robot_x=round(x_cam, 1), robot_y=round(y_cam, 1), robot_z=25.0,
                         robot_r=0.0, is_topmost=True, calibration_source="uncalibrated"
                     )
-                    print("\n[INFO] 根据鼠标点选示教点生成 G-code:")
+                    log.info("\n根据鼠标点选示教点生成 G-code:")
                     print(manual_t.generate_gcode(safe_z=self.safe_z, drop_x=self.drop_x, drop_y=self.drop_y) + "\n")
                     return
 
@@ -1306,12 +1308,12 @@ class D435Viewer:
             cv2.imwrite(height_vis_path, height_color)
         np.save(depth_raw_path, depth_raw)
 
-        print(f"\n[SNAPSHOT] 数据已抓拍保存:")
-        print(f"  -> 彩色图:   {rgb_path}")
-        print(f"  -> 深度热力: {depth_vis_path}")
+        log.info(f"\n[SNAPSHOT] 数据已抓拍保存:")
+        log.info(f"  -> 彩色图:   {rgb_path}")
+        log.info(f"  -> 深度热力: {depth_vis_path}")
         if height_color is not None:
-            print(f"  -> 纠偏高度: {height_vis_path}")
-        print(f"  -> 原始深度: {depth_raw_path} (uint16 mm)")
+            log.info(f"  -> 纠偏高度: {height_vis_path}")
+        log.info(f"  -> 原始深度: {depth_raw_path} (uint16 mm)")
 
 
 if __name__ == "__main__":
@@ -1323,4 +1325,4 @@ if __name__ == "__main__":
         viewer = D435Viewer(config_path=args.config)
         viewer.run()
     except Exception as e:
-        print(f"\n[ERROR] 运行中断: {e}")
+        log.warning(f"\n运行中断: {e}")

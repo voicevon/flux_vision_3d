@@ -19,10 +19,15 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.utils.gui_window_manager import GuiWindowManager
-from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text
+from src.utils.config_guard import load_raw_config
 
 # 复用旧代码的图纸生成函数 (不修改旧代码)
 from tools.calibration.generate_apriltags import generate_tags
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class TagManager:
@@ -107,8 +112,8 @@ class TagManager:
                 self.gen_tag_count = int(st["gen_tag_count"])
             if "gen_pixel_size" in st:
                 self.gen_pixel_size = int(st["gen_pixel_size"])
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"恢复标靶生成器设置失败，使用默认值: {e}")
 
     def _save_settings(self):
         try:
@@ -119,7 +124,7 @@ class TagManager:
                     with open(self.SETTINGS_FILE, "r", encoding="utf-8") as f:
                         root = json.load(f)
                 except Exception:
-                    pass
+                    pass  # 已有设置读取失败时回退为空字典，避免阻塞保存
             st = root.setdefault(self.APP_ID, {})
             st["gen_tag_count"] = self.gen_tag_count
             st["gen_pixel_size"] = self.gen_pixel_size
@@ -127,19 +132,13 @@ class TagManager:
             st["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             with open(self.SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(root, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"保存标靶生成器设置失败: {e}")
 
     def _load_valid_tag_ids(self):
-        try:
-            if os.path.exists(self.CONFIG_PATH):
-                with open(self.CONFIG_PATH, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
-                ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
-                return [int(x) for x in ids] if ids else []
-        except Exception:
-            pass
-        return []
+        cfg = load_raw_config(self.CONFIG_PATH)
+        ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
+        return [int(x) for x in ids] if ids else []
 
     def _save_valid_tag_ids(self):
         """写回 config.yaml"""
@@ -501,8 +500,8 @@ class TagManager:
                 saved_tab = root.get(self.APP_ID, {}).get("active_tab")
                 if saved_tab in ("generator", "whitelist"):
                     self.active_tab = saved_tab
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"恢复上次活动 Tab 设置失败: {e}")
 
         print("\n" + "=" * 52)
         print(" AprilTag 管理器 (cv2 GUI)")
@@ -542,7 +541,7 @@ class TagManager:
             self._save_settings()
             self.win_mgr.save_settings()
             cv2.destroyAllWindows()
-            print("[INFO] AprilTag 管理器已安全退出。")
+            log.info("AprilTag 管理器已安全退出。")
 
 
 def main():

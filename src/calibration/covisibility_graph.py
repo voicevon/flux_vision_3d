@@ -10,6 +10,10 @@
 from typing import Dict, List, Tuple, Optional, Any, Set
 import numpy as np
 
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
+
 
 class CovisibilityGraphError(Exception):
     """标靶共视连通图拓扑异常（如出现孤立子图、断网或约束退化）"""
@@ -124,31 +128,31 @@ class CovisibilityGraphAnalyzer:
     @staticmethod
     def print_topology_report(covis_report: Dict[str, Any], stats: Dict[str, Any], valid_frames: List[str]):
         """打印详细共视拓扑分析诊断报告"""
-        print("\n" + "=" * 70)
-        print("           标靶共视连通图拓扑结构深度诊断报告")
-        print("=" * 70)
-        print(f" 状态评估: {'[ 连通健康 (PASS) ]' if covis_report['is_valid'] else '[ 断网告警 (FAIL) ]'}")
-        print(f" 诊断说明: {covis_report['message']}")
-        print(f" 参与帧数: {len(valid_frames)} 张图像满足 >= 2 标靶相对刚体约束")
-        print("-" * 70)
-        print(" [标靶节点与连通度 (Degree)]")
+        log.info("\n" + "=" * 70)
+        log.info("           标靶共视连通图拓扑结构深度诊断报告")
+        log.info("=" * 70)
+        log.info(f" 状态评估: {'[ 连通健康 (PASS) ]' if covis_report['is_valid'] else '[ 断网告警 (FAIL) ]'}")
+        log.info(f" 诊断说明: {covis_report['message']}")
+        log.info(f" 参与帧数: {len(valid_frames)} 张图像满足 >= 2 标靶相对刚体约束")
+        log.info("-" * 70)
+        log.info(" [标靶节点与连通度 (Degree)]")
         for tid in covis_report.get("all_tags", []):
             neighbors = covis_report.get("adj_list", {}).get(tid, [])
             is_conn = tid in covis_report.get("connected_tags", [])
             status_str = "正常连通" if is_conn else "【断网孤立】"
-            print(f"   - Tag #{tid:02d}: 相邻标靶 {neighbors} (度数: {len(neighbors)}) -> {status_str}")
+            log.info(f"   - Tag #{tid:02d}: 相邻标靶 {neighbors} (度数: {len(neighbors)}) -> {status_str}")
 
-        print("\n [共视桥梁与重叠帧数 (Edge Co-visibility Count)]")
+        log.info("\n [共视桥梁与重叠帧数 (Edge Co-visibility Count)]")
         for edge_str, count in covis_report.get("edge_counts", {}).items():
             bridge_warn = " \033[93m[单图支撑关键桥梁 - 切勿剔除]\033[0m" if count == 1 else ""
-            print(f"   - 标靶对 ({edge_str}): 在 {count} 帧图像中同时出现{bridge_warn}")
+            log.info(f"   - 标靶对 ({edge_str}): 在 {count} 帧图像中同时出现{bridge_warn}")
 
         if stats.get("excluded_items"):
-            print("\n [当前已人工剔除的观测清单]")
+            log.info("\n [当前已人工剔除的观测清单]")
             for exc in stats["excluded_items"]:
                 note = f" (备注: {exc['note']})" if exc.get("note") else ""
-                print(f"   - [{exc['image']}] Tag #{exc['tag_id']}{note}")
-        print("=" * 70)
+                log.info(f"   - [{exc['image']}] Tag #{exc['tag_id']}{note}")
+        log.info("=" * 70)
 
 
 def print_topology_report(covis_report: Dict[str, Any], stats: Dict[str, Any], valid_frames: List[str]):

@@ -14,12 +14,15 @@ import re
 import time
 import threading
 
-import yaml
-
 try:
     import serial
 except ImportError:
     serial = None
+
+from src.utils.config_guard import load_raw_config
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
@@ -34,15 +37,10 @@ def load_robot_config() -> dict:
         "feedrate_travel": 4000,
         "feedrate_grip": 1500,
     }
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        robot_cfg = data.get("robot") or {}
-        for key in cfg:
-            if robot_cfg.get(key) is not None:
-                cfg[key] = robot_cfg[key]
-    except Exception:
-        pass
+    robot_cfg = load_raw_config(CONFIG_PATH).get("robot") or {}
+    for key in cfg:
+        if robot_cfg.get(key) is not None:
+            cfg[key] = robot_cfg[key]
     return cfg
 
 
@@ -116,12 +114,12 @@ class RobotSerial:
                 if line.lower().startswith("ok"):
                     return True
                 if line.lower().startswith("error"):
-                    print(f"[RobotSerial] 控制器报错: {line} (cmd: {cmd})")
+                    log.error(f"[RobotSerial] 控制器报错: {line} (cmd: {cmd})")
                     return False
-            print(f"[RobotSerial] 应答超时: {cmd}")
+            log.warning(f"[RobotSerial] 应答超时: {cmd}")
             return False
         except Exception as e:
-            print(f"[RobotSerial] 串口异常: {e}")
+            log.error(f"[RobotSerial] 串口异常: {e}")
             return False
 
     def get_position(self):
@@ -144,7 +142,7 @@ class RobotSerial:
                     if line.lower().startswith("ok"):
                         break
             except Exception as e:
-                print(f"[RobotSerial] M114 读取失败: {e}")
+                log.warning(f"[RobotSerial] M114 读取失败: {e}")
         return None
 
     def move_to(self, x: float, y: float, z: float,
@@ -156,7 +154,7 @@ class RobotSerial:
         """
         cur = self.get_position()
         if cur is None:
-            print("[RobotSerial] 无法读取当前位姿, 取消移动")
+            log.warning("[RobotSerial] 无法读取当前位姿, 取消移动")
             return False
         lift = float(safe_lift_mm) if safe_lift_mm > 0 else self.safe_z_mm
         travel_feed = int(feed) if feed > 0 else self.feedrate_travel

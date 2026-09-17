@@ -26,6 +26,9 @@ from src.calibration.scene_manager import CalibrationSceneManager
 from src.utils.gui_window_manager import GuiWindowManager
 from tools.scene_hub.hub_state import HubState
 from tools.scene_hub.hub_renderer import HubRenderer
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
@@ -76,7 +79,7 @@ class SceneHubApp:
         try:
             cv2.resizeWindow(self.window_name, self.win_mgr.canvas_w, self.win_mgr.canvas_h)
         except Exception:
-            pass
+            pass  # GUI 可选功能：初始窗口尺寸设置失败不影响主循环
 
         while self._running:
             # 1. 视窗管理器综合轮询 (红叉检测、硬件按键缩放、拖拽防抖持久化)
@@ -512,7 +515,7 @@ class SceneHubApp:
         try:
             subprocess.run(cmd)
         except Exception as e:
-            print(f"[ERROR] 执行工具异常: {e}")
+            log.warning(f"执行工具异常: {e}")
 
         # 重新创建主窗体并重新绑定鼠标事件
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)

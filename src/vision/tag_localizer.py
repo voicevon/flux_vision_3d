@@ -13,7 +13,11 @@ import yaml
 import math
 import cv2
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Tuple, Optional
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class TagLocalizer:
@@ -80,8 +84,8 @@ class TagLocalizer:
                         t_info["is_dynamic_yaw"] = True
                         missing_dynamic_flag = True
             if missing_dynamic_flag:
-                print(f"[TagLocalizer] [WARN] 地图缺少 is_dynamic_yaw 标志，已自动强制将原点标靶 Tag {origin_id} 标记为动态 (禁止参与 PnP 外参求解)！")
-            print(f"[TagLocalizer] 成功加载标靶立体地图: {path} (包含 {len(tags_dict)} 个标靶)")
+                log.warning(f"[TagLocalizer] [WARN] 地图缺少 is_dynamic_yaw 标志，已自动强制将原点标靶 Tag {origin_id} 标记为动态 (禁止参与 PnP 外参求解)！")
+            log.info(f"[TagLocalizer] 成功加载标靶立体地图: {path} (包含 {len(tags_dict)} 个标靶)")
         else:
             self.tags_map = None
 
@@ -199,4 +203,4 @@ class TagLocalizer:
 
 if __name__ == "__main__":
     localizer = TagLocalizer()
-    print("[OK] TagLocalizer 模块语法与加载测试通过！")
+    log.info("[OK] TagLocalizer 模块语法与加载测试通过！")

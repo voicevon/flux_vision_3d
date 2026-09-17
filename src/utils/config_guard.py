@@ -9,9 +9,12 @@
 
 import os
 import yaml
-import math
 import numpy as np
 from typing import Dict, Tuple, Optional, Any
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def load_raw_config(config_path: str = "config.yaml") -> Dict[str, Any]:
@@ -22,7 +25,7 @@ def load_raw_config(config_path: str = "config.yaml") -> Dict[str, Any]:
         with open(config_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception as e:
-        print(f"[WARN] 读取配置文件 '{config_path}' 失败: {e}")
+        log.warning(f"[WARN] 读取配置文件 '{config_path}' 失败: {e}")
         return {}
 
 
@@ -65,7 +68,7 @@ def resolve_camera_intrinsics(
             metadata["source"] = "realsense_hardware_profile"
             metadata["base_resolution"] = (ref_h, ref_w)
         except Exception as e:
-            print(f"[WARN] 从硬件 profile 读取内参失败: {e}，回退至配置文件")
+            log.warning(f"[WARN] 从硬件 profile 读取内参失败: {e}，回退至配置文件")
 
     # 2. 从 config.yaml 读取
     if metadata["source"] == "default":
@@ -96,9 +99,9 @@ def resolve_camera_intrinsics(
             cx_scaled = cx * scale_x
             cy_scaled = cy * scale_y
             
-            print(f"[GUARD] 检测到图像分辨率 ({act_w}x{act_h}) 与内参标称基准 ({ref_w}x{ref_h}) 不一致！")
-            print(f"        -> 触发动态防呆机制：自动按 scale_x={scale_x:.4f}, scale_y={scale_y:.4f} 等比缩放内参！")
-            print(f"        -> 调整后内参: fx={fx_scaled:.1f}, fy={fy_scaled:.1f}, cx={cx_scaled:.1f}, cy={cy_scaled:.1f}")
+            log.warning(f"[GUARD] 检测到图像分辨率 ({act_w}x{act_h}) 与内参标称基准 ({ref_w}x{ref_h}) 不一致！")
+            log.info(f"        -> 触发动态防呆机制：自动按 scale_x={scale_x:.4f}, scale_y={scale_y:.4f} 等比缩放内参！")
+            log.info(f"        -> 调整后内参: fx={fx_scaled:.1f}, fy={fy_scaled:.1f}, cx={cx_scaled:.1f}, cy={cy_scaled:.1f}")
             
             fx, fy, cx, cy = fx_scaled, fy_scaled, cx_scaled, cy_scaled
             metadata["scaled"] = True
@@ -109,7 +112,7 @@ def resolve_camera_intrinsics(
         if not (0.30 * act_w <= cx <= 0.70 * act_w) or not (0.30 * act_h <= cy <= 0.70 * act_h):
             err_msg = (f"[CRITICAL] 相机主点 ({cx:.1f}, {cy:.1f}) 严重偏离图像几何中心 ({act_w//2}, {act_h//2})！"
                        f"存在严重的内参或分辨率错配风险！")
-            print(err_msg)
+            log.error(err_msg)
 
     K = np.array([
         [fx,  0.0, cx],

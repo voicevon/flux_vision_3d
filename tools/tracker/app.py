@@ -37,7 +37,7 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
 from src.calibration.offline_engine import OfflineVerificationEngine
 from src.control.robot_serial import RobotSerial
@@ -46,11 +46,14 @@ from tools.tracker.common import (
     COLOR_ACCENT, COLOR_BG, COLOR_TEXT_SUB, COL_CYAN, COL_YELLOW,
     TOOLBAR_H, draw_text)
 from tools.tracker.renderer import TrackerRenderer
+from src.utils.logger import get_logger
 
 try:
     from src.utils.config_guard import resolve_camera_intrinsics
 except ImportError:
     resolve_camera_intrinsics = None
+
+log = get_logger(__name__)
 
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
@@ -68,8 +71,8 @@ class RobotOnlineTracker:
     PLANE_EXTENT_MM = 600     # XY 平面网格半宽 (mm)
     PLANE_STEP_MM = 100       # XY 平面网格间距 (mm)
     PLANE_Z_MM = 600          # Z 轴长度 (mm)
-    PLANE_Z_CHOICES = (405, 196, 350, 300, 250, 200, 150, 100, 50, 0)  # 平面高度选项 (mm, 350 为新增档)
-    PLANE_Z_LABELS = {405: " (Tag 0)", 196: " (Tag 1)", 0: " (地面)"}  # 特殊高度标注
+    PLANE_Z_BASE_CHOICES = (350, 300, 250, 200, 150, 100, 50, 0)  # 基础平面高度档 (mm, 锚点高度从地图动态注入)
+    PLANE_Z_STATIC_LABELS = {0: " (地面)"}  # 静态高度标注 (锚点标注按地图动态生成)
     HP_TARGET_SIDE_PX = 240   # 高精度模式: ROI 放大后目标 Tag 边长 (px)
 
     def __init__(self, map_path=None, target_tag_id=2, port=None, baudrate=0):
@@ -91,11 +94,17 @@ class RobotOnlineTracker:
         # 4. 工具栏状态 (借鉴 d435_viewer: 相机类型 → 分辨率 → 开关; 绘制由 TrackerRenderer 负责)
         self.active_dropdown = None     # "CAMERA_TYPE_DROPDOWN" | "RES_DROPDOWN" | "PLANE_DROPDOWN" | None
         self.plane_z = 0                # XY 平面绘制高度 (mm, 下拉框选择)
+        # XY 平面高度选项与标注: 锚点档位/标注从世界坐标地图动态生成, 基础档位为固定梯度
+        self.anchor_z_labels = {int(round(pos[2])): f" (Tag {tid})"
+                                for tid, pos in self.anchor_positions.items()}
+        self.plane_z_labels = {**self.PLANE_Z_STATIC_LABELS, **self.anchor_z_labels}
+        self.plane_z_choices = tuple(sorted(
+            set(self.PLANE_Z_BASE_CHOICES) | set(self.anchor_z_labels), reverse=True))
         self.plane_options = [
             (None, "不绘制 XY 平面")
         ] + [
-            (z, f"Z {z} mm" + self.PLANE_Z_LABELS.get(z, ""))
-            for z in self.PLANE_Z_CHOICES
+            (z, f"Z {z} mm" + self.plane_z_labels.get(z, ""))
+            for z in self.plane_z_choices
         ]
         self.renderer = TrackerRenderer(self)  # UI 渲染器 (工具栏/叠加层/按钮命中表)
         self._last_canvas_size = None
@@ -165,7 +174,7 @@ class RobotOnlineTracker:
             marker_size_mm=marker_size
         )
         n_tags = len(tags_map.get("tags", {}))
-        print(f"[OK] 世界坐标地图已加载: {self.map_path} | 标靶 {n_tags} 枚 | 边长 {marker_size:.1f}mm")
+        log.info(f"[OK] 世界坐标地图已加载: {self.map_path} | 标靶 {n_tags} 枚 | 边长 {marker_size:.1f}mm")
         T = self.engine.get_tag_world_transform(self.target_tag_id)
         self.theoretical = T[:3, 3].copy() if T is not None else None
 
@@ -192,8 +201,8 @@ class RobotOnlineTracker:
                 self.camera.camera_type = state["camera_type"]
             if any(k == state.get("resolution") for k, _ in self.camera.resolution_options):
                 self.camera.resolution = state["resolution"]
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"恢复相机查看器状态失败，使用默认配置: {e}")
 
     def _save_viewer_state(self):
         """保存相机类型与分辨率选择到 config/gui_settings.json"""
@@ -216,8 +225,8 @@ class RobotOnlineTracker:
             os.makedirs(os.path.dirname(GUI_SETTINGS_FILE), exist_ok=True)
             with open(GUI_SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(root, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"保存相机查看器状态失败: {e}")
 
     # ------------------------------ 相机开关 (借鉴 d435_viewer) ------------------------------
     def _select_camera_type(self, cam_key):
@@ -228,7 +237,7 @@ class RobotOnlineTracker:
             self._toggle_camera(force_off=True)
         self.camera.camera_type = cam_key
         self._save_viewer_state()
-        print(f"[INFO] 相机类型已切换为: {dict(self.camera.camera_options).get(cam_key, cam_key)}")
+        log.info(f"相机类型已切换为: {dict(self.camera.camera_options).get(cam_key, cam_key)}")
 
     def _change_resolution(self, res_key):
         """切换分辨率：运行中则先停再按新分辨率重启 (任务执行中禁止)"""
@@ -244,7 +253,7 @@ class RobotOnlineTracker:
         self._save_viewer_state()
         if was_running:
             self._toggle_camera()
-        print(f"[INFO] 分辨率已切换: {res_key}")
+        log.info(f"分辨率已切换: {res_key}")
 
     def _toggle_camera(self, force_off=False, _internal=False):
         """开启或关闭相机取流 (采样/跟踪/识别任务执行中禁止手动开关; 内部调用与强制关闭除外)"""
@@ -256,7 +265,7 @@ class RobotOnlineTracker:
             self._release_world_lock(silent=True)
             self.recog_tag2_on = False
             self.set_toast("相机已关闭")
-            print("[INFO] 相机已关闭")
+            log.info("相机已关闭")
         else:
             # 重新开启相机: 单帧识别静态结果让位于实时预览
             self.static_frame = None
@@ -266,7 +275,7 @@ class RobotOnlineTracker:
                 self.set_toast(f"相机已开启: {dict(self.camera.camera_options).get(self.camera.camera_type)}"
                                f" @ {self.camera.resolution}")
             except Exception as e:
-                print(f"[ERROR] 相机开启失败: {e}")
+                log.warning(f"相机开启失败: {e}")
                 self.set_toast(f"相机开启失败: {e}", True)
 
     def _release_world_lock(self, silent=False):
@@ -687,7 +696,7 @@ class RobotOnlineTracker:
             else:
                 self.show_xy_plane_on = True
                 self.plane_z = int(payload)
-                label = self.PLANE_Z_LABELS.get(self.plane_z, "")
+                label = self.plane_z_labels.get(self.plane_z, "")
                 self.set_toast(f"XY 平面已重绘至 Z={self.plane_z} mm{label}")
         elif btn_id == "TRIGGER_RECOG":
             self.trigger_recognize()
@@ -712,14 +721,16 @@ class RobotOnlineTracker:
                 if hwnd:
                     ctypes.windll.user32.SetWindowTextW(hwnd, win_name)
             except Exception:
-                pass
+                pass  # GUI 可选功能：标题注入失败不影响窗口使用
         cv2.setMouseCallback(win_name, self._on_mouse)
         print("\n" + "=" * 68)
         print(" Robot 在线跟踪 (GUI 已启动, 相机未开启)")
         print("   顶部工具栏: 相机类型 → 分辨率 → [开启] → [识别] → [确定世界坐标系] → [XY平面▼] → [显示已知Tag] → [识别 Tag 2]")
         print("   [识别] 一键单帧闭环: 开相机→拍一张→关相机→识别Tag(蓝棱柱)→确定世界坐标系→地图白名单绿棱柱")
         print("   开启相机后为纯预览; [确定世界坐标系] 一键执行: 采样30帧→滤波→求解零点→锁定")
-        print("   [XY平面▼]: 不绘制 / Z 405(Tag0) 196(Tag1) 350 300...0 mm 透视网格+三轴, Tag 等高平面附加红色 X 轴")
+        plane_desc = " ".join(f"Z {z}{self.plane_z_labels.get(z, '').strip()}"
+                              for z in self.plane_z_choices)
+        print("   [XY平面▼]: 不绘制 / " + plane_desc + " mm 透视网格+三轴, Tag 等高平面附加红色 X 轴")
         print("   快捷键: [S] 一键识别 | [P] XY平面下拉 | [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定/解除世界坐标系 | [C] 连接机械臂 | [T] 跟踪 | [X] 退出")
         print("=" * 68 + "\n")
 
@@ -796,7 +807,7 @@ class RobotOnlineTracker:
             self.robot.close()
             self._toggle_camera(force_off=True)
             cv2.destroyAllWindows()
-            print("[OK] Robot 在线跟踪已退出")
+            log.info("[OK] Robot 在线跟踪已退出")
 
 
 def main():
@@ -812,7 +823,7 @@ def main():
         app = RobotOnlineTracker(map_path=args.map, target_tag_id=args.tag,
                                  port=args.port, baudrate=args.baudrate)
     except Exception as e:
-        print(f"[ERROR] 初始化失败: {e}")
+        log.warning(f"初始化失败: {e}")
         sys.exit(1)
     app.run()
 

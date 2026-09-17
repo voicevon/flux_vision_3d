@@ -3,10 +3,11 @@
 """
 窗口焦点与置顶管理助手 (Window Focus & Forefront Helper)
 解决 Windows 环境下从终端/CLI 启动 OpenCV 窗口时无法自动获取键盘焦点的痛点。
+
+注: 属 GUI 工具层能力, 位于 tools/ (核心库 src/ 不含 GUI 逻辑)。
 """
 
 import sys
-import time
 import cv2
 
 
@@ -26,7 +27,7 @@ def force_window_focus(window_name: str, keep_topmost: bool = False):
             # 延迟短暂脉冲后恢复非强行置顶，确保窗口既在前台又不死锁屏幕
             cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 0)
     except Exception:
-        pass
+        pass  # GUI 可选功能：窗口置顶失败不影响主流程
 
     # 2. Windows 平台原生 API 穿透防抢焦点限制 (AttachThreadInput)
     if sys.platform == "win32":
@@ -61,4 +62,4 @@ def force_window_focus(window_name: str, keep_topmost: bool = False):
                 user32.SetForegroundWindow(hwnd)
                 user32.SetFocus(hwnd)
         except Exception:
-            pass
+            pass  # GUI 可选功能：Win32 焦点穿透失败不影响主流程

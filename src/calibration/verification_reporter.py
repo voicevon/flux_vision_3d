@@ -14,6 +14,10 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 import numpy as np
 
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
+
 
 class VerificationReporter:
     """标定验证报表生成与统计分析器 (纯领域计算与格式化，零 GUI 依赖)"""
@@ -270,5 +274,5 @@ class VerificationReporter:
         with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
 
-        print(f"[OK] 离线精度体检报告已生成: {report_path}")
+        log.info(f"[OK] 离线精度体检报告已生成: {report_path}")
         return report_path

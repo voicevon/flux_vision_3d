@@ -23,7 +23,6 @@ import sys
 import glob
 import time
 import argparse
-import yaml
 import numpy as np
 import cv2
 
@@ -32,13 +31,18 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
 CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
 DIAGNOSTICS_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_diagnostics")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+
+from src.utils.config_guard import load_raw_config
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 # 终端 ANSI 色彩
 C_RESET = "\033[0m"
@@ -67,8 +71,7 @@ def load_system_config():
         return defaults
 
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
+        cfg = load_raw_config(CONFIG_PATH)
         det_cfg = cfg.get("calibration", {}).get("tag_detection", {})
         cam_col = cfg.get("camera", {}).get("color", {})
         valid_tag_ids = [int(x) for x in cfg.get("calibration", {}).get("valid_tag_ids", [])]
@@ -85,7 +88,7 @@ def load_system_config():
             "color_fps": int(cam_col.get("fps", defaults["color_fps"]))
         }
     except Exception as e:
-        print(f"{C_YELLOW}[WARN] 加载 config.yaml 异常: {e}，使用预设参数{C_RESET}")
+        log.warning(f"{C_YELLOW}加载 config.yaml 异常: {e}，使用预设参数{C_RESET}")
         return defaults
 
 
@@ -125,7 +128,7 @@ def run_full_dataset_comparison():
 
     image_paths = sorted(glob.glob(os.path.join(CALIB_IMAGES_DIR, "view_*.png")))
     if not image_paths:
-        print(f"{C_RED}[!] 未找到任何采图文件！请先在采图向导中按 [Space] 保存照片。{C_RESET}")
+        log.info(f"{C_RED}[!] 未找到任何采图文件！请先在采图向导中按 [Space] 保存照片。{C_RESET}")
         return
 
     print(f"\n{C_CYAN}{C_BOLD}" + "=" * 80 + f"{C_RESET}")
@@ -135,7 +138,7 @@ def run_full_dataset_comparison():
     print(f" [诊断目录] : {C_YELLOW}{DIAGNOSTICS_DIR}{C_RESET} (与采图目录同级并列，规范前缀)")
     print(f" [评估样本] : 共 {len(image_paths)} 帧高清原始视角照片")
     print(f"{C_CYAN}" + "-" * 80 + f"{C_RESET}")
-    print(f" 正在逐帧对比分析 [老参数] vs [新参数] 并生成诊断标注图...")
+    log.info(f" 正在逐帧对比分析 [老参数] vs [新参数] 并生成诊断标注图...")
 
     comparison_records = []
     old_total_hits = 0
@@ -217,8 +220,8 @@ def run_full_dataset_comparison():
     write_full_comparison_markdown(report_md_path, comparison_records, cfg,
                                    old_total_hits, new_total_hits, all_old_tags, all_new_tags)
     print(f"\n{C_CYAN}" + "-" * 80 + f"{C_RESET}")
-    print(f" 全量对比 Markdown 报告已生成至: {C_YELLOW}{report_md_path}{C_RESET}")
-    print(f" 各帧高清标注大图已保存至: {C_YELLOW}{DIAGNOSTICS_DIR}/diagnose_view_*.png{C_RESET}")
+    log.info(f" 全量对比 Markdown 报告已生成至: {C_YELLOW}{report_md_path}{C_RESET}")
+    log.info(f" 各帧高清标注大图已保存至: {C_YELLOW}{DIAGNOSTICS_DIR}/diagnose_view_*.png{C_RESET}")
     print(f"{C_CYAN}{C_BOLD}" + "=" * 80 + f"{C_RESET}\n")
 
 

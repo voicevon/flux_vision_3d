@@ -16,8 +16,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.manifest_repository import ManifestRepository
 from tools.studio.studio_state import StudioDataManager
+from src.utils.logger import get_logger
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+log = get_logger(__name__)
 
 
 class StudioBARunner:
@@ -86,14 +89,14 @@ class StudioBARunner:
                         "align_xyz_mm": [float(v) for v in wa["align_xyz_mm"]]
                     }
         except Exception as e:
-            print(f"[WARN] [STUDIO] 读取对齐标靶配置异常，采用默认值 (0, 28): {e}")
+            log.warning(f"[STUDIO] 读取对齐标靶配置异常，采用默认值 (0, 28): {e}")
 
     def _notify(self, msg: str):
         if self.on_status_change is not None:
             try:
                 self.on_status_change(msg)
             except Exception:
-                pass
+                pass  # 状态回调失败不应中断 BA 主流程
 
     def _execute_ba_solve(self, callback: Optional[Any] = None) -> Tuple[bool, Optional[Dict[str, Any]], str]:
         """执行单次核心两阶段 BA 平差求解计算并保存完整地图 Schema"""
@@ -159,7 +162,7 @@ class StudioBARunner:
         self.ba_stage_text = "正在启动两阶段全局 BA 平差优化计算..."
         self.ba_sub_text = "初始化优化工作空间..."
         self._notify("正在启动两阶段全局 BA 平差优化计算...")
-        print("\n[*] [STUDIO] 正在启动异步 BA 全局平差优化计算...")
+        log.info("\n[*] [STUDIO] 正在启动异步 BA 全局平差优化计算...")
 
         def _worker():
             try:
@@ -238,7 +241,7 @@ class StudioBARunner:
         self.ba_stage_text = "正在启动工序 5-Auto: 迭代残差剪枝平差..."
         self.ba_sub_text = "创建状态快照并准备首轮基准平差..."
         self._notify("智能剪枝平差启动: 已制作状态快照")
-        print("\n[*] [STUDIO AUTO-PRUNE] 启动自动迭代残差剪枝平差...")
+        log.info("\n[*] [STUDIO AUTO-PRUNE] 启动自动迭代残差剪枝平差...")
 
         def _auto_prune_worker():
             try:
@@ -284,7 +287,7 @@ class StudioBARunner:
                     prunable = self.data_mgr.find_worst_prunable_observations(top_k=2)
                     if not prunable:
                         stop_reason = "拓扑安全守门触发: 已无安全可剔除标靶"
-                        print(f"[*] [AUTO-PRUNE] 轮次 #{r}: 已无安全可剔除项，安全停机。")
+                        log.info(f"[*] [AUTO-PRUNE] 轮次 #{r}: 已无安全可剔除项，安全停机。")
                         break
 
                     # 格式化剔除描述
@@ -292,9 +295,9 @@ class StudioBARunner:
                     self.current_pruning_target = p_desc
                     self.ba_stage_text = f"智能剪枝平差 (第 {r}/{self.max_prune_rounds} 轮): 正在重平差求解全场景优化..."
                     self.ba_sub_text = f"本轮淘汰: {p_desc} -> 全局 BA 优化求解中..."
-                    print(f"\n[======== [AUTO-PRUNE] 剪枝平差 第 {r}/{self.max_prune_rounds} 轮 ========]", flush=True)
-                    print(f"[*] 拟剔除坏样本: {p_desc}", flush=True)
-                    print(f"[*] 剔除前全局基准 RMSE: {prev_rmse:.3f} px (中位数重投影误差: {self.data_mgr.global_median_mm:.3f} mm)", flush=True)
+                    log.info(f"\n[======== [AUTO-PRUNE] 剪枝平差 第 {r}/{self.max_prune_rounds} 轮 ========]")
+                    log.info(f"[*] 拟剔除坏样本: {p_desc}")
+                    log.info(f"[*] 剔除前全局基准 RMSE: {prev_rmse:.3f} px (中位数重投影误差: {self.data_mgr.global_median_mm:.3f} mm)")
 
                     # 轮次前制作即时快照 (用于防反弹单调保护)
                     round_snapshot = self.data_mgr.create_manifest_snapshot()
@@ -303,12 +306,12 @@ class StudioBARunner:
                     self.data_mgr.prune_observations(prunable)
 
                     # 重新运行平差求解
-                    print(f"[*] 正在重平差求解全场景优化...", flush=True)
+                    log.info(f"[*] 正在重平差求解全场景优化...")
                     succ, _, msg = self._execute_ba_solve()
                     self.current_pruning_target = ""
                     if not succ:
                         stop_reason = f"平差求解发散: {msg} (已自动恢复本轮前状态)"
-                        print(f"[!] [AUTO-PRUNE] 求解发散: {msg}，自动回滚本轮剔除并停机。", flush=True)
+                        log.warning(f"[!] [AUTO-PRUNE] 求解发散: {msg}，自动回滚本轮剔除并停机。")
                         self.data_mgr.restore_manifest_snapshot(round_snapshot)
                         break
 
@@ -319,10 +322,10 @@ class StudioBARunner:
                     # 防反弹单调刚性保护: 若剔除导致误差反弹上升 (delta_rmse < 0)，说明该标靶是关键拓扑支撑点，自动回滚并锁定最优停机
                     if delta_rmse < -0.01:
                         stop_reason = f"触发刚性拓扑保护: 拟淘汰标靶属于关键支撑骨架，剔除后残差反弹 (+{abs(delta_rmse):.2f}px)，已自动回滚并锁定最优收敛状态"
-                        print(f"\n[!] [AUTO-PRUNE] 警告: 本轮剔除导致平差残差反弹 (从 {prev_rmse:.3f} px 恶化至 {new_rmse:.3f} px)!", flush=True)
-                        print(f"[*] 正在自动回滚撤销本轮剔除，并精准恢复至最优地图状态...", flush=True)
+                        log.warning(f"\n[!] [AUTO-PRUNE] 警告: 本轮剔除导致平差残差反弹 (从 {prev_rmse:.3f} px 恶化至 {new_rmse:.3f} px)!")
+                        log.warning(f"[*] 正在自动回滚撤销本轮剔除，并精准恢复至最优地图状态...")
                         self.data_mgr.restore_manifest_snapshot(round_snapshot)
-                        print(f"[✓] 已安全恢复至最优 RMSE: {prev_rmse:.3f} px，自动触发最优收敛停机！\n", flush=True)
+                        log.info(f"[✓] 已安全恢复至最优 RMSE: {prev_rmse:.3f} px，自动触发最优收敛停机！\n")
                         break
 
                     # 本轮求解成功且有效，横向自动增加一列记录各图像在求解后的最新残差
@@ -346,12 +349,12 @@ class StudioBARunner:
                         "median_mm": new_mm
                     })
 
-                    print(f"[✓] 轮次 #{r} 完成: RMSE 从 {prev_rmse:.3f} px -> {new_rmse:.3f} px (改善幅度: {delta_rmse:+.3f} px)", flush=True)
+                    log.info(f"[✓] 轮次 #{r} 完成: RMSE 从 {prev_rmse:.3f} px -> {new_rmse:.3f} px (改善幅度: {delta_rmse:+.3f} px)")
 
                     # 核心终止判定: 边际收益见顶
                     if delta_rmse < self.min_improvement_px:
                         stop_reason = f"边际收益见顶 (本轮改善 {delta_rmse:.4f} px < 门限 {self.min_improvement_px:.3f} px)"
-                        print(f"[*] [AUTO-PRUNE] 改善幅度低于边际门限，已达最优收敛状态，自动停机！", flush=True)
+                        log.info(f"[*] [AUTO-PRUNE] 改善幅度低于边际门限，已达最优收敛状态，自动停机！")
                         break
 
                     prev_rmse = new_rmse
@@ -389,7 +392,7 @@ class StudioBARunner:
                 print("==================================================\n", flush=True)
             except Exception as e:
                 import traceback
-                print(f"\n[!] [AUTO-PRUNE ERROR] 智能剪枝平差发生未捕获异常: {e}", flush=True)
+                log.warning(f"\n[!] [AUTO-PRUNE ERROR] 智能剪枝平差发生未捕获异常: {e}")
                 traceback.print_exc()
                 self.ba_result_queue = (False, f"智能剪枝平差异常: {e}")
             finally:

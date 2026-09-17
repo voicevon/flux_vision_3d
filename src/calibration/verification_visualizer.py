@@ -11,9 +11,13 @@
 import os
 import cv2
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 
 from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.logger import get_logger
+from src.calibration.prism_renderer import draw_prism, COLORS_THEORY, COLORS_OBSERVED
+
+log = get_logger(__name__)
 
 
 class VerificationVisualizer:
@@ -56,96 +60,42 @@ class VerificationVisualizer:
             hw = 15.0   # 截面半宽 15mm，整体截面 30.0mm x 30.0mm
             L = 75.0    # 柱体高度 75mm (与实际尺寸协调)
 
-            pts_3d = np.array([
-                # 底面 4 点 (Z=0)
-                [-hw, -hw, 0.0],
-                [ hw, -hw, 0.0],
-                [ hw,  hw, 0.0],
-                [-hw,  hw, 0.0],
-                # 顶面 4 点 (Z=L)
-                [-hw, -hw, L],
-                [ hw, -hw, L],
-                [ hw,  hw, L],
-                [-hw,  hw, L],
-                # 顶面中心
-                [0.0, 0.0, L]
-            ], dtype=np.float64)
-
-            # 1. 投影全局 BA 理论棱柱 (绿色)
+            # 统一 PrismRenderer: 绿色 BA 理论棱柱 + 蓝色实测棱柱 (半透明填充 + 棱线 + 顶面中心)
             proj_ba = None
             if ba_rvec is not None and ba_tvec is not None:
-                p, _ = cv2.projectPoints(pts_3d, ba_rvec, ba_tvec, self.camera_matrix, self.dist_coeffs)
-                proj_ba = p.reshape((-1, 2)).astype(int)
-
-            # 2. 投影本地单靶实测观测棱柱 (蓝色)
+                proj_ba = draw_prism(img, self.camera_matrix, self.dist_coeffs,
+                                     ba_rvec, ba_tvec, half_w=hw, height=L,
+                                     colors=COLORS_THEORY, alpha=0.35)
             proj_obs = None
             if obs_rvec is not None and obs_tvec is not None:
-                p, _ = cv2.projectPoints(pts_3d, obs_rvec, obs_tvec, self.camera_matrix, self.dist_coeffs)
-                proj_obs = p.reshape((-1, 2)).astype(int)
-
+                proj_obs = draw_prism(img, self.camera_matrix, self.dist_coeffs,
+                                      obs_rvec, obs_tvec, half_w=hw, height=L,
+                                      colors=COLORS_OBSERVED, alpha=0.35)
             if proj_ba is None and proj_obs is None:
                 return
 
-            overlay = img.copy()
-
-            # A. 全局 BA 理论棱柱 (翡翠绿: 侧面 0, 185, 60 / 顶盖 50, 240, 100)
+            # C. 顶面中心标牌 (BA 翠绿标注 vs OBS 亮蓝标注)
+            ba_c = None
             if proj_ba is not None:
-                ba_b = proj_ba[0:4]
-                ba_t = proj_ba[4:8]
-                side_c_ba = (0, 185, 60)
-                cap_c_ba = (50, 240, 100)
-                for i in range(4):
-                    next_i = (i + 1) % 4
-                    side_poly = np.array([ba_b[i], ba_b[next_i], ba_t[next_i], ba_t[i]], dtype=np.int32)
-                    cv2.fillPoly(overlay, [side_poly], side_c_ba)
-                cv2.fillPoly(overlay, [ba_t], cap_c_ba)
-
-            # B. 本地单靶实测观测棱柱 (科技天蓝: 侧面 235, 125, 20 / 顶盖 255, 175, 50)
-            if proj_obs is not None:
-                obs_b = proj_obs[0:4]
-                obs_t = proj_obs[4:8]
-                side_c_obs = (235, 125, 20)
-                cap_c_obs = (255, 175, 50)
-                for i in range(4):
-                    next_i = (i + 1) % 4
-                    side_poly = np.array([obs_b[i], obs_b[next_i], obs_t[next_i], obs_t[i]], dtype=np.int32)
-                    cv2.fillPoly(overlay, [side_poly], side_c_obs)
-                cv2.fillPoly(overlay, [obs_t], cap_c_obs)
-
-            # 半透明图层合成
-            cv2.addWeighted(overlay, 0.35, img, 0.65, 0, img)
-
-            # C. 棱线描边与顶盖中心标牌 (BA 翠绿描边 vs OBS 亮蓝描边)
-            if proj_ba is not None:
-                edge_ba = (0, 255, 100)
-                cv2.polylines(img, [ba_b], True, edge_ba, 2, cv2.LINE_AA)
-                cv2.polylines(img, [ba_t], True, (120, 255, 160), 2, cv2.LINE_AA)
-                for i in range(4):
-                    cv2.line(img, tuple(ba_b[i]), tuple(ba_t[i]), edge_ba, 2, cv2.LINE_AA)
-                ba_c = tuple(proj_ba[8])
-                cv2.circle(img, ba_c, 4, (0, 255, 120), -1, cv2.LINE_AA)
+                ba_c = tuple(proj_ba["top_center"])
                 cv2.putText(img, "BA(绿)", (ba_c[0] + 6, ba_c[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 120), 1, cv2.LINE_AA)
 
+            obs_c = None
             if proj_obs is not None:
-                edge_obs = (255, 195, 70)
-                cv2.polylines(img, [obs_b], True, edge_obs, 2, cv2.LINE_AA)
-                cv2.polylines(img, [obs_t], True, (255, 255, 255), 2, cv2.LINE_AA)
-                for i in range(4):
-                    cv2.line(img, tuple(obs_b[i]), tuple(obs_t[i]), edge_obs, 2, cv2.LINE_AA)
-                obs_c = tuple(proj_obs[8])
-                cv2.circle(img, obs_c, 4, (255, 200, 60), -1, cv2.LINE_AA)
+                obs_c = tuple(proj_obs["top_center"])
                 cv2.putText(img, "实测(蓝)", (obs_c[0] + 6, obs_c[1] + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 210, 80), 1, cv2.LINE_AA)
 
             # D. 两者顶面中心空间错位拉扯连线 (橙黄连线与红绿小圆点)
-            if proj_ba is not None and proj_obs is not None:
+            if ba_c is not None and obs_c is not None:
                 cv2.line(img, obs_c, ba_c, (0, 80, 255), 2, cv2.LINE_AA)
                 cv2.circle(img, obs_c, 5, (255, 180, 0), -1, cv2.LINE_AA)
                 cv2.circle(img, ba_c, 5, (0, 255, 100), -1, cv2.LINE_AA)
 
             # E. 悬浮状态标签 (默认仅 Tag 编号避免高密度遮挡; 鼠标悬停展开六维详情)
             anchor = proj_ba if proj_ba is not None else proj_obs
-            min_x = np.min(anchor[:, 0])
-            min_y = np.min(anchor[:, 1])
+            anchor_pts = np.vstack([anchor["bottom"], anchor["top"], anchor["top_center"]])
+            min_x = np.min(anchor_pts[:, 0])
+            min_y = np.min(anchor_pts[:, 1])
             bx = max(10, int(min_x - 10))
             by = max(40, int(min_y - 14))
 
@@ -201,8 +151,8 @@ class VerificationVisualizer:
             for (txt, col, fs), step in zip(info_lines, line_steps):
                 draw_text(img, txt, (bx, ly_), font_size=fs, color=col)
                 ly_ += step
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"[Visualizer] 棱柱标注文本绘制异常 (已忽略): {e}")
 
 
     def render_verification_frame(
@@ -349,6 +299,6 @@ class VerificationVisualizer:
                 # 绘制放大误差矢量箭头
                 if abs(dx) > 1e-2 or abs(dy) > 1e-2:
                     cv2.arrowedLine(img, pt_s, pt_e, color, thickness, tipLength=0.25)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"[Visualizer] 残差矢量箭头绘制异常 (已忽略): {e}")
 

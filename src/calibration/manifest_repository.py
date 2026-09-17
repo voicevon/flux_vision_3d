@@ -11,13 +11,16 @@
 """
 
 import os
-import sys
 import glob
 import yaml
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
 import cv2
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -58,9 +61,9 @@ class ManifestRepository:
                         keep = obs.get("keep", True)
                         note = obs.get("note", "")
                         existing_prefs[(img_key, tid)] = (keep, note)
-                print(f"[+] 检测到已有审核清单，已成功加载 {len(existing_prefs)} 条历史人工保留/剔除标记")
+                log.info(f"[+] 检测到已有审核清单，已成功加载 {len(existing_prefs)} 条历史人工保留/剔除标记")
             except Exception as e:
-                print(f"[WARN] 读取已有清单配置失败: {e}，将生成全新清单。")
+                log.warning(f"[WARN] 读取已有清单配置失败: {e}，将生成全新清单。")
 
         manifest_data = {
             "summary": {},
@@ -155,8 +158,8 @@ class ManifestRepository:
             f.write(header_comments)
             yaml.dump(manifest_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
-        print(f"[OK] 观测清单已成功导出至: {manifest_path}")
-        print(f"     统计: 共 {len(manifest_data['images'])} 张图像，{total_obs} 次标靶观测 (保留: {total_kept}, 排除: {total_excluded})")
+        log.info(f"[OK] 观测清单已成功导出至: {manifest_path}")
+        log.info(f"     统计: 共 {len(manifest_data['images'])} 张图像，{total_obs} 次标靶观测 (保留: {total_kept}, 排除: {total_excluded})")
         return manifest_path
 
     def load_manifest(self, 
@@ -187,7 +190,7 @@ class ManifestRepository:
         # 若磁盘包含未在清单中出现的新文件，自动触发增量导出
         if disk_bases - manifest_bases:
             missing_count = len(disk_bases - manifest_bases)
-            print(f"[*] 检测到采图目录新增 {missing_count} 张照片，正在自动增量同步录入清单与可视化...")
+            log.info(f"[*] 检测到采图目录新增 {missing_count} 张照片，正在自动增量同步录入清单与可视化...")
             self.export_manifest(disk_files, manifest_path=manifest_path, generate_visualized=True)
             with open(manifest_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
@@ -282,7 +285,7 @@ class ManifestRepository:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             yaml.dump(map_data, f, allow_unicode=True, sort_keys=False)
-        print(f"[OK] 标靶空间立体地图已成功保存至: {output_path}")
+        log.info(f"[OK] 标靶空间立体地图已成功保存至: {output_path}")
 
     @classmethod
     def save_tags_map(cls, *args, **kwargs):

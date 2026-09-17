@@ -13,7 +13,6 @@
 import os
 import sys
 import json
-import time
 import argparse
 import numpy as np
 import cv2
@@ -23,7 +22,7 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
 # 导入 RealSense (若可用)
 try:
@@ -33,7 +32,10 @@ except ImportError:
     HAVE_REALSENSE = False
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
+from src.vision.asparagus_analyzer import AsparagusAnalyzer
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def parse_args():
@@ -121,7 +123,7 @@ def load_system_config():
                     drop_x = float(r_cfg.get("drop_x_mm", 220.0))
                     drop_y = float(r_cfg.get("drop_y_mm", 0.0))
         except Exception as e:
-            print(f"[WARN] 加载 config.yaml 异常: {e}")
+            log.warning(f"加载 config.yaml 异常: {e}")
     return t_cam_to_scara, tags_map_path, safe_z, drop_x, drop_y
 
 
@@ -132,13 +134,13 @@ def main():
     # 1. 获取彩色与深度数据
     if args.image and args.depth:
         if not os.path.exists(args.image) or not os.path.exists(args.depth):
-            print(f"[ERROR] 指定的文件不存在: {args.image} 或 {args.depth}")
+            log.warning(f"指定的文件不存在: {args.image} 或 {args.depth}")
             sys.exit(1)
         color_img = cv2.imread(args.image)
         depth_img = np.load(args.depth)
         analyzer = AsparagusAnalyzer(fx=909.12, fy=907.46, cx=647.46, cy=377.51)
     else:
-        print("[INFO] 正在从 Intel RealSense D435 捕获当前对齐数据帧...")
+        log.info("正在从 Intel RealSense D435 捕获当前对齐数据帧...")
         color_img, depth_img, intrinsics = capture_from_d435()
         analyzer = AsparagusAnalyzer(fx=intrinsics.fx, fy=intrinsics.fy, cx=intrinsics.ppx, cy=intrinsics.ppy)
 
@@ -149,7 +151,7 @@ def main():
             localizer = TagLocalizer(tags_map_path=tags_map_path)
             analyzer.set_tag_localizer(localizer)
         except Exception as e:
-            print(f"[WARN] AprilTag 定位器加载失败: {e}")
+            log.warning(f"AprilTag 定位器加载失败: {e}")
 
     # 加载手工标定矩阵 (回退方案)
     if t_cam_to_scara is not None:
@@ -250,7 +252,7 @@ def main():
     print("=" * 76)
 
     if args.save_vis:
-        print(f"[OK] 视觉检测标注图已保存至: {args.save_vis}\n")
+        log.info(f"[OK] 视觉检测标注图已保存至: {args.save_vis}\n")
 
 
 if __name__ == "__main__":

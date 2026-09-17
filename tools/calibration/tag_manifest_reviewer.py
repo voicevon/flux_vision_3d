@@ -27,7 +27,7 @@ import argparse
 import numpy as np
 import cv2
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Optional, Any
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
@@ -37,7 +37,7 @@ except ImportError:
     TagMapBuilder = None
 
 try:
-    from src.utils.window_helper import force_window_focus
+    from tools.window_helper import force_window_focus
 except ImportError:
     force_window_focus = None
 
@@ -51,6 +51,10 @@ except ImportError:
     get_safe_screen_size = None
     draw_styled_button = None
     draw_segmented_toggle = None
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class TagManifestReviewer:
@@ -223,7 +227,7 @@ class TagManifestReviewer:
         """保存修改并退出审核画板 (BA 求解交由 Offline Studio 统一执行)"""
         self.save_changes()
         self.is_running = False
-        print(f"[SAVED] 审核画板已保存修改并退出，可在 Offline Studio 中一键求解 BA 平差。")
+        log.info(f"[SAVED] 审核画板已保存修改并退出，可在 Offline Studio 中一键求解 BA 平差。")
 
     def sync_with_disk(self, auto_save: bool = True) -> int:
         """
@@ -257,7 +261,7 @@ class TagManifestReviewer:
                 added_images.append((base_name, full_path))
 
         if added_images:
-            print(f"[AUTO-SYNC] 检测到磁盘新增 {len(added_images)} 张采图，正在自动执行增量识别与录入...")
+            log.info(f"[AUTO-SYNC] 检测到磁盘新增 {len(added_images)} 张采图，正在自动执行增量识别与录入...")
             for base_name, full_path in added_images:
                 raw_img = cv2.imread(full_path)
                 if raw_img is None:
@@ -295,13 +299,13 @@ class TagManifestReviewer:
                     "observations": obs_list
                 }
                 has_t0 = 0 in detected
-                print(f"  + [{base_name}] 检出 {len(obs_list)} 个标靶 (Tag 0: {'√ 已捕获' if has_t0 else '未出现'})")
+                log.info(f"  + [{base_name}] 检出 {len(obs_list)} 个标靶 (Tag 0: {'√ 已捕获' if has_t0 else '未出现'})")
 
         if added_images:
             self.image_keys = sorted(list(images_dict.keys()))
             if auto_save:
                 self.save_changes()
-                print(f"[AUTO-SYNC] 清单与磁盘已同步：当前共计 {len(self.image_keys)} 张图像，已保存至 {self.manifest_path}")
+                log.info(f"[AUTO-SYNC] 清单与磁盘已同步：当前共计 {len(self.image_keys)} 张图像，已保存至 {self.manifest_path}")
 
         return len(added_images)
 
@@ -345,7 +349,7 @@ class TagManifestReviewer:
         else:
             msg = f"已恢复本帧所有有效标靶"
         self.set_toast(msg)
-        print(f"[TOGGLE FRAME] [{curr_key}] {'[已临时剔除]' if not new_state else '[已恢复启用]'}")
+        log.info(f"[TOGGLE FRAME] [{curr_key}] {'[已临时剔除]' if not new_state else '[已恢复启用]'}")
 
     def rescan_current_frame(self):
         """重新使用最新双路检测器与白名单扫描识别当前图像，增量补充新 Tag"""
@@ -405,7 +409,7 @@ class TagManifestReviewer:
         else:
             msg = f"本图识别完成: 检出 {len(updated_obs)} 个标靶 (已是最新)"
         self.set_toast(msg)
-        print(f"[RESCAN] [{curr_key}] {msg}")
+        log.info(f"[RESCAN] [{curr_key}] {msg}")
 
     def rescan_all_frames(self):
         """全量重新扫描数据集中所有图像并更新清单"""
@@ -461,7 +465,7 @@ class TagManifestReviewer:
         self.update_topology()
         self.render_current_frame()
         self.set_toast(f"全量重扫完成: 累计检出 {total_found} 次观测 (+新增 {total_new} 项)")
-        print(f"[RESCAN ALL] 全量重扫完成: 累计 {total_found} 次观测，新增 {total_new} 项标靶！")
+        log.info(f"[RESCAN ALL] 全量重扫完成: 累计 {total_found} 次观测，新增 {total_new} 项标靶！")
 
     def refine_single_tag(self, obs_idx: int):
         """对当前帧中的指定标靶进行局部 ROI 重新高精提取与角点重算"""
@@ -527,7 +531,7 @@ class TagManifestReviewer:
             self.has_unsaved_changes = True
             self.save_changes(quiet=True)
             self.set_toast(f"Tag #{tid} 局部高精重算完成！已更新角点坐标")
-            print(f"[RE-EXTRACT] [{curr_key}] Tag #{tid} 角点已重新提取并刷新")
+            log.info(f"[RE-EXTRACT] [{curr_key}] Tag #{tid} 角点已重新提取并刷新")
         else:
             self.set_toast(f"Tag #{tid} 局部重算未检出，保持现有角点")
 
@@ -670,7 +674,7 @@ class TagManifestReviewer:
                         self.has_unsaved_changes = True
                         self.save_changes(quiet=True)
                         status_str = "【保留】" if obs["keep"] else "【剔除】"
-                        print(f"[MENU] [{curr_key}] Tag #{target_tid} 切换为: {status_str}")
+                        log.info(f"[MENU] [{curr_key}] Tag #{target_tid} 切换为: {status_str}")
                         self.set_toast(f"Tag #{target_tid} -> {status_str}")
                         self.update_topology()
                         self.render_current_frame()
@@ -770,7 +774,7 @@ class TagManifestReviewer:
                     self.save_changes(quiet=True)
 
                     status_str = "【保留】" if new_keep else "【剔除】"
-                    print(f"[CLICK] [{curr_key}] Tag #{target_obs['tag_id']} 状态切换为: {status_str}")
+                    log.info(f"[CLICK] [{curr_key}] Tag #{target_obs['tag_id']} 状态切换为: {status_str}")
                     self.set_toast(f"Tag #{target_obs['tag_id']} -> {status_str} (已自动存盘)")
 
                     # 毫秒级重算拓扑
@@ -842,7 +846,7 @@ class TagManifestReviewer:
                 try:
                     self.builder.render_tag_3d_axes(disp, corners, tid)
                 except Exception:
-                    pass
+                    pass  # 热路径：每帧渲染 3D 轴失败静默跳过，避免日志刷屏
 
             else:
                 num_excl += 1
@@ -1095,8 +1099,8 @@ class TagManifestReviewer:
         self.has_unsaved_changes = False
         self.has_modified_manifest = True
         if not quiet:
-            print(f"[SAVE] 审核修改已成功保存至: {self.manifest_path}")
-            print(f"       累计统计: 有效帧 {total_enabled_imgs}/{len(self.image_keys)}，保留观测 {total_kept} 次，已剔除 {total_excl} 次")
+            log.info(f"[SAVE] 审核修改已成功保存至: {self.manifest_path}")
+            log.info(f"       累计统计: 有效帧 {total_enabled_imgs}/{len(self.image_keys)}，保留观测 {total_kept} 次，已剔除 {total_excl} 次")
 
     def run(self):
         """启动 OpenCV 交互事件循环"""
@@ -1190,8 +1194,8 @@ class TagManifestReviewer:
         try:
             cv2.destroyWindow(self.window_name)
         except Exception:
-            pass
-        print("[EXIT] 交互审核完成，窗口已安全关闭。")
+            pass  # 清理容错：窗口可能已被红叉关闭
+        log.info("[EXIT] 交互审核完成，窗口已安全关闭。")
 
 
 def main():

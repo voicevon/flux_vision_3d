@@ -12,13 +12,17 @@ AprilTag 离线标定与建图综合工作站 (Tag Offline Studio)
       - VerificationVisualizer (3D 双四棱柱立体对比 / 2D 残差矢量)
   - 1920x1080 工业级三栏排版 (左侧高密紧凑帧列表、中央高清视口、右侧属性诊断面板、底栏全局调度)
   - 异步 BA 全局平差，前台丝滑响应，求解完成后就地热重载地图并即时刷新全量帧残差数值。
+
+模块拆分结构 (上帝文件拆分)：
+  - 本模块 (app.py): TagOfflineStudio 核心控制器 (装配 / 属性代理 / 数据委托 / 渲染委托 / 主循环)
+  - studio_events.py: StudioEventMixin (鼠标事件命中测试与 GUI 按钮分发)
+  - studio_workflows.py: StudioWorkflowMixin (异步超精提取 / 智能剪枝 / BA 平差 / 发布与质检报告)
+  - studio_app_meta.py: 跨模块共享常量 (PROJECT_ROOT)
 """
 
 import os
 import sys
-import glob
 import time
-import math
 import threading
 import argparse
 from typing import Dict, List, Optional, Tuple, Any
@@ -31,13 +35,18 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
-        pass
+        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+# 共享常量 PROJECT_ROOT 从 studio_app_meta 导入 (Mixin 模块亦引用，避免双处定义不一致)
+try:
+    from tools.studio.studio_app_meta import PROJECT_ROOT
+except ImportError:
+    # 以脚本方式直接运行本文件时的回退导入 (同目录)
+    from studio_app_meta import PROJECT_ROOT
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.calibration.manifest_repository import ManifestRepository
-from src.calibration.offline_engine import OfflineVerificationEngine, OfflineEngine
+from src.calibration.offline_engine import OfflineVerificationEngine
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.verification_reporter import VerificationReporter
 from src.calibration.verification_visualizer import VerificationVisualizer
@@ -45,22 +54,17 @@ from tools.studio.studio_state import StudioDataManager
 from tools.studio.studio_viewport_interactor import StudioViewportInteractor
 from tools.studio.studio_ba_runner import StudioBARunner
 from tools.studio.studio_renderer import (
-    StudioUIRenderer,
-    draw_dropdown_button,
-    VIEW_MODE_OPTIONS,
-    FILTER_MODE_OPTIONS,
-    SORT_MODE_OPTIONS,
-    BA_VIEW_OPTIONS,
-    OBS_VIEW_OPTIONS
+    StudioUIRenderer
 )
 from src.utils.viewport_manager import (
-    ViewportManager,
-    draw_styled_button,
-    draw_segmented_toggle
+    ViewportManager
 )
+from src.utils.logger import get_logger
+from tools.studio.studio_events import StudioEventMixin
+from tools.studio.studio_workflows import StudioWorkflowMixin
 
 try:
-    from src.utils.window_helper import force_window_focus
+    from tools.window_helper import force_window_focus
 except ImportError:
     force_window_focus = None
 
@@ -69,6 +73,8 @@ try:
     from src.utils.config_guard import resolve_camera_intrinsics
 except ImportError:
     resolve_camera_intrinsics = None
+
+log = get_logger(__name__)
 
 try:
     from src.calibration.scene_manager import CalibrationSceneManager
@@ -84,9 +90,10 @@ except Exception:
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 
-class TagOfflineStudio:
+class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
 
-    """AprilTag 离线标定综合工作站 (Offline Studio) 控制器"""
+    """AprilTag 离线标定综合工作站 (Offline Studio) 控制器
+    (事件交互职责见 StudioEventMixin，异步工作流职责见 StudioWorkflowMixin)"""
 
     def __init__(
         self,
@@ -465,7 +472,7 @@ class TagOfflineStudio:
         if bname:
             status_str = "已标记为 [剔除/EXCLUDED]" if is_excl else "已恢复为 [保留/ACTIVE]"
             self.set_toast(f"帧 {bname} {status_str}")
-            print(f"[*] 帧状态翻转: {bname} -> {status_str}")
+            log.info(f"[*] 帧状态翻转: {bname} -> {status_str}")
 
     def toggle_tag_exclusion_in_current_frame(self, target_tag_id: int):
         bname, is_kept = self.data_mgr.toggle_tag_exclusion_in_current_frame(target_tag_id)
@@ -480,49 +487,6 @@ class TagOfflineStudio:
     def super_extract_all_frames(self, progress_callback: Optional[Any] = None) -> Tuple[int, int]:
         """对所有采图帧清空原有角点与观测，从头重提取超精标靶并持久化"""
         return self.data_mgr.super_extract_all_frames(progress_callback=progress_callback)
-
-    def start_async_super_extract_all(self) -> bool:
-        """启动后台异步线程执行全量采图工序 3 工业级超精重提取并从头重建"""
-        if self.is_extracting_all:
-            self.set_toast("全量超精提取已在后台运行中，请稍候...")
-            return False
-        if self.is_ba_running:
-            self.set_toast("全局平差计算中，请待平差完成后再执行提取")
-            return False
-        if not self.image_files:
-            self.set_toast("未扫描到采图文件，无法执行超精重提取")
-            return False
-
-        self.is_extracting_all = True
-        self.extract_progress = 0.01
-        self.extract_stage_text = f"正在启动全局全量超精提取 (共 {len(self.image_files)} 帧)..."
-        self.set_toast(self.extract_stage_text)
-
-        def _worker():
-            try:
-                def on_progress(cur, total, bname, count):
-                    self.extract_progress = cur / max(1, total)
-                    self.extract_stage_text = f"全量超精提取 ({cur}/{total}): {bname} (检出 {count} 个标靶)"
-
-                total_frames, total_tags = self.data_mgr.super_extract_all_frames(progress_callback=on_progress)
-                self.extract_progress = 1.0
-                msg = f"全局超精提取完成！处理 {total_frames} 帧，累计提取 {total_tags} 个高精标靶"
-                self.extract_result_queue = (True, msg)
-            except Exception as e:
-                self.extract_result_queue = (False, f"全量超精重提取失败: {e}")
-
-        self.extract_thread = threading.Thread(target=_worker, daemon=True)
-        self.extract_thread.start()
-        return True
-
-    def poll_super_extract_result(self) -> Optional[Tuple[bool, str]]:
-        """检查异步全量超精提取任务是否完成"""
-        if self.extract_result_queue is not None:
-            res = self.extract_result_queue
-            self.extract_result_queue = None
-            self.is_extracting_all = False
-            return res
-        return None
 
     @property
     def dynamic_left_bar_w(self) -> int:
@@ -544,39 +508,6 @@ class TagOfflineStudio:
         else:
             self.set_toast("已切换为: 紧凑图像帧列表 (Compact View)")
 
-    def start_auto_prune_ba(self) -> bool:
-        """启动全自动基于边际收益与共视拓扑守门的残差剪枝平差"""
-        if self.is_ba_running or self.is_extracting_all:
-            self.set_toast("后台任务正在计算中，请稍候...")
-            return False
-        # 联动质检视角: 自动将左侧图像序列切换为【残差降序 (最差优先 ↓)】并展开多轮残差矩阵视图
-        self.sort_mode = "err_desc"
-        self.matrix_view_mode = True
-        self.left_bar_w = self.dynamic_left_bar_w
-        res = self.ba_runner.start_auto_prune(max_rounds=10, min_improvement_px=0.01)
-        if res:
-            # 自动将主视口聚焦至残差最大、最亟待排查的首张图像
-            f_indices = self._get_filtered_indices()
-            if f_indices:
-                self.current_img_idx = f_indices[0]
-        return res
-
-    def accept_prune_results(self):
-        """采纳智能剪枝平差结果并清空结算单"""
-        self.ba_runner.prune_settlement_data = None
-        self.set_toast("已采纳智能剪枝平差结果！可按 [M] 保存为最新地图")
-        print("[*] [STUDIO] 操作员确认采纳智能剪枝平差结果。")
-
-    def undo_prune_results(self):
-        """一键无损撤销智能剪枝，回滚至快照状态"""
-        succ = self.data_mgr.restore_manifest_snapshot()
-        self.ba_runner.prune_settlement_data = None
-        if succ:
-            self.set_toast("已撤销智能剪枝！观测清单与地图已完全恢复至剪枝前状态")
-            print("[*] [STUDIO] 操作员已撤销智能剪枝，状态已无损回滚。")
-        else:
-            self.set_toast("未找到有效快照，撤销未执行")
-
     def reset_map(self) -> bool:
         """一键复位清空空间立体地图 (自动备份为 tags_map.yaml.bak)"""
         return self.data_mgr.reset_map()
@@ -584,98 +515,6 @@ class TagOfflineStudio:
     def reset_all_keep_status(self) -> int:
         """一键复位全量观测保留状态"""
         return self.data_mgr.reset_all_keep_status()
-
-    def start_async_bundle_adjustment(self):
-        """启动后台线程执行两阶段全局 BA 平差优化，前台持续平滑响应"""
-        return self.ba_runner.start()
-
-
-
-    def publish_to_production(self):
-        """将当前工作站优化好的地图一键发布至全局生产环境 (config/tags_map.yaml)"""
-        if not self.tags_map_data:
-            self.set_toast("当前尚无有效地图，请先按 [B] 进行 BA 平差！")
-            return
-
-        ManifestRepository.save_map(self.tags_map_data, self.map_path)
-        if self.scene_mgr and self.active_scene:
-            ok, msg = self.scene_mgr.publish_to_production(self.active_scene.scene_id)
-            if ok:
-                self.set_toast(f"★ 成功发布为生产全局地图！({self.active_scene.name})")
-            else:
-                self.set_toast(f"发布失败: {msg}")
-        else:
-            self.set_toast("未连接场景管理器，已保存至本场景地图")
-
-    def export_verification_report(self):
-        """导出 Markdown 全景精度质检单"""
-        if self.active_scene:
-            report_dir = self.active_scene.reports_dir
-        else:
-            report_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
-        os.makedirs(report_dir, exist_ok=True)
-        ts = int(time.time())
-        report_path = os.path.join(report_dir, f"studio_qa_report_{ts}.md")
-
-        try:
-            with open(report_path, "w", encoding="utf-8") as f:
-                f.write(f"# AprilTag 离线标定与建图全景质检单 (Offline Studio)\n\n")
-                f.write(f"- **质检时间**: `{time.strftime('%Y-%m-%d %H:%M:%S')}`\n")
-                f.write(f"- **总采图集**: `{len(self.image_files)} 帧`\n")
-                f.write(f"- **全景 RMSE**: `{self.global_rmse:.3f} px`\n")
-                f.write(f"- **已知标靶数**: `{len(self.tags_map_data.get('tags', {}))} 个`\n")
-                f.write(f"- **空间地图**: `{self.map_path}`\n\n")
-                f.write(f"## 图像帧逐项质检明细\n\n")
-                f.write(f"| 图像帧 | 观测标靶数 | 平均残差 | 最大残差 | 状态 |\n")
-                f.write(f"| :--- | :---: | :---: | :---: | :---: |\n")
-
-                for p in self.image_files:
-                    bname = os.path.basename(p)
-                    meta = self.frame_metrics_cache.get(bname, {})
-                    status_str = "❌ 已剔除" if meta.get("is_excluded", False) else "✅ 参与解算"
-                    f.write(f"| `{bname}` | {meta.get('tag_count', 0)} | {meta.get('mean_err', 0.0):.2f} px | {meta.get('max_err', 0.0):.2f} px | {status_str} |\n")
-
-                # 2. 智能剪枝平差逐帧多轮残差收敛矩阵 (若存在多轮历史)
-                headers = getattr(self.data_mgr, "convergence_headers", [])
-                matrix = getattr(self.data_mgr, "frame_convergence_matrix", {})
-                if headers and matrix and len(headers) >= 1:
-                    f.write(f"\n## 2. 智能剪枝平差逐帧多轮残差收敛矩阵 (Per-Frame Convergence Matrix)\n\n")
-                    f.write(f"> 记录各图像帧在每一轮平差求解后的残差演进变化情况：\n\n")
-                    header_cols = ["图像帧", "标靶数"] + headers + ["累计降幅"]
-                    f.write("| " + " | ".join(header_cols) + " |\n")
-                    f.write("| " + " | ".join([":---"] + [":---:"] * (len(header_cols) - 1)) + " |\n")
-
-                    for p in self.image_files:
-                        bname = os.path.basename(p)
-                        meta = self.frame_metrics_cache.get(bname, {})
-                        tag_cnt = meta.get("tag_count", 0)
-                        row_vals = matrix.get(bname, [])
-                        r_strs = []
-                        for val in row_vals:
-                            r_strs.append(f"{val:.2f} px" if val is not None else "--")
-                        while len(r_strs) < len(headers):
-                            r_strs.append("--")
-
-                        first_val = row_vals[0] if (row_vals and row_vals[0] is not None) else None
-                        last_val = None
-                        for v in reversed(row_vals):
-                            if v is not None:
-                                last_val = v
-                                break
-                        if first_val is not None and last_val is not None and first_val > 0.001:
-                            drop_px = first_val - last_val
-                            drop_pct = (drop_px / first_val) * 100.0
-                            drop_str = f"↓{drop_pct:.1f}% ({drop_px:+.2f}px)"
-                        else:
-                            drop_str = "--"
-
-                        f.write(f"| `{bname}` | {tag_cnt} | " + " | ".join(r_strs) + f" | {drop_str} |\n")
-
-            self.set_toast("全景质检报告已成功导出至 data/tag_calibration_verification/！")
-            print(f"[OK] 质检报告导出成功: {report_path}")
-        except Exception as e:
-            self.set_toast(f"导出质检报告失败: {e}")
-            print(f"[ERROR] 导出质检报告异常: {e}")
 
     # ===================== 渲染管线 (三栏自适应排版) =====================
 
@@ -722,184 +561,6 @@ class TagOfflineStudio:
 
     # ===================== 事件分发与主循环 =====================
 
-    def _on_mouse(self, event, mx, my, flags, param):
-        self.mouse_pos = (mx, my)
-
-        top_h = self.viewport.top_bar_h if self.viewport else 44
-        bot_h = self.viewport.bottom_bar_h if self.viewport else 52
-        content_y1 = top_h
-        content_y2 = self.win_h - bot_h
-
-        left_x1, left_x2 = 0, self.left_bar_w
-        mid_x1, mid_x2 = self.left_bar_w, self.win_w - self.right_bar_w
-
-        # 1. 鼠标滚轮事件 (精准区分：左侧列表滚动 vs 中间视口以鼠标为中心缩放)
-        if event == cv2.EVENT_MOUSEWHEEL:
-            # 滚轮判定方向: flags > 0 为向上滚, flags < 0 为向下滚
-            wheel_up = (flags > 0)
-
-            # A. 鼠标光标位于左栏：上下滚动帧资产列表
-            if left_x1 <= mx < left_x2:
-                if wheel_up:
-                    self.scroll_offset = max(0, self.scroll_offset - 2)
-                else:
-                    self.scroll_offset += 2
-                return
-
-            # B. 鼠标光标位于中间画布视口：执行以光标为中心的精准缩放 (Zoom In/Out)
-            elif mid_x1 <= mx < mid_x2 and content_y1 <= my < content_y2:
-                self.viewport.zoom_at(mx, my, wheel_up, (mid_x1, content_y1, mid_x2 - mid_x1, content_y2 - content_y1))
-                return
-
-        # 2. 拖拽平移事件 (支持鼠标右键或中键按住平移)
-        if event in (cv2.EVENT_RBUTTONDOWN, cv2.EVENT_MBUTTONDOWN):
-            if mid_x1 <= mx < mid_x2 and content_y1 <= my < content_y2:
-                self.viewport.start_pan(mx, my)
-                return
-        elif event == cv2.EVENT_MOUSEMOVE:
-            if self.viewport.update_pan(mx, my):
-                return
-        elif event in (cv2.EVENT_RBUTTONUP, cv2.EVENT_MBUTTONUP):
-            if self.viewport.is_panning:
-                self.viewport.end_pan()
-                return
-
-        # 3. 双击事件 (双击左键或右键一键重置缩放)
-        if event in (cv2.EVENT_LBUTTONDBLCLK, cv2.EVENT_RBUTTONDBLCLK):
-            if mid_x1 <= mx < mid_x2 and content_y1 <= my < content_y2:
-                self.reset_viewport_zoom()
-                return
-
-        # 4. 鼠标左键点击事件 (GUI 按钮分发，优先命中置顶下拉层)
-        if event == cv2.EVENT_LBUTTONDOWN:
-            clicked_any = False
-            for btn_id, (bx1, by1, bx2, by2), extra in reversed(self.gui_buttons):
-                if bx1 <= mx <= bx2 and by1 <= my <= by2:
-                    self._handle_button_click(btn_id, extra, mx, my)
-                    clicked_any = True
-                    return
-
-            # 若未点击任何已注册按钮，且当前有下拉菜单展开，则自动收起 (Click-outside)
-            if not clicked_any and self.active_dropdown:
-                self.active_dropdown = None
-                return
-
-            # 5. 检查是否直接点击在中间视口图片的标靶区域上 (画布直接打叉剔除 / 恢复审核模式)
-            if mid_x1 <= mx < mid_x2 and content_y1 <= my < content_y2:
-                if self.image_files and 0 <= self.current_img_idx < len(self.image_files):
-                    cur_file = self.image_files[self.current_img_idx]
-                    bname = os.path.basename(cur_file)
-                    meta = self.frame_metrics_cache.get(bname, {})
-                    obs_list = meta.get("observations", [])
-
-                    if obs_list:
-                        bgr = cv2.imread(cur_file)
-                        if bgr is not None:
-                            frame_h, frame_w = bgr.shape[:2]
-                            hit_tid = self.viewport.hit_test_tag(
-                                mx, my, obs_list,
-                                (mid_x1, content_y1, mid_x2 - mid_x1, content_y2 - content_y1),
-                                frame_w, frame_h
-                            )
-                            if hit_tid is not None:
-                                self.toggle_tag_exclusion_in_current_frame(hit_tid)
-                                return
-
-
-    def _handle_button_click(self, btn_id: str, extra: Any, mx: int, my: int):
-        if btn_id == "EXIT":
-            self.is_running = False
-        elif btn_id == "RUN_BA":
-            self.start_async_bundle_adjustment()
-        elif btn_id == "RECOMPUTE_METRICS":
-            self.refresh_all_frame_metrics()
-            self.set_toast("已全量重算并刷新所有帧残差指标")
-        elif btn_id == "EXPORT_REPORT":
-            self.export_verification_report()
-        elif btn_id == "SAVE_MAP":
-            ManifestRepository.save_map(self.tags_map_data, self.map_path)
-            self.set_toast(f"空间立体地图已成功保存至 {self.map_path}")
-        elif btn_id == "TOGGLE_BA_VIEW_DROPDOWN":
-            self.active_dropdown = None if self.active_dropdown == "BA_VIEW_DROPDOWN" else "BA_VIEW_DROPDOWN"
-        elif btn_id == "TOGGLE_OBS_VIEW_DROPDOWN":
-            self.active_dropdown = None if self.active_dropdown == "OBS_VIEW_DROPDOWN" else "OBS_VIEW_DROPDOWN"
-        elif btn_id == "TOGGLE_VIEW_DROPDOWN":
-            self.active_dropdown = None if self.active_dropdown == "BA_VIEW_DROPDOWN" else "BA_VIEW_DROPDOWN"
-        elif btn_id == "TOGGLE_FILTER_DROPDOWN":
-            self.active_dropdown = None if self.active_dropdown == "FILTER_DROPDOWN" else "FILTER_DROPDOWN"
-        elif btn_id == "TOGGLE_SORT_DROPDOWN":
-            self.active_dropdown = None if self.active_dropdown == "SORT_DROPDOWN" else "SORT_DROPDOWN"
-        elif btn_id.startswith("DD_SELECT_"):
-            dd_name, selected_val = extra
-            if dd_name == "BA_VIEW_DROPDOWN":
-                self.ba_view_mode = selected_val
-                self.view_mode = selected_val
-                lbl = dict(BA_VIEW_OPTIONS).get(selected_val, selected_val)
-                self.set_toast(f"BA 理论显示已切换为: {lbl}")
-            elif dd_name == "OBS_VIEW_DROPDOWN":
-                self.obs_view_mode = selected_val
-                lbl = dict(OBS_VIEW_OPTIONS).get(selected_val, selected_val)
-                self.set_toast(f"实测识别显示已切换为: {lbl}")
-            elif dd_name == "VIEW_DROPDOWN":
-                self.view_mode = selected_val
-                if selected_val == "3d":
-                    self.ba_view_mode = "3d"
-                    self.obs_view_mode = "3d"
-                elif selected_val == "2d":
-                    self.ba_view_mode = "2d"
-                    self.obs_view_mode = "2d"
-                lbl = dict(VIEW_MODE_OPTIONS).get(selected_val, selected_val)
-                self.set_toast(f"显示模式已切换为: {lbl}")
-            elif dd_name == "FILTER_DROPDOWN":
-                self.filter_mode = selected_val
-                self.scroll_offset = 0
-                lbl = dict(FILTER_MODE_OPTIONS).get(selected_val, selected_val)
-                self.set_toast(f"筛选模式已切换为: {lbl}")
-            elif dd_name == "SORT_DROPDOWN":
-                self.sort_mode = selected_val
-                self.scroll_offset = 0
-                lbl = dict(SORT_MODE_OPTIONS).get(selected_val, selected_val)
-                self.set_toast(f"排序方式已切换为: {lbl}")
-            self.active_dropdown = None
-        elif btn_id.startswith("SELECT_FRAME_"):
-            orig_idx = int(extra)
-            self.current_img_idx = orig_idx
-            self.set_toast(f"已选中帧: {os.path.basename(self.image_files[orig_idx])}")
-            self.active_dropdown = None
-        elif btn_id == "TOGGLE_FRAME_STATUS":
-            self.toggle_current_frame_exclusion()
-        elif btn_id.startswith("TOGGLE_TAG_"):
-            tid = int(extra)
-            self.toggle_tag_exclusion_in_current_frame(tid)
-
-        elif btn_id == "SUPER_EXTRACT_FRAME":
-            self.set_toast("正在执行工序 3 工业级超精重提取 (多尺度CLAHE+2x超分+0.01px亚像素精修)...")
-            bname, cnt = self.super_extract_current_frame()
-            if bname:
-                self.set_toast(f"帧 {bname} 超精重提取完成并已原子持久化: 检出 {cnt} 个标靶")
-        elif btn_id == "SUPER_EXTRACT_ALL":
-            self.start_async_super_extract_all()
-        elif btn_id == "RESET_MAP":
-            self.reset_map()
-            self.set_toast("立体地图已复位清空 (备份为 .bak)，恢复为纯观测模式")
-        elif btn_id == "RESET_KEEP_ALL":
-            restored = self.reset_all_keep_status()
-            self.set_toast(f"已一键复位所有观测有效状态 (恢复 {restored} 个标靶)")
-        elif btn_id == "DIAGNOSE_FRAME":
-            self.toggle_frame_diagnostics()
-        elif btn_id == "LAUNCH_TRACKER":
-            self.launch_robot_online_tracker()
-        elif btn_id == "RUN_AUTO_PRUNE_BA":
-            self.start_auto_prune_ba()
-        elif btn_id == "TOGGLE_MATRIX_VIEW":
-            self.toggle_matrix_view_mode()
-        elif btn_id == "ACCEPT_PRUNE":
-            self.accept_prune_results()
-        elif btn_id == "UNDO_PRUNE":
-            self.undo_prune_results()
-        elif btn_id == "STOP_PRUNE":
-            self.ba_runner.request_stop_pruning()
-
     def toggle_frame_diagnostics(self):
         """唤起/关闭当前选定帧的漏检病因深度切片诊断视图"""
         self.show_frame_diagnostics = not self.show_frame_diagnostics
@@ -925,7 +586,7 @@ class TagOfflineStudio:
 
     def launch_robot_online_tracker(self):
         """一键跨工序启动 Robot 在线跟踪 (Tag 世界坐标实时解算 + 机械臂联动)"""
-        print("\n[*] [STUDIO] 正在启动 Robot 在线跟踪 (tools/tracker/app.py)...")
+        log.info("\n[*] [STUDIO] 正在启动 Robot 在线跟踪 (tools/tracker/app.py)...")
         self.set_toast("正在启动 Robot 在线跟踪...")
         import subprocess
         subprocess.Popen([sys.executable, "tools/tracker/app.py"])

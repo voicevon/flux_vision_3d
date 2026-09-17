@@ -92,11 +92,3 @@ def _tag_local_frame(wc):
 
 PRISM_HW_MM = 15.0        # 棱柱截面半宽 mm (截面 30x30, 与 Offline Studio 一致)
 PRISM_HEIGHT_MM = 75.0    # 棱柱生长高度 mm (与 Offline Studio 一致)
-_PRISM_PTS = np.array([
-    # 底面 4 点 (Z=0) / 顶面 4 点 (Z=生长高) / 顶面中心
-    [-PRISM_HW_MM, -PRISM_HW_MM, 0.0], [PRISM_HW_MM, -PRISM_HW_MM, 0.0],
-    [PRISM_HW_MM, PRISM_HW_MM, 0.0], [-PRISM_HW_MM, PRISM_HW_MM, 0.0],
-    [-PRISM_HW_MM, -PRISM_HW_MM, PRISM_HEIGHT_MM], [PRISM_HW_MM, -PRISM_HW_MM, PRISM_HEIGHT_MM],
-    [PRISM_HW_MM, PRISM_HW_MM, PRISM_HEIGHT_MM], [-PRISM_HW_MM, PRISM_HW_MM, PRISM_HEIGHT_MM],
-    [0.0, 0.0, PRISM_HEIGHT_MM],
-], dtype=np.float64)

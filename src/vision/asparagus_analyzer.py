@@ -12,7 +12,7 @@
   8. 集成 AprilTag 多标靶在线相机外参定位 (TagLocalizer)，三级标定降级链
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import cv2
 import numpy as np

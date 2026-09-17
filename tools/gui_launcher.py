@@ -16,7 +16,7 @@ import json
 import time
 import argparse
 import subprocess
-from typing import Dict, List, Optional, Tuple, Any
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -30,7 +30,10 @@ GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
 
 from src.calibration.scene_manager import CalibrationSceneManager
 from src.utils.text_rendering import draw_text, get_cached_font
+from src.utils.logger import get_logger
 from tools.env_utils import check_env_status
+
+log = get_logger(__name__)
 
 
 def wrap_text_by_width(text: str, font_size: int, max_width: int, bold: bool = False) -> List[str]:
@@ -427,8 +430,8 @@ class GuiLauncherApp:
                 else:
                     self.canvas_w = max(640, int(self._base_w * s))
                     self.canvas_h = max(360, int(self._base_h * s))
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"加载 GUI 界面设置失败，使用默认尺寸: {e}")
 
     def _save_settings(self):
         """持久化保存当前缩放比例与窗口尺寸到目标配置文件"""
@@ -445,8 +448,8 @@ class GuiLauncherApp:
             }
             with open(target_file, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"保存 GUI 界面设置失败: {e}")
 
     def set_toast(self, msg: str, duration: float = 3.5):
         """设置底部提示消息"""
@@ -476,7 +479,7 @@ class GuiLauncherApp:
         try:
             cv2.resizeWindow(self.window_name, rec_w, rec_h)
         except Exception:
-            pass
+            pass  # GUI 可选功能：调整窗口尺寸失败不影响缩放逻辑
         self._save_settings()
         self.set_toast(f"矢量放大镜: {self.scale_pct}%  (已自动记忆大小，Ctrl+0 复位)", duration=2.2)
 
@@ -518,7 +521,7 @@ class GuiLauncherApp:
                 self._apply_zoom(0, reset=True)
                 self._last_zoom_action = now
         except Exception:
-            pass
+            pass  # 热路径：每帧轮询硬件按键，静默避免日志刷屏
 
     def _present_canvas(self):
         """在当前物理窗口分辨率下原生呈现矢量画布 (零位图拉伸，零锯齿)"""
@@ -549,7 +552,7 @@ class GuiLauncherApp:
         try:
             cv2.resizeWindow(self.window_name, self.canvas_w, self.canvas_h)
         except Exception:
-            pass
+            pass  # GUI 可选功能：初始窗口尺寸设置失败不影响主循环
 
         while self._running:
             # 0. 窗口关闭检测：若用户直接点击右上角红叉 [X]，安全退出并保存偏好
@@ -615,7 +618,7 @@ class GuiLauncherApp:
                     import ctypes
                     ctrl_pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
                 except Exception:
-                    pass
+                    pass  # GUI 可选功能：Ctrl 键状态探测失败按未按下处理
             if ctrl_pressed:
                 if flags > 0:
                     self._apply_zoom(+10)
@@ -754,7 +757,7 @@ class GuiLauncherApp:
                 # VK_CONTROL = 0x11, 同步检测当前线程消息队列与物理硬件实时状态
                 ctrl_held = bool((u32.GetKeyState(0x11) & 0x8000) or (u32.GetAsyncKeyState(0x11) & 0x8000))
             except Exception:
-                pass
+                pass  # GUI 可选功能：Ctrl 键状态探测失败按未按下处理
 
         key_byte = (raw_key & 0xFF)
         key_word = (raw_key & 0xFFFF)

@@ -10,7 +10,6 @@ import unittest
 import os
 import sys
 import numpy as np
-import cv2
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget

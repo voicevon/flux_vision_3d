@@ -13,9 +13,13 @@ import os
 import shutil
 import time
 import glob
-from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Dict, Any, Tuple
+from dataclasses import dataclass, field
+from typing import List, Optional, Dict, Tuple
 import yaml
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 # 项目根目录常量
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -236,7 +240,7 @@ class CalibrationSceneManager:
         if not legacy_images and not os.path.exists(legacy_manifest):
             return
 
-        print(f"[SCENE] 检测到历史采图数据 ({len(legacy_images)} 帧)，执行平滑自动迁移...")
+        log.info(f"[SCENE] 检测到历史采图数据 ({len(legacy_images)} 帧)，执行平滑自动迁移...")
         default_scene_id = f"{time.strftime('%Y%m%d')}_bench_default"
         default_scene_dir = os.path.join(self.scenes_dir, default_scene_id)
         scene = CalibrationScene(
@@ -270,7 +274,7 @@ class CalibrationSceneManager:
         scene.refresh_stats()
         scene.save_meta()
         self.set_active_scene(default_scene_id)
-        print(f"[SCENE] 成功构建默认沙盒场景: {default_scene_id}")
+        log.info(f"[SCENE] 成功构建默认沙盒场景: {default_scene_id}")
 
     def _migrate_legacy_non_ascii_dir(self, item: str) -> Optional[str]:
         """将物理路径中包含非 ASCII/中文的历史遗留场景目录，安全原子重命名为纯 ASCII 目录"""
@@ -325,10 +329,10 @@ class CalibrationSceneManager:
                 except Exception:
                     pass
 
-            print(f"[SCENE] 成功将历史非 ASCII 目录【{item}】安全迁移为【{new_id}】(友好名称仍为: {display_name})")
+            log.info(f"[SCENE] 成功将历史非 ASCII 目录【{item}】安全迁移为【{new_id}】(友好名称仍为: {display_name})")
             return new_id
         except Exception as e:
-            print(f"[WARN] 迁移历史目录【{item}】失败: {e}")
+            log.warning(f"[WARN] 迁移历史目录【{item}】失败: {e}")
             return None
 
     def list_scenes(self) -> List[CalibrationScene]:
@@ -354,7 +358,7 @@ class CalibrationSceneManager:
                     if scene:
                         scenes.append(scene)
                 except Exception as e:
-                    print(f"[WARN] 加载场景异常 {item}: {e}")
+                    log.warning(f"[WARN] 加载场景异常 {item}: {e}")
 
         # 排序：创建时间降序，次要以 scene_id 降序
         scenes.sort(key=lambda s: (s.created_at, s.scene_id), reverse=True)
@@ -406,7 +410,7 @@ class CalibrationSceneManager:
             self._cached_active_scene = CalibrationScene.load(target_dir)
             return True
         except Exception as e:
-            print(f"[SCENE] 切换活动场景失败: {e}")
+            log.error(f"[SCENE] 切换活动场景失败: {e}")
             return False
 
     def invalidate_cache(self):

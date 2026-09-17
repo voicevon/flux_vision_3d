@@ -11,7 +11,7 @@ Scene Hub 视觉渲染引擎 (HubRenderer)
 
 import os
 import time
-from typing import Any, Optional, Tuple
+from typing import Any
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont

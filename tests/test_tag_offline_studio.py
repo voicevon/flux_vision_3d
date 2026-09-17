@@ -472,10 +472,10 @@ class TestTagOfflineStudio(unittest.TestCase):
         canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
         self.studio.render(canvas)
 
-        # 校验注册的按钮中应包含 DIAGNOSE_FRAME 与 LAUNCH_AR
+        # 校验注册的按钮中应包含 DIAGNOSE_FRAME 与 LAUNCH_TRACKER
         btn_ids = [btn[0] for btn in self.studio.gui_buttons]
         self.assertIn("DIAGNOSE_FRAME", btn_ids)
-        self.assertIn("LAUNCH_AR", btn_ids)
+        self.assertIn("LAUNCH_TRACKER", btn_ids)
 
         # 模拟点击 DIAGNOSE_FRAME 切回常规视图
         self.studio._handle_button_click("DIAGNOSE_FRAME", "", 0, 0)

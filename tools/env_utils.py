@@ -14,6 +14,10 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
+
 try:
     from src.calibration.scene_manager import CalibrationSceneManager
 except Exception:
@@ -112,8 +116,8 @@ def check_env_status(force_refresh: bool = False) -> dict:
                         if not obs.get("keep", True):
                             manifest_excluded += 1
                             break
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"读取标定清单统计排除帧失败: {e}")
     status['manifest_excluded'] = manifest_excluded
 
     # 标靶 ID 白名单状态
@@ -125,8 +129,8 @@ def check_env_status(force_refresh: bool = False) -> dict:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             valid_tag_ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"读取 config.yaml 标靶白名单失败: {e}")
     status['valid_tag_ids'] = valid_tag_ids
 
     _ENV_STATUS_CACHE = status
