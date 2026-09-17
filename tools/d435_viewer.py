@@ -37,7 +37,7 @@ except ImportError:
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
 from src.utils.gui_window_manager import GuiWindowManager
-from tools.gui_launcher import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font
 
 
 class D435Viewer:

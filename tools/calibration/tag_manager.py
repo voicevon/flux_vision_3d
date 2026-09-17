@@ -19,7 +19,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.utils.gui_window_manager import GuiWindowManager
-from tools.gui_launcher import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font
 
 # 复用旧代码的图纸生成函数 (不修改旧代码)
 from tools.calibration.generate_apriltags import generate_tags

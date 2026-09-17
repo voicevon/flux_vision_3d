@@ -27,7 +27,7 @@ import yaml
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
 
-from tools.calibration.tag_offline_studio import TagOfflineStudio
+from tools.studio.app import TagOfflineStudio
 
 
 class TestTagOfflineStudio(unittest.TestCase):
@@ -363,7 +363,7 @@ class TestTagOfflineStudio(unittest.TestCase):
         self.assertIn("cell_size_px", img_entry["observations"][0])
 
         # 核心持久化验证：新建一个 StudioDataManager 从磁盘加载 manifest_path
-        from tools.calibration.studio.studio_state import StudioDataManager
+        from tools.studio.studio_state import StudioDataManager
         new_mgr = StudioDataManager(
             map_path=self.map_path,
             image_dir=self.image_dir,

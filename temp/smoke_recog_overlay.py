@@ -5,9 +5,8 @@ import numpy as np
 import cv2
 
 sys.path.insert(0, r"d:\Software\antigravity\flux_vision_3d")
-sys.path.insert(0, r"d:\Software\antigravity\flux_vision_3d\tools\calibration")
 
-from robot_online_tracker import RobotOnlineTracker  # noqa: E402
+from tools.tracker.app import RobotOnlineTracker  # noqa: E402
 
 app = RobotOnlineTracker()
 print(f"[OK] 实例化成功 | 地图锚点: {sorted(app.anchor_positions)} | 理论Tag2: {app.theoretical is not None}")

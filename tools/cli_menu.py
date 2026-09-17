@@ -302,14 +302,14 @@ def run_build_tag_map(status=None):
 
 
 def run_robot_online_tracker():
-    print(f"\n{C_CYAN}[工序 5: Robot 在线跟踪]{C_RESET} 正在启动 Tag 世界坐标实时解算与机械臂联动工具 (robot_online_tracker.py)...")
+    print(f"\n{C_CYAN}[工序 5: Robot 在线跟踪]{C_RESET} 正在启动 Tag 世界坐标实时解算与机械臂联动工具 (tools/tracker/app.py)...")
     ok, _ = ensure_camera_connected()
     if not ok:
         print(f"{C_YELLOW}[提示]{C_RESET} 未检测到 RealSense 相机, 该工具需要真实相机取流。")
         pause_prompt()
         return
 
-    res = subprocess.run([sys.executable, "tools/calibration/robot_online_tracker.py"])
+    res = subprocess.run([sys.executable, "tools/tracker/app.py"])
     if res.returncode != 0:
         print(f"\n{C_RED}[异常退出] Robot 在线跟踪异常退出 (退出码: {res.returncode})，详细错误堆栈如上所示。{C_RESET}")
         pause_prompt()
@@ -491,7 +491,7 @@ def run_open_observations_manifest():
 def run_offline_studio(status=None):
     """启动 AprilTag 离线标定综合工作站 (Tag Offline Studio)"""
     active_scene = status.get('active_scene') if status else None
-    cmd = [sys.executable, "tools/calibration/tag_offline_studio.py"]
+    cmd = [sys.executable, "tools/studio/app.py"]
     scene_name = active_scene.scene_id if active_scene else "默认场景"
     if active_scene:
         cmd.extend(["--images", active_scene.raw_images_dir, "--map", active_scene.map_path])

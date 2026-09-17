@@ -20,7 +20,6 @@ from typing import Dict, List, Optional, Tuple, Any
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
 
 # 确保项目根目录在 sys.path 中
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -30,66 +29,8 @@ if PROJECT_ROOT not in sys.path:
 GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
 
 from src.calibration.scene_manager import CalibrationSceneManager
+from src.utils.text_rendering import draw_text, get_cached_font
 from tools.env_utils import check_env_status
-
-# 字体缓存
-_FONT_CACHE: Dict[Tuple[int, bool], ImageFont.FreeTypeFont] = {}
-
-
-def get_cached_font(font_size: int = 16, bold: bool = False) -> ImageFont.FreeTypeFont:
-    """获取缓存的 TrueType 中文字体"""
-    key = (font_size, bold)
-    if key not in _FONT_CACHE:
-        font_paths = [
-            "C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/simheittc.ttc" if bold else "C:/Windows/Fonts/simhei.ttf",
-            "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
-        ]
-        font = None
-        for fp in font_paths:
-            if os.path.exists(fp):
-                try:
-                    font = ImageFont.truetype(fp, font_size)
-                    break
-                except Exception:
-                    pass
-        if font is None:
-            font = ImageFont.load_default()
-        _FONT_CACHE[key] = font
-    return _FONT_CACHE[key]
-
-
-def draw_text(img: np.ndarray, text: str, pos: Tuple[int, int], font_size: int = 16,
-              color: Tuple[int, int, int] = (240, 240, 240), bold: bool = False):
-    """在 OpenCV BGR 图像上绘制高质量抗锯齿矢量文本 (支持中文)"""
-    if not text:
-        return
-    x, y = pos
-    if x >= img.shape[1] or y >= img.shape[0]:
-        return
-
-    font = get_cached_font(font_size, bold)
-    bbox = font.getbbox(text)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    patch_w = tw + 20
-    patch_h = th + 14
-
-    rx2 = min(img.shape[1], x + patch_w)
-    ry2 = min(img.shape[0], y + patch_h)
-    if x < 0:
-        x = 0
-    if y < 0:
-        y = 0
-    if rx2 <= x or ry2 <= y:
-        return
-
-    sub_bgr = img[y:ry2, x:rx2]
-    sub_rgb = cv2.cvtColor(sub_bgr, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(sub_rgb)
-    draw = ImageDraw.Draw(pil_img)
-    draw.text((0, 0), text, font=font, fill=(color[2], color[1], color[0]))
-    res_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-    img[y:ry2, x:rx2] = res_bgr
 
 
 def wrap_text_by_width(text: str, font_size: int, max_width: int, bold: bool = False) -> List[str]:
@@ -238,7 +179,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             subtitle="多视角审核/两阶段 BA 平差/智能剪枝/质检闭环",
             category="B — Tag 标定流水线",
             is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_offline_studio.py"],
+            command=[sys.executable, "tools/studio/app.py"],
             tag_color=COLOR_B,
             summary="【离线标定核心】一站式样本交互审核、高精两阶段 BA 平差求解、智能剪枝与质检闭环。",
             details=[
@@ -260,7 +201,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             subtitle="Tag2 世界坐标实时解算/机械臂联动跟踪/相机位置校准",
             category="B — Tag 标定流水线",
             is_gui=True,
-            command=[sys.executable, "tools/calibration/robot_online_tracker.py"],
+            command=[sys.executable, "tools/tracker/app.py"],
             tag_color=COLOR_B,
             summary="【在线联动校准】真实相机实时解算目标 Tag 世界坐标，机械臂三段式安全路径跟踪并对比末端偏差。",
             details=[

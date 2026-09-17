@@ -176,8 +176,8 @@ flowchart TD
     S2["<b>工序 2: 场景管理 (Scene Hub)</b><br>新建工况沙盒 / 选定当前活动场景<br><i>(python -m tools.scene_hub)</i>"]
     S3["<b>工序 3: 图像采集</b><br>多视角连拍或原地交互抓拍<br><i>(tag_capture_wizard.py)</i>"]
     S4["<b>工序 4: 离线超精重提取</b><br>16级网格 + 双尺度 CLAHE + 亚像素精修<br><i>(tag_super_extractor.py)</i>"]
-    S5["<b>工序 5: 离线平差与体检 (Studio)</b><br>交互审核 + 两阶段 BA 平差<br><i>(tag_offline_studio.py)</i>"]
-    S6["<b>工序 6: 生效与在线跟踪</b><br>一键原子发布到生产 + Robot 在线跟踪<br><i>(robot_online_tracker.py)</i>"]
+    S5["<b>工序 5: 离线平差与体检 (Studio)</b><br>交互审核 + 两阶段 BA 平差<br><i>(studio/app.py)</i>"]
+    S6["<b>工序 6: 生效与在线跟踪</b><br>一键原子发布到生产 + Robot 在线跟踪<br><i>(tracker/app.py)</i>"]
 
     S1 --> S2 --> S3 --> S4 --> S5 --> S6
 ```
@@ -187,10 +187,10 @@ flowchart TD
 | **顶级 `[G]`** | **3D 视觉综合控制中心 (Suite Dashboard)**<br>`gui_launcher.py` | **1280x720 工业科技总控大屏**：常驻硬件探针、卡片网格、右侧动态即时说明大屏 (Live Inspector)，统一调度全系统生产、标定与测试任务 |
 | **顶级 `[2]` / `[H]`** | **工况与场景管理中枢 (Scene Hub)**<br>`tools/scene_hub/` | **1280x720 场景与数据总控台**：场景工作空间/数据容器管理、健康体检大屏、相册大图巡检；直接执行 `python -m tools.scene_hub` 即可启动 |
 | **`[2]`** | **多视角交互采图向导**<br>`tag_capture_wizard.py` | 专职采图工具：交互式指导相机移动至不同高度与俯仰角，按空格连拍，样本自动存入当前场景沙盒 |
-| **`[S]`** | **离线标定工作站 (Studio)**<br>`tag_offline_studio.py` | **一站式离线解算工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
+| **`[S]`** | **离线标定工作站 (Studio)**<br>`tools/studio/app.py` | **一站式离线解算工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
 | **`[3]`** | **超精重提取引擎**<br>`tag_super_extractor.py` | 16 级阈值网格 + 自适应双尺度 CLAHE + 亚像素级角点精修，极限召回暗光/反光/弱对比度标靶 |
 | **`[4]`** | **静默空间建图求解**<br>`tag_map_builder.py` | 纯计算命令行求解器：图论连通性建模 $\rightarrow$ 两阶段 BA（Cauchy 鲁棒核 + MAD 粗差清洗） |
-| **`[5]`** | **Robot 在线跟踪**<br>`robot_online_tracker.py` | 真实相机实时解算目标 Tag 世界坐标 (世界系=机械臂坐标系)，机械臂"抬起→平移→下探"安全路径联动跟踪，到位后 M114 回读对比偏差用于相机位置校准 |
+| **`[5]`** | **Robot 在线跟踪**<br>`tools/tracker/app.py` | 真实相机实时解算目标 Tag 世界坐标 (世界系=机械臂坐标系)，机械臂"抬起→平移→下探"安全路径联动跟踪，到位后 M114 回读对比偏差用于相机位置校准 |
 | **`[W]`** | **标靶 ID 白名单管理** | 联动 `config.yaml` 管理有效 Tag ID 列表，一键探索放行未知标靶或剔除异常 ID |
 | **`[D]`** | **标靶漏检病因切片诊断**<br>`diagnose_tag_frame.py` | 深入分析真图候选四边形轮廓，深度诊断因反光、对比度过低、畸变造成的漏检原因 |
 | **`[8]`** | **接触式物理手眼标定 (备用)**<br>`hand_eye_calibration.py` | SCARA 机械臂末端接触 4 点 SVD 刚体配准，在无 Tag 极端工况下提供手眼标定兜底保障 |
@@ -245,7 +245,7 @@ flowchart TD
 
 ### 离线标定工作站 (Offline Studio)
 
-离线工作站 (`tools/calibration/tag_offline_studio.py`) 整合了样本数据清洗、拓扑网络验证与两阶段 BA 空间平差：
+离线工作站 (`tools/studio/app.py`) 整合了样本数据清洗、拓扑网络验证与两阶段 BA 空间平差：
 
 1. **样本画板交互审核**：自由选择样本帧，右键快捷剔除离群样本或整帧旁路；
 2. **两阶段非线性平差 (Two-Stage BA)**：
@@ -328,17 +328,27 @@ flux_vision_3d/
 │   │   ├── app.py                 #      SceneHubApp 核心驱动逻辑
 │   │   ├── hub_state.py           #      场景状态机与数据沙盒模型
 │   │   └── hub_renderer.py        #      1280x720 三模态科技看板渲染引擎
+│   ├── studio/                    #    ★【离线标定工作站·自包含包】(工序S)
+│   │   ├── app.py                 #      TagOfflineStudio 入口: 交互审核 + 两阶段 BA 平差 + 体检闭环
+│   │   ├── studio_ba_runner.py    #      异步两阶段 BA 平差调度器
+│   │   ├── studio_renderer.py     #      工作站看板渲染引擎
+│   │   ├── studio_state.py        #      交互状态与数据沙盒模型
+│   │   └── studio_viewport_interactor.py # 视口交互器
+│   ├── tracker/                   #    ★【Robot 在线跟踪·自包含包】(工序5)
+│   │   ├── app.py                 #      RobotOnlineTracker 入口: Tag 世界坐标解算 + 机械臂联动
+│   │   ├── camera_controller.py   #      相机硬件控制器 (RealSense/USB 取流启停)
+│   │   ├── renderer.py            #      工具栏/叠加层/信息面板渲染器
+│   │   └── common.py              #      共享视觉常量与工具函数
 │   ├── d435_viewer.py             #    RealSense D435 实时相机视窗与交互探针 (含 --mock)
 │   ├── find_top_asparagus.py      #    单帧抓取位姿解算 (输出 SCARA G-code 与 JSON)
 │   │
-│   └── calibration/               # 🎯 标定与平差全套工具链
-│       ├── studio/                #    Offline Studio 工作站组件 (BA Runner, Viewport)
-│       ├── tag_offline_studio.py  #    【工序S】AprilTag 离线标定综合工作站
+│   └── calibration/               # 🎯 标定流水线小工具链
+│       ├── generate_apriltags.py  #    【工序1】标靶矢量生成与 A4 排版 PDF
 │       ├── tag_capture_wizard.py  #    【工序2】多视角交互采图向导
 │       ├── tag_super_extractor.py #    【工序3】离线超精重提取引擎 (16级网格+CLAHE)
 │       ├── tag_map_builder.py     #    【工序4】空间立体建图与两阶段 BA 平差求解
-│       ├── robot_online_tracker.py #   【工序5】Robot 在线跟踪 (Tag 世界坐标解算+机械臂联动)
-│       ├── generate_apriltags.py  #    【工序1】标靶矢量生成与 A4 排版 PDF
+│       ├── tag_manifest_reviewer.py #  采图清单质检画板: 交互式保留/剔除审核
+│       ├── tag_manager.py         #    标靶管理 (联动标靶图纸生成)
 │       ├── diagnose_tag_frame.py  #    辅助诊断: 单帧漏检病因切片深度诊断
 │       └── hand_eye_calibration.py#    备用通道: SCARA 经典接触式物理标定向导
 │

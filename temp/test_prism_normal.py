@@ -5,8 +5,7 @@ import numpy as np
 import cv2
 
 sys.path.insert(0, r"d:\Software\antigravity\flux_vision_3d")
-sys.path.insert(0, r"d:\Software\antigravity\flux_vision_3d\tools\calibration")
-from robot_online_tracker import _tag_local_frame, _PRISM_PTS
+from tools.tracker.common import _tag_local_frame, _PRISM_PTS
 from src.calibration.offline_engine import OfflineVerificationEngine
 
 # 任意外参: 相机看着一块斜置标靶

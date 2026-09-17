@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 from src.utils.viewport_manager import draw_styled_button
-from tools.gui_launcher import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font
 
 
 # ============================================================

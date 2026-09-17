@@ -15,9 +15,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.manifest_repository import ManifestRepository
-from tools.calibration.studio.studio_state import StudioDataManager
+from tools.studio.studio_state import StudioDataManager
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
 class StudioBARunner:

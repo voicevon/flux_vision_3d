@@ -119,7 +119,7 @@ graph TD
 | **交互采图向导** | `tools/calibration/tag_capture_wizard.py` | 实时视频流 + 双路互补检测 + 空格一键连拍多视角相片 |
 | **采图清单质检画板**| `tools/calibration/tag_manifest_reviewer.py` | 轻量级原生 GUI 画板，鼠标点击保留/剔除，连通性实时状态 |
 | **空间平差建图求解器**| `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD清洗、Quiver 图与体检报告 |
-| **Robot 在线跟踪**| `tools/calibration/robot_online_tracker.py` | Tag 世界坐标实时解算、机械臂"抬起→平移→下探"联动跟踪、M114 到位偏差对比 (相机位置校准) |
+| **Robot 在线跟踪**| `tools/tracker/app.py` | Tag 世界坐标实时解算、机械臂"抬起→平移→下探"联动跟踪、M114 到位偏差对比 (相机位置校准) |
 | **病因深度切片诊断**| `tools/calibration/diagnose_tag_frame.py` | 单帧漏检/残差异常病因分析（反差/面积/梯度/倾角） |
 | **接触式手眼标定向导**| `tools/calibration/hand_eye_calibration.py` | SCARA 经典接触式物理点对标定 (极端无 Tag 备用) |
 

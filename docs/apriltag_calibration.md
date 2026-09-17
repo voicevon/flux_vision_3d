@@ -112,7 +112,7 @@ graph TD
     end
 
     subgraph Robot 在线跟踪与生产闭环
-        G --> H["工序 5B: Robot 在线跟踪<br>(robot_online_tracker.py)"]
+        G --> H["工序 5B: Robot 在线跟踪<br>(tools/tracker/app.py)"]
         H --> I["相机世界位姿 PnP 解算<br>目标 Tag 世界坐标实时显示"]
         H --> J["机械臂抬起→平移→下探联动跟踪<br>M114 到位偏差对比 (相机位置校准)"]
     end
@@ -210,7 +210,7 @@ tags:
 | **超精重提取引擎** | `tools/calibration/tag_super_extractor.py` | **工序 3（离线超精重提取引擎）**：离线重算，16级致密自适应阈值网格 + 双尺度CLAHE增强 + 2x超分放大 + 正统轮廓拟合解析求交 (CONTOUR)，无损继承历史清洗标注，输出高质量观测清单 |
 | **采图清单画板** | `tools/calibration/tag_manifest_reviewer.py` | **工序 4（交互审核画板）**：原生 GUI 审核画板，鼠标右键上下文菜单（红绿自适应剔除/恢复、局部Refine重算、靶向聚焦）、整帧临时旁路、一键保存并自动触发平差热重载 |
 | **空间建图平差** | `tools/calibration/tag_map_builder.py` | **工序 5A（空间建图平差）**：极限精度 BA 求解器、两阶段平差、MAD清洗、生成 Quiver 矢量图与诊断报告 |
-| **在线 AR 验证** | `tools/calibration/robot_online_tracker.py` | **工序 5B（Robot 在线跟踪）**：真实相机实时解算目标 Tag 世界坐标，机械臂"抬起→平移→下探"安全路径联动跟踪，M114 回读末端实际坐标同屏对比偏差用于相机位置校准 |
+| **在线 AR 验证** | `tools/tracker/app.py` | **工序 5B（Robot 在线跟踪）**：真实相机实时解算目标 Tag 世界坐标，机械臂"抬起→平移→下探"安全路径联动跟踪，M114 回读末端实际坐标同屏对比偏差用于相机位置校准 |
 | **接触标定向导** | `tools/calibration/hand_eye_calibration.py` | 备用通道：SCARA 经典接触式点对物理标定向导 (极端无标靶场景) |
 | **在线定位器** | `src/vision/tag_localizer.py` | 运行时每帧毫秒级检测已知标靶，输出相机外参 $T_{cam\_to\_world}$ |
 

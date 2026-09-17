@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Any
 
-from tools.gui_launcher import draw_text, get_cached_font
+from src.utils.text_rendering import draw_text, get_cached_font
 
 
 class VerificationVisualizer:

@@ -6,9 +6,8 @@ import numpy as np
 import cv2
 
 sys.path.insert(0, r"d:\Software\antigravity\flux_vision_3d")
-sys.path.insert(0, r"d:\Software\antigravity\flux_vision_3d\tools\calibration")
 from src.calibration.offline_engine import OfflineVerificationEngine
-from robot_online_tracker import RobotOnlineTracker
+from tools.tracker.app import RobotOnlineTracker
 
 # 合成 1280x720 图, Tag 2 (16h5) 以带透视的四边形贴入
 K = np.array([[1363.68, 0, 971.19], [0, 1361.19, 566.26], [0, 0, 1.0]])

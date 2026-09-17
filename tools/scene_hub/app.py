@@ -532,7 +532,7 @@ class SceneHubApp:
         sc = self.state.get_selected_scene()
         if not sc:
             return
-        cmd = [sys.executable, "tools/calibration/tag_offline_studio.py",
+        cmd = [sys.executable, "tools/studio/app.py",
                "--images", sc.raw_images_dir,
                "--map", sc.map_path]
         self._run_subtool(cmd, "Offline Studio 深度平差工作站")

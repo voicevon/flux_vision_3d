@@ -41,10 +41,10 @@ from src.calibration.offline_engine import OfflineVerificationEngine, OfflineEng
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.verification_reporter import VerificationReporter
 from src.calibration.verification_visualizer import VerificationVisualizer
-from tools.calibration.studio import (
-    StudioDataManager,
-    StudioViewportInteractor,
-    StudioBARunner,
+from tools.studio.studio_state import StudioDataManager
+from tools.studio.studio_viewport_interactor import StudioViewportInteractor
+from tools.studio.studio_ba_runner import StudioBARunner
+from tools.studio.studio_renderer import (
     StudioUIRenderer,
     draw_dropdown_button,
     VIEW_MODE_OPTIONS,
@@ -925,10 +925,10 @@ class TagOfflineStudio:
 
     def launch_robot_online_tracker(self):
         """一键跨工序启动 Robot 在线跟踪 (Tag 世界坐标实时解算 + 机械臂联动)"""
-        print("\n[*] [STUDIO] 正在启动 Robot 在线跟踪 (robot_online_tracker.py)...")
+        print("\n[*] [STUDIO] 正在启动 Robot 在线跟踪 (tools/tracker/app.py)...")
         self.set_toast("正在启动 Robot 在线跟踪...")
         import subprocess
-        subprocess.Popen([sys.executable, "tools/calibration/robot_online_tracker.py"])
+        subprocess.Popen([sys.executable, "tools/tracker/app.py"])
 
     def run(self):
         """进入 Studio 主交互渲染循环"""
