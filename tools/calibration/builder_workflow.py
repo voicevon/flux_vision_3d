@@ -226,12 +226,12 @@ def main():
     def_output = "config/tags_map.yaml"
     try:
         from src.calibration.scene_manager import CalibrationSceneManager
-        active_sc = CalibrationSceneManager().get_active_scene()
-        def_image_dir = active_sc.raw_images_dir
-        def_manifest = active_sc.manifest_path
-        def_output = active_sc.map_path
+        current_sc = CalibrationSceneManager().get_current_scene()
+        def_image_dir = current_sc.raw_images_dir
+        def_manifest = current_sc.manifest_path
+        def_output = current_sc.map_path
     except Exception as e:
-        log.warning(f"获取活动标定场景失败，使用默认路径: {e}")
+        log.warning(f"获取当前标定场景失败，使用默认路径: {e}")
 
     parser.add_argument("--image_dir", type=str, default=def_image_dir, help="多视角标定图片目录")
     parser.add_argument("--manifest", type=str, default=def_manifest, help="观测数据审核清单路径")

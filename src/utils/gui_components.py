@@ -218,3 +218,77 @@ def draw_dashboard_button(
     draw_text(canvas, label, (tx, ty), font_size=font_size, color=text_col, bold=True)
 
     return is_hover
+
+
+_CACHED_LOGO: Optional[np.ndarray] = None
+_CACHED_LOGO_SIZE: int = -1
+
+
+def get_cached_logo(size: int = 32) -> Optional[np.ndarray]:
+    """读取并缓存标准 LOGO 图像 (assets/logo.png)"""
+    global _CACHED_LOGO, _CACHED_LOGO_SIZE
+    if _CACHED_LOGO is not None and _CACHED_LOGO_SIZE == size:
+        return _CACHED_LOGO
+    import os
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    logo_path = os.path.join(base_dir, "assets", "logo.png")
+    if os.path.exists(logo_path):
+        img = cv2.imread(logo_path, cv2.IMREAD_COLOR)
+        if img is not None:
+            _CACHED_LOGO = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+            _CACHED_LOGO_SIZE = size
+            return _CACHED_LOGO
+    return None
+
+
+def draw_app_header(
+    canvas: np.ndarray,
+    x: int = 12,
+    y: int = 6,
+    sub_title: str = "",
+    icon_size: int = 32,
+) -> int:
+    """在 GUI 顶部统一绘制科技感品牌 LOGO、主标题与子系统模块名称
+
+    Args:
+        canvas: 目标画布 (BGR)
+        x: 左侧起始 X
+        y: 顶部起始 Y
+        sub_title: 子模块名 (例如 "AprilTag 管理器", "标定场景中心", "空间位姿追踪器")
+        icon_size: 图标尺寸 (默认 32x32)
+
+    Returns:
+        int: 标题组件右侧边缘的 X 坐标 (方便后续横向排布工具栏按钮)
+    """
+    logo = get_cached_logo(icon_size)
+    curr_x = x
+    if logo is not None:
+        h, w = logo.shape[:2]
+        ch, cw = canvas.shape[:2]
+        if y + h <= ch and curr_x + w <= cw:
+            canvas[y:y + h, curr_x:curr_x + w] = logo
+            cv2.rectangle(canvas, (curr_x, y), (curr_x + w, y + h), (0, 216, 180), 1)
+        curr_x += w + 10
+    else:
+        cv2.circle(canvas, (curr_x + icon_size // 2, y + icon_size // 2), icon_size // 2 - 2, (0, 216, 180), 2)
+        cv2.circle(canvas, (curr_x + icon_size // 2, y + icon_size // 2), 3, (0, 255, 255), -1)
+        curr_x += icon_size + 10
+
+    # 绘制主标题 "FluxVision 3D"
+    draw_text(canvas, "FluxVision 3D", (curr_x, y - 2), font_size=15, color=(0, 240, 220), bold=True)
+
+    # 绘制副标题 (芦笋上料自动化 | <sub_title>)
+    sub_text = f"芦笋上料自动化 | {sub_title}" if sub_title else "芦笋上料自动化"
+    draw_text(canvas, sub_text, (curr_x, y + 17), font_size=11, color=(140, 160, 180))
+
+    try:
+        font1 = get_cached_font(15, bold=True)
+        w1 = font1.getbbox("FluxVision 3D")[2]
+        font2 = get_cached_font(11, bold=False)
+        w2 = font2.getbbox(sub_text)[2]
+        text_w = max(w1, w2)
+    except Exception:
+        text_w = 160
+
+    return curr_x + text_w + 18
+

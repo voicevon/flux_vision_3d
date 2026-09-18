@@ -353,7 +353,10 @@ class HardwareConfigApp:
 
             cv2.imshow(WINDOW_KEY, self.render())
 
-        cv2.destroyWindow(WINDOW_KEY)
+        try:
+            cv2.destroyWindow(WINDOW_KEY)
+        except Exception:
+            pass
         log.info("硬件环境配置已退出")
 
 

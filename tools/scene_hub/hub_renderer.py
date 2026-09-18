@@ -283,8 +283,8 @@ class HubRenderer:
     def _render_left_panel(self, canvas: np.ndarray, state: HubState):
         """渲染左侧综合导航栏 (x: 0~340, y: 50~670)
         - 扩展展示多达 5 张场景卡片，视觉开阔无压迫
-        - 卡片直接支持 [P 生效生产]，彻底移除冗余的活动场景锁
-        - 去除底部冗余无用的快捷键堆砌说明，保持工业界面整洁精炼
+        - 场景卡片全面支持自由一键 [P 生效生产]
+        - 保持工业界面整洁精炼
         """
         cv2.rectangle(canvas, (0, 50), (340, 670), self.COLOR_PANEL, -1)
         mpos = (state.mouse_x, state.mouse_y)
@@ -688,7 +688,7 @@ class HubRenderer:
             draw_text(canvas, f"[系统反馈] {state.toast_msg}", (20, 684), font_size=16, color=(0, 255, 200), bold=True)
         else:
             if state.is_help_modal_open:
-                draw_text(canvas, "【生产机制解析】[ESC/H] 关闭说明窗  |  活动场景卡片上点击或按 [P] 可直接生效到生产系统",
+                draw_text(canvas, "【生产机制解析】[ESC/H] 关闭说明窗  |  选中场景卡片点击或按 [P] 可直接生效到生产系统",
                           (20, 686), font_size=14, color=self.COLOR_GOLD, bold=True)
             else:
                 draw_text(canvas, "[↑/↓] 选择场景  [P] 生效生产  [C] 采图向导  [S] 离线平差  [F] 切换视图  [ESC] 退出",
@@ -725,7 +725,7 @@ class HubRenderer:
         draw_text(canvas, status_text, (cam_x + 30, cam_y + 8), font_size=13, color=lamp_color, bold=True)
 
     def _render_help_modal(self, canvas: np.ndarray, state: HubState):
-        """渲染置顶居中的【场景状态机制解析：活动 (Active) vs 生产 (Production)】深度说明看板 (940x530)"""
+        """渲染置顶居中的【场景状态机制解析：标定工况场景 vs 生产 (Production) 地图】深度说明看板 (940x530)"""
         overlay = canvas.copy()
         cv2.rectangle(overlay, (0, 0), (self.canvas_w, self.canvas_h), (8, 10, 14), -1)
         cv2.addWeighted(overlay, 0.78, canvas, 0.22, 0, canvas)
@@ -745,7 +745,7 @@ class HubRenderer:
         cv2.line(canvas, (mx, my + 54), (mx + modal_w, my + 54), self.COLOR_BORDER, 1)
 
         cv2.circle(canvas, (mx + 24, my + 27), 6, self.COLOR_GOLD, -1)
-        draw_text(canvas, "★ 工业级场景状态机制解析:【活动 (Active)】与【生产 (Production)】的区别", (mx + 38, my + 15),
+        draw_text(canvas, "★ 工业级场景架构解析:【标定工况场景】与【★生产地图】", (mx + 38, my + 15),
                   font_size=17, color=self.COLOR_WHITE, bold=True)
 
         # 右上角 [X] 关闭按钮
@@ -759,22 +759,22 @@ class HubRenderer:
         card_y = my + 94
         card_w = (modal_w - 68) // 2  # 436
 
-        # 2.1 左卡片：【活动】场景 (Active Workspace)
+        # 2.1 左卡片：【标定工况场景】(Calibration Scene)
         cx1 = mx + 26
         cv2.rectangle(canvas, (cx1, card_y), (cx1 + card_w, card_y + 236), (22, 32, 36), -1)
         cv2.rectangle(canvas, (cx1, card_y), (cx1 + card_w, card_y + 236), (0, 220, 140), 2)
         cv2.rectangle(canvas, (cx1, card_y), (cx1 + card_w, card_y + 36), (18, 26, 30), -1)
-        draw_text(canvas, "🟢 【活动】场景 (Active Workspace)", (cx1 + 14, card_y + 8), font_size=15, color=(0, 255, 160), bold=True)
+        draw_text(canvas, "📦 【标定工况场景】(Calibration Scene)", (cx1 + 14, card_y + 8), font_size=15, color=(0, 255, 160), bold=True)
 
-        active_points = [
-            ("概念定义", "当前研发与标定聚焦的操作台沙盒 (类似 Git 本地分支)"),
-            ("连拍归档", "按 [C] 进入相机连拍抓拍的照片，自动保存于此场景"),
-            ("离线平差", "启动 Studio 平差、诊断切片默认载入此数据"),
-            ("如何切换", "在场景列表中按 [Enter] 回车键或点击徽章即可随时切换"),
-            ("安全边界", "完全沙盒隔离！无论如何采图平差，流水线机械臂零影响"),
+        scene_points = [
+            ("概念定义", "多工况平权平行的研发实验沙盒 (每个工况对应独立目录)"),
+            ("连拍归档", "选中目标场景按 [C] 采图，照片自动存入该场景 images/"),
+            ("离线平差", "选中目标场景按 [S] 启动 Studio，直接平差并生成 tags_map.yaml"),
+            ("沙盒隔离", "各个工况场景完全平权独立，采图与平差绝不影响车间流水线"),
+            ("发布流转", "任意场景平差精度达标后，均可一键按 [P] 发布为生产地图"),
         ]
         py = card_y + 44
-        for label, desc in active_points:
+        for label, desc in scene_points:
             draw_text(canvas, f"• {label}:", (cx1 + 14, py), font_size=12, color=(0, 220, 180), bold=True)
             d1 = desc[:28]
             d2 = desc[28:]
@@ -816,13 +816,13 @@ class HubRenderer:
         cv2.rectangle(canvas, (mx + 26, flow_y), (mx + 30, flow_y + 92), (0, 200, 240), -1)
 
         draw_text(canvas, "💡 工业工程标准作业流 (SOP 黄金闭环):", (mx + 42, flow_y + 8), font_size=14, color=(0, 220, 255), bold=True)
-        draw_text(canvas, "步骤 1: 新建/克隆场景 -> 按 [Enter] 设为【活动】场景 -> 按 [C] 原地抓拍多视角照片 (≥10帧)", (mx + 42, flow_y + 32), font_size=12, color=self.COLOR_WHITE)
-        draw_text(canvas, "步骤 2: 按 [S] 启动 Studio 离线平差工作站 -> 智能残差剪枝 -> 质检评定 RMSE < 0.20px 极优放行", (mx + 42, flow_y + 52), font_size=12, color=(0, 240, 180))
+        draw_text(canvas, "步骤 1: 新建/选中场景 -> 按 [C] 原地抓拍多视角照片 (≥10帧，支持不同角度与距离)", (mx + 42, flow_y + 32), font_size=12, color=self.COLOR_WHITE)
+        draw_text(canvas, "步骤 2: 选中该场景按 [S] 启动 Studio 离线平差工作站 -> 智能残差剪枝 -> 质检评定 RMSE < 0.20px 极优放行", (mx + 42, flow_y + 52), font_size=12, color=(0, 240, 180))
         draw_text(canvas, "步骤 3: 达到精度指标后，按 [P] 键一键发布为【★生产】地图，现场机械臂秒级热更新！", (mx + 42, flow_y + 72), font_size=12, color=self.COLOR_GOLD, bold=True)
 
         # 4. 底部关闭操作指引
         footer_y = my + modal_h - 36
-        draw_text(canvas, "★ 提示: 点击左侧卡片上的 [活动] 或 ★生产 徽章、点击 [? Help] 或直接按键盘 [ESC / H] 即可秒级开关！",
+        draw_text(canvas, "★ 提示: 点击场景卡片上的 ★生产 徽章、点击 [? Help] 或直接按键盘 [ESC / H] 即可秒级开关！",
                   (mx + 32, footer_y), font_size=13, color=self.COLOR_GRAY)
 
     def _render_context_menu(self, canvas: np.ndarray, state: HubState):

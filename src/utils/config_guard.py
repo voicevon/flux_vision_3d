@@ -16,6 +16,8 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
+_WARNED_SCALES = set()
+
 
 def load_raw_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     """安全读取 YAML 配置文件"""
@@ -99,9 +101,12 @@ def resolve_camera_intrinsics(
             cx_scaled = cx * scale_x
             cy_scaled = cy * scale_y
             
-            log.warning(f"[GUARD] 检测到图像分辨率 ({act_w}x{act_h}) 与内参标称基准 ({ref_w}x{ref_h}) 不一致！")
-            log.info(f"        -> 触发动态防呆机制：自动按 scale_x={scale_x:.4f}, scale_y={scale_y:.4f} 等比缩放内参！")
-            log.info(f"        -> 调整后内参: fx={fx_scaled:.1f}, fy={fy_scaled:.1f}, cx={cx_scaled:.1f}, cy={cy_scaled:.1f}")
+            scale_key = (act_w, act_h, ref_w, ref_h)
+            if scale_key not in _WARNED_SCALES:
+                _WARNED_SCALES.add(scale_key)
+                log.warning(f"[GUARD] 检测到图像分辨率 ({act_w}x{act_h}) 与内参基准 ({ref_w}x{ref_h}) 不一致，已等比自适应缩放内参。")
+            else:
+                log.debug(f"[GUARD] 持续应用分辨率内参缩放: ({act_w}x{act_h}) <- ({ref_w}x{ref_h})")
             
             fx, fy, cx, cy = fx_scaled, fy_scaled, cx_scaled, cy_scaled
             metadata["scaled"] = True

@@ -173,10 +173,10 @@ class RobotOnlineTracker:
     # ------------------------------ 初始化 ------------------------------
     @staticmethod
     def _default_map_path() -> str:
-        """默认地图: 当前活动场景地图, 回退全局 config/tags_map.yaml"""
+        """默认地图: 优先当前工况场景地图, 回退全局 config/tags_map.yaml"""
         try:
             from src.calibration.scene_manager import CalibrationSceneManager
-            return CalibrationSceneManager().get_active_scene().map_path
+            return CalibrationSceneManager().get_current_scene().map_path
         except Exception:
             return os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
 
@@ -997,25 +997,7 @@ class RobotOnlineTracker:
         win_key = "robot_online_tracker"  # 窗口 key 纯 ASCII (namedWindow ANSI API)
         self.win_mgr.setup_window(win_key, mouse_callback=self._on_mouse)
         self.win_mgr.set_unicode_title("Robot 在线跟踪 | flux_vision_3d")
-        print("\n" + "=" * 68)
-        print(" Robot 在线跟踪 (GUI 已启动, 相机未开启)")
-        print("   顶部工具栏 (双排, 组间空白分隔): 第一排 相机类型→分辨率→[开启] ‖ [串口▼]→[连接机械臂]→[M84+G92]→[Park]")
-        print("   第二排 (第一组居左 | 第二组跟踪居右):")
-        print("     第一组 [一次性建立世界坐标系][确定世界坐标系] | [XY平面▼][√显示已知Tag] | [目标▼][识别目标·单次][√连续识别]")
-        print("     第二组 [跟踪目标·单次][√连续跟踪]")
-        print("   [一次性建立世界坐标系] 一键单帧闭环: 开相机→拍一张→关相机→识别Tag(蓝棱柱)→确定世界坐标系→地图白名单绿棱柱")
-        print("   [目标▼] 选择跟踪目标类型: Tag 2号标靶 / 顶层芦笋 (芦笋识别需深度流, 开发中)")
-        print("   [识别目标·单次] 实时流中解算一帧目标世界坐标 (Toast 显示) | [√连续识别] 勾选=逐帧解算")
-        print("   [跟踪目标·单次] 单条 G1 水平平移 (Z=80/E=90 锁定, 仅跟踪 X/Y, F3000) 到位+M114 偏差回读 | [√连续跟踪] 勾选=自动跟随")
-        print("   机械臂消息面板: 跟踪/M84/G92 按钮下方, 逐条显示 指令 G-code→回读/偏差")
-        print("   开启相机后为纯预览; [确定世界坐标系] 一键执行: 采样30帧→滤波→求解零点→锁定")
-        plane_desc = " ".join(f"Z {z}{self.plane_z_labels.get(z, '').strip()}"
-                              for z in self.plane_z_choices)
-        print("   [XY平面▼]: 不绘制 / " + plane_desc + " mm 透视网格+三轴, Tag 等高平面附加红色 X 轴")
-        print("   机械臂: [串口▼] 枚举并选择串口 → [连接机械臂] 拨号后自动 M84+G92 设零 | [Park] G1 直线插补回到放料位 X-250 Y350 Z80 R90° (F5000 高速)")
-        print("   快捷键: [S] 一次性建立世界坐标系 | [P] XY平面下拉 | [A] 显示已知Tag | [R] 连续识别 | [L] 确定/解除世界坐标系 | [C] 连接机械臂 | [T] 勾选/取消连续跟踪 | [X] 退出")
-        print("   窗口: 拖拽边框自由缩放 (自动记忆) | Ctrl+滚轮/Ctrl+加减 矢量缩放 | Ctrl+0 复位")
-        print("=" * 68 + "\n")
+        log.info("Robot 在线跟踪系统已启动。")
 
         try:
             while not self._quit_requested:
@@ -1108,7 +1090,7 @@ class RobotOnlineTracker:
 def main():
     ap = argparse.ArgumentParser(
         description="Robot 在线跟踪 — Tag 世界坐标实时解算与机械臂联动校准 (FR-12)")
-    ap.add_argument("--map", default=None, help="世界坐标地图 yaml 路径 (默认当前活动场景地图)")
+    ap.add_argument("--map", default=None, help="世界坐标地图 yaml 路径 (默认优先生产地图或当前工况场景地图)")
     ap.add_argument("--tag", type=int, default=2, help="跟踪目标 Tag ID (默认 2)")
     ap.add_argument("--port", default=None, help="机械臂串口 (默认读 config.yaml robot.port)")
     ap.add_argument("--baudrate", type=int, default=0, help="波特率 (默认读 config.yaml robot.baudrate)")

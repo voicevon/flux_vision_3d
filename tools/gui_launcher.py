@@ -127,10 +127,10 @@ def build_tools_catalog() -> List[ToolCardMeta]:
                 "多工况画廊管理：选择、新建、重命名、克隆与独立物理沙盒数据隔离",
                 "三大视图模式：标准三栏工作台 / 单帧大图全宽巡检 / 纯净几何健康看板",
                 "场景几何健康度体检：动态覆盖率热力、留一盲测残差分布与两阶段平差指标",
-                "严格恪守【草稿沙盒隔离、活动场景验证、生产原子发布】工业安全基准"
+                "严格恪守【工况沙盒隔离、标定平差验证、生产原子发布】工业安全基准"
             ],
             inputs=["data/calibration_scenes/ 工况沙盒目录"],
-            outputs=["当前活动场景切换、scene_meta.yaml、一键原子发布到 config/tags_map.yaml"],
+            outputs=["工况场景管理、scene_meta.yaml、一键原子发布到 config/tags_map.yaml"],
             quick_tips="快捷键: [1] 启动 | 中枢内 [⏎] 激活 | [P] 发布生产 | [S] 进Studio",
         ),
 
@@ -192,7 +192,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
                 "[ / ] 调节曝光、[E] 切换自动曝光，白闪快门反馈，返回主中枢自动热重载"
             ],
             inputs=["RealSense / USB 相机 (界面内点击 [开启] 启动取流)"],
-            outputs=["当前活动场景 raw_images/view_*.png 原始高质量未压缩图集"],
+            outputs=["选定工况场景 raw_images/view_*.png 原始高质量未压缩图集"],
             quick_tips="快捷键: [3] 启动 | 预览中 [空格] 拍摄保存 | [ / ] 曝光调节 | [ESC]/[Q] 退出"
         ),
 
@@ -207,13 +207,13 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             tag_color=COLOR_B,
             summary="【离线标定核心】一站式样本交互审核、高精两阶段 BA 平差求解、智能剪枝与质检闭环。",
             details=[
-                "自动装载当前活动沙盒场景，多视角图像九宫格缩略图交互式审核与启闭",
+                "自动装载当前工况沙盒场景，多视角图像九宫格缩略图交互式审核与启闭",
                 "两阶段全局平差：Cauchy 鲁棒核粗平差 + MAD 统计自适应清洗 + LM 精平差",
                 "智能残差剪枝 (Auto-Prune)：自动迭代剪除反光/微动导致的高残差外点，拓扑安全守门",
                 "视网膜级热力覆盖度评估，一键导出 Markdown 格式全面质检体检报告",
                 "内置支持工具：标靶图纸生成 (A4 PDF) 与漏检病因切片诊断已全面打通支持"
             ],
-            inputs=["当前活动场景 raw_images/", "相机内参 camera_intrinsics.yaml"],
+            inputs=["选定工况场景 raw_images/", "相机内参 camera_intrinsics.yaml"],
             outputs=["当前场景 tags_map.yaml", "reports/studio_qa_report_*.md 质检报告"],
             quick_tips="快捷键: [5] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
         ),
@@ -971,8 +971,8 @@ class GuiLauncherApp:
         draw_text(canvas, "芦笋上料自动化", (max(20, int(40 * s)), max(18, int(28 * s))),
                   font_size=max(9, int(12 * s)), color=(150, 170, 185))
 
-        # 当前活动生产场景胶囊 (紧随标题之后，居中/醒目呈现)
-        act_sc = self.scene_mgr.get_active_scene()
+        # 当前工况场景胶囊 (紧随标题之后，居中/醒目呈现)
+        act_sc = self.scene_mgr.get_current_scene()
         capsule_x = max(200, int(330 * s))
         bw = max(80, int(125 * s))
         bh = max(24, int(34 * s))
@@ -1211,7 +1211,7 @@ class GuiLauncherApp:
         rs_ok = rs_tuple[2] if len(rs_tuple) > 2 else False
         rs_msg = rs_tuple[1] if len(rs_tuple) > 1 else str(rs_tuple)
         snaps_c = st.get("snapshot_count", 0)
-        act_sc = self.scene_mgr.get_active_scene()
+        act_sc = self.scene_mgr.get_current_scene()
 
         # 正文排版
         curr_y = py + max(44, int(64 * s))

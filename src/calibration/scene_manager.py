@@ -401,8 +401,8 @@ class CalibrationSceneManager:
             self._cached_scenes[scene_id] = scene
         return scene
 
-    def get_active_scene_id(self) -> str:
-        """获取默认场景 ID (兼容向后调用：优先生产场景，次选活动标记文件，兜底最新场景)"""
+    def get_current_scene_id(self) -> str:
+        """获取当前默认工况场景 ID (优先生产地图对应场景，兜底最新场景)"""
         prod_id = self.get_production_scene_id()
         if prod_id:
             return prod_id
@@ -421,19 +421,27 @@ class CalibrationSceneManager:
             return scenes[0].scene_id
         return ""
 
-    def get_active_scene(self, force_refresh: bool = False) -> CalibrationScene:
-        """获取默认场景对象 (兼容向后调用：优先生产场景，次选最新场景，无场景则自动初始化)"""
-        active_id = self.get_active_scene_id()
-        if active_id:
-            scene = self.get_scene_by_id(active_id, force_refresh=force_refresh)
+    def get_active_scene_id(self) -> str:
+        """获取默认场景 ID (兼容向后调用别名)"""
+        return self.get_current_scene_id()
+
+    def get_current_scene(self, force_refresh: bool = False) -> CalibrationScene:
+        """获取当前默认工况场景对象 (优先生产地图对应场景，次选最新场景，无场景则自动初始化)"""
+        cur_id = self.get_current_scene_id()
+        if cur_id:
+            scene = self.get_scene_by_id(cur_id, force_refresh=force_refresh)
             if scene:
                 return scene
 
-        new_scene = self.create_scene(alias="默认工位", description="系统自动初始化默认场景")
+        new_scene = self.create_scene(alias="默认工位", description="系统自动初始化默认工况场景")
         return new_scene
 
+    def get_active_scene(self, force_refresh: bool = False) -> CalibrationScene:
+        """获取场景对象 (兼容向后调用别名)"""
+        return self.get_current_scene(force_refresh=force_refresh)
+
     def set_active_scene(self, scene_id: str) -> bool:
-        """设置活动场景 (向前兼容保留接口)"""
+        """切换默认场景 (向前兼容保留接口)"""
         target_dir = os.path.join(self.scenes_dir, scene_id)
         if not os.path.isdir(target_dir):
             return False
@@ -443,7 +451,7 @@ class CalibrationSceneManager:
             self._cached_scenes[scene_id] = CalibrationScene.load(target_dir)
             return True
         except Exception as e:
-            log.warning(f"[SCENE] 写入活动场景标记失败: {e}")
+            log.warning(f"[SCENE] 写入默认场景标记失败: {e}")
             return False
 
     def invalidate_cache(self):

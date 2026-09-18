@@ -7,7 +7,7 @@
 用途：
   1. GUI 先行启动 (不自动开相机)：顶部工具栏选相机类型 (RealSense D435 / USB 摄像头) →
      分辨率 → [开启] 乒乓开关 (布局与 Robot 在线跟踪第一排左半部分同款)，点击 [开启] 后进入预览；
-  2. 按 [空格] 键一键拍摄保存无标注的高清原始帧至活动场景图像目录；
+  2. 按 [空格] 键一键拍摄保存无标注的高清原始帧至目标场景图像目录；
   3. 提供拍照快门白闪视觉反馈与采样计数，采图完毕后衔接离线空间建图 (tag_map_builder)；
   4. 曝光调节 [ ] 与自动曝光切换 [E] (RealSense 物理感光控制)。
 注：Tag 识别/观测解算统一由离线建图管线完成，向导不做任何检测 (先采后验)。
@@ -34,7 +34,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 try:
     from src.calibration.scene_manager import CalibrationSceneManager
-    DEFAULT_IMAGE_DIR = CalibrationSceneManager().get_active_scene().raw_images_dir
+    DEFAULT_IMAGE_DIR = CalibrationSceneManager().get_current_scene().raw_images_dir
 except (ImportError, RuntimeError):
     DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
 
@@ -80,7 +80,7 @@ class CaptureWizard:
                     break
 
         if not sc and not is_custom_output:
-            sc = self.scene_mgr.get_active_scene()
+            sc = self.scene_mgr.get_current_scene()
 
         self.current_scene = sc
         self.current_scene_id = sc.scene_id if sc else ""
@@ -269,7 +269,7 @@ class CaptureWizard:
 
     def save_image(self, raw_frame: np.ndarray) -> str:
         """
-        保存采图快照：无标注高清原始帧存至活动场景图像目录 view_XXXX.png
+        保存采图快照：无标注高清原始帧存至工况场景图像目录 view_XXXX.png
         (Tag 观测解算统一由离线建图管线 tag_map_builder 完成, 先采后验)
         """
         self.image_count += 1
@@ -372,20 +372,7 @@ class CaptureWizard:
         self.win_mgr.setup_window(win_key, mouse_callback=self._on_mouse)
         self.win_mgr.set_unicode_title("采图向导 | flux_vision_3d")
 
-        print("\n" + "=" * 70)
-        print("          多视角采图向导启动 (GUI 已启动, 相机未开启)")
-        print("=" * 70)
-        print(" 单一职责: 纯预览 + 保存 (Tag 识别/解算由离线建图管线完成, 先采后验)")
-        print(" 顶部工具栏 (与 Robot 在线跟踪同款): [相机类型 ▼] [分辨率 ▼] [开启/关闭] ... [退出 X]")
-        print(f" [存储目录]   : {self.output_dir}")
-        print(f" [已存图像]   : {self.image_count} 张")
-        print(" [快捷键指南] (开启相机后生效):")
-        print("   - [Space] (空格键) : 拍摄并保存当前视角高清原图；")
-        print("   - [ [ / ] ]        : RealSense 硬件手动曝光 (压暗 / 提亮)；")
-        print("   - [E]              : 切换自动曝光 / 手动曝光；")
-        print("   - [X] / [Q] / [ESC] : 退出向导。")
-        print(" 窗口: 拖拽边框自由缩放 (自动记忆) | Ctrl+滚轮/Ctrl+加减 矢量缩放 | Ctrl+0 复位")
-        print("=" * 70 + "\n")
+        log.info(f"多视角采图向导已启动，存储目录: {self.output_dir}")
 
         frame_idx = 0
         frames_shown = 0

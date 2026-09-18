@@ -263,7 +263,7 @@ class BundleAdjustmentOptimizer:
             def __init__(self, stage: int, stage_name: str, max_iters: int, cb=None):
                 self.stage = stage
                 self.stage_name = stage_name
-                self.max_iters = max_iters
+                self.max_iters = max(max_iters, 50)
                 self.cb = cb
                 self.call_count = 0
                 self.iter_count = 0
@@ -287,8 +287,14 @@ class BundleAdjustmentOptimizer:
 
                     if is_new_step:
                         self.iter_count += 1
+                        # 动态自适应调整最大轮次：分母永不小于分子，若超过预设则自适应平滑扩充
+                        if self.iter_count > self.max_iters:
+                            import math
+                            self.max_iters = int(math.ceil(self.iter_count / 10.0) * 10)
+
                         rmse = float(np.sqrt(np.mean(res ** 2))) if len(res) > 0 else 0.0
-                        sub_pct = min(1.0, self.iter_count / float(max(1, self.max_iters)))
+                        # 迭代运行中进度条最高逼近 95%，收敛完成时由回调置 100%
+                        sub_pct = min(0.95, self.iter_count / float(max(1, self.max_iters)))
                         if self.cb:
                             try:
                                 self.cb({
@@ -307,19 +313,20 @@ class BundleAdjustmentOptimizer:
 
         x0 = pack_params(tag_poses_init, camera_poses_init)
 
+        stage1_est_max = 60
         if callback:
             callback({
                 "stage": 1,
                 "stage_name": "粗差清洗与收敛",
                 "iter": 0,
-                "max_iter": 30,
+                "max_iter": stage1_est_max,
                 "rmse": 1.0,
                 "sub_progress": 0.0,
                 "call_count": 0
             })
 
         log.info("[*] 正在执行 Phase 1 阶段一：基于 Cauchy 鲁棒核的粗差清洗与全局收敛...")
-        monitor1 = _OptimizationMonitor(stage=1, stage_name="粗差清洗收敛", max_iters=30, cb=callback)
+        monitor1 = _OptimizationMonitor(stage=1, stage_name="粗差清洗收敛", max_iters=stage1_est_max, cb=callback)
         res_stage1 = least_squares(
             monitor1.wrap_residuals(residuals_func, obs_weights, None), x0,
             method='trf',
@@ -333,12 +340,14 @@ class BundleAdjustmentOptimizer:
             verbose=0
         )
 
+        final_iter1 = max(1, monitor1.iter_count)
+        final_max1 = max(monitor1.max_iters, final_iter1)
         if callback:
             callback({
                 "stage": 1,
                 "stage_name": "粗差清洗收敛",
-                "iter": monitor1.iter_count,
-                "max_iter": 30,
+                "iter": final_iter1,
+                "max_iter": final_max1,
                 "rmse": float(np.sqrt(np.mean(res_stage1.fun ** 2))) if len(res_stage1.fun) > 0 else 0.0,
                 "sub_progress": 1.0,
                 "call_count": monitor1.call_count
@@ -374,7 +383,7 @@ class BundleAdjustmentOptimizer:
                 f_name = active_frame_names[f] if f < len(active_frame_names) else f"frame_{f}"
                 log.info(f"        - [{f_name}] Tag #{t_id}")
 
-        max_iters_p2 = 35
+        max_iters_p2 = 60
         if callback:
             callback({
                 "stage": 2,
@@ -401,12 +410,14 @@ class BundleAdjustmentOptimizer:
             verbose=0
         )
 
+        final_iter2 = max(1, monitor2.iter_count)
+        final_max2 = max(monitor2.max_iters, final_iter2)
         if callback:
             callback({
                 "stage": 2,
                 "stage_name": "微容差深度平差",
-                "iter": monitor2.iter_count,
-                "max_iter": max_iters_p2,
+                "iter": final_iter2,
+                "max_iter": final_max2,
                 "rmse": float(np.sqrt(np.mean(res_stage2.fun ** 2))) if len(res_stage2.fun) > 0 else 0.0,
                 "sub_progress": 1.0,
                 "call_count": monitor2.call_count

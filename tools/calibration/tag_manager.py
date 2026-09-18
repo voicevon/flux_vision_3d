@@ -21,6 +21,7 @@ sys.path.insert(0, PROJECT_ROOT)
 from src.utils.gui_window_manager import GuiWindowManager
 from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text
+from src.utils.gui_components import draw_app_header
 from src.utils.config_guard import load_raw_config
 
 # 复用旧代码的图纸生成函数 (不修改旧代码)
@@ -53,9 +54,7 @@ class TagManager:
     COLOR_TAG_OFF = (75, 80, 95)       # 白名单外 Tag, 本地保留
 
     # 布局常量
-    SIDEBAR_W = 220
-    TOOLBAR_H = 0                       # 不设顶部工具栏, sidebar 承担切换
-    TAB_CONTENT_H = 40                  # 右侧子工具栏高度
+    TOOLBAR_H = 46                      # 统一顶部工具栏高度
     MARGIN = 12
 
     # Tag 16h5 共 30 个 (ID 0~29)
@@ -242,49 +241,58 @@ class TagManager:
         canvas = np.full((canvas_h, canvas_w, 3), self.COLOR_BG, dtype=np.uint8)
         self.gui_buttons = []
 
-        # —— Sidebar ——
-        cv2.rectangle(canvas, (0, 0), (self.SIDEBAR_W, canvas_h), self.COLOR_SIDEBAR, -1)
-        cv2.line(canvas, (self.SIDEBAR_W - 1, 0), (self.SIDEBAR_W - 1, canvas_h), self.COLOR_BORDER, 1)
+        # —— 1. 顶部工具栏 (高度 TOOLBAR_H) ——
+        cv2.rectangle(canvas, (0, 0), (canvas_w, self.TOOLBAR_H), GuiTheme.CARD_BG, -1)
+        cv2.line(canvas, (0, self.TOOLBAR_H - 1), (canvas_w, self.TOOLBAR_H - 1), GuiTheme.BORDER, 1)
 
-        # 标题
-        draw_text(canvas, "AprilTag", (16, 14), font_size=16, color=self.COLOR_ACCENT, bold=True)
-        draw_text(canvas, "管理器", (16, 34), font_size=14, color=self.COLOR_TEXT)
-        draw_text(canvas, "v1.0", (16, 52), font_size=10, color=self.COLOR_TEXT_SUB)
-        cv2.line(canvas, (12, 64), (self.SIDEBAR_W - 12, 64), self.COLOR_BORDER, 1)
+        # 1.1 左侧品牌 LOGO 与模块名称
+        tabs_start_x = draw_app_header(canvas, x=12, y=7, sub_title="AprilTag 管理器", icon_size=32)
 
-        # Tab 卡片列表
-        card_h = 66
-        cy = 74
+        # 1.2 中间 Tab 选项卡按钮组
+        bx = tabs_start_x + 10
+        btn_h = 30
+        by1 = (self.TOOLBAR_H - btn_h) // 2
+        by2 = by1 + btn_h
+
         for tab in self.tabs:
             active = (tab["key"] == self.active_tab)
-            x1, x2 = 10, self.SIDEBAR_W - 10
-            y1, y2 = cy, cy + card_h
-            hover = self._is_hover(x1, y1, x2, y2)
+            bw = 140
+            bx1, bx2 = bx, bx + bw
+            hover = self._is_hover(bx1, by1, bx2, by2)
 
             if active:
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), self.COLOR_CARD_SEL, -1)
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), self.COLOR_ACCENT, 2)
-                draw_text(canvas, tab["label"], (x1 + 14, y1 + 22), font_size=14, color=self.COLOR_ACCENT, bold=True)
-                draw_text(canvas, tab["desc"], (x1 + 14, y1 + 46), font_size=11, color=self.COLOR_TEXT)
-                cv2.rectangle(canvas, (x1, y1 + 6), (x1 + 3, y2 - 6), self.COLOR_ACCENT, -1)
+                cv2.rectangle(canvas, (bx1, by1), (bx2, by2), GuiTheme.CARD_SEL, -1)
+                cv2.rectangle(canvas, (bx1, by1), (bx2, by2), GuiTheme.ACCENT, 2)
+                draw_text(canvas, tab["label"], (bx1 + 14, by1 + 19), font_size=12, color=GuiTheme.ACCENT, bold=True)
             elif hover:
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), (42, 48, 60), -1)
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), self.COLOR_BORDER_SEL, 1)
-                draw_text(canvas, tab["label"], (x1 + 14, y1 + 22), font_size=14, color=self.COLOR_TEXT, bold=True)
-                draw_text(canvas, tab["desc"], (x1 + 14, y1 + 46), font_size=11, color=self.COLOR_TEXT_SUB)
+                cv2.rectangle(canvas, (bx1, by1), (bx2, by2), GuiTheme.CARD_HOVER, -1)
+                cv2.rectangle(canvas, (bx1, by1), (bx2, by2), GuiTheme.BORDER_SEL, 1)
+                draw_text(canvas, tab["label"], (bx1 + 14, by1 + 19), font_size=12, color=GuiTheme.BTN_TEXT_HOVER, bold=True)
             else:
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), self.COLOR_CARD_BG, -1)
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), self.COLOR_BORDER, 1)
-                draw_text(canvas, tab["label"], (x1 + 14, y1 + 22), font_size=14, color=self.COLOR_TEXT, bold=False)
-                draw_text(canvas, tab["desc"], (x1 + 14, y1 + 46), font_size=11, color=self.COLOR_TEXT_SUB)
+                cv2.rectangle(canvas, (bx1, by1), (bx2, by2), GuiTheme.CARD_BG, -1)
+                cv2.rectangle(canvas, (bx1, by1), (bx2, by2), GuiTheme.BORDER, 1)
+                draw_text(canvas, tab["label"], (bx1 + 14, by1 + 19), font_size=12, color=GuiTheme.BTN_TEXT, bold=False)
 
-            self.gui_buttons.append((f"TAB_{tab['key']}", (x1, y1, x2, y2), tab["key"]))
-            cy += card_h + 10
+            self.gui_buttons.append((f"TAB_{tab['key']}", (bx1, by1, bx2, by2), tab["key"]))
+            bx += bw + 8
 
-        # —— 右侧内容区 ——
-        rx1 = self.SIDEBAR_W
+        # 1.3 右上角统一退出按钮
+        qx2 = canvas_w - 12
+        qx1 = qx2 - 82
+        qy1 = (self.TOOLBAR_H - btn_h) // 2
+        qy2 = qy1 + btn_h
+        hover_q = self._is_hover(qx1, qy1, qx2, qy2)
+        q_bg = (60, 30, 30) if hover_q else (35, 28, 28)
+        q_border = self.COLOR_ERR if hover_q else (90, 50, 50)
+        cv2.rectangle(canvas, (qx1, qy1), (qx2, qy2), q_bg, -1)
+        cv2.rectangle(canvas, (qx1, qy1), (qx2, qy2), q_border, 2 if hover_q else 1)
+        draw_text(canvas, "✕ 退出 [Q]", (qx1 + 10, qy1 + 19), font_size=12, color=(255, 140, 140), bold=True)
+        self.gui_buttons.append(("QUIT", (qx1, qy1, qx2, qy2), None))
+
+        # —— 2. 下方工作内容区 ——
+        rx1 = 0
         rx2 = canvas_w
-        ry1 = 0
+        ry1 = self.TOOLBAR_H
         ry2 = canvas_h
 
         if self.active_tab == "generator":
@@ -292,36 +300,21 @@ class TagManager:
         elif self.active_tab == "whitelist":
             self._render_whitelist(canvas, rx1, ry1, rx2, ry2)
 
-        # 退出按钮 —— 固定在 sidebar 底部
-        ex1, ex2 = 10, self.SIDEBAR_W - 10
-        ey2 = canvas_h - 12
-        ey1 = ey2 - 40
-        hover_q = self._is_hover(ex1, ey1, ex2, ey2)
-        q_bg = (60, 30, 30) if hover_q else (35, 28, 28)
-        q_border = self.COLOR_ERR if hover_q else (90, 50, 50)
-        cv2.rectangle(canvas, (ex1, ey1), (ex2, ey2), q_bg, -1)
-        cv2.rectangle(canvas, (ex1, ey1), (ex2, ey2), q_border, 2)
-        draw_text(canvas, "✕ 退出", (ex1 + 14, ey1 + 25), font_size=13, color=(255, 140, 140), bold=True)
-        self.gui_buttons.append(("QUIT", (ex1, ey1, ex2, ey2), None))
-
         return canvas
 
     def _render_generator(self, canvas, x1, y1, x2, y2):
         """图纸生成 Tab"""
-        content_area = (x1 + self.MARGIN, y1 + self.MARGIN + 30,
+        content_area = (x1 + self.MARGIN, y1 + self.MARGIN,
                         x2 - self.MARGIN, y2 - self.MARGIN)
 
-        # 子工具栏
-        cv2.line(canvas, (x1 + 8, y1 + 30), (x2 - 8, y1 + 30), self.COLOR_BORDER, 1)
-        draw_text(canvas, "📐 图纸生成", (x1 + self.MARGIN, y1 + 20), font_size=14, color=self.COLOR_ACCENT, bold=True)
-
         # —— 参数面板 (左半) ——
-        param_x1, param_x2 = content_area[0], content_area[0] + 340
+        param_w = 360
+        param_x1, param_x2 = content_area[0], content_area[0] + param_w
         param_y1, param_y2 = content_area[1], content_area[3]
         cv2.rectangle(canvas, (param_x1, param_y1), (param_x2, param_y2), self.COLOR_CARD_BG, -1)
         cv2.rectangle(canvas, (param_x1, param_y1), (param_x2, param_y2), self.COLOR_BORDER, 1)
 
-        draw_text(canvas, "生成参数", (param_x1 + 14, param_y1 + 22), font_size=12, color=self.COLOR_TEXT, bold=True)
+        draw_text(canvas, "生成参数", (param_x1 + 14, param_y1 + 22), font_size=13, color=self.COLOR_TEXT, bold=True)
         cv2.line(canvas, (param_x1 + 14, param_y1 + 34), (param_x2 - 14, param_y1 + 34), self.COLOR_BORDER, 1)
 
         # 参数行
@@ -358,13 +351,11 @@ class TagManager:
 
         # 状态行
         status_y = btn_y + btn_h + 14
-        status_color = self.COLOR_OK if self.gen_status.startswith("✅") else \
-                       self.COLOR_ERR if self.gen_status.startswith("❌") else \
-                       self.COLOR_TEXT_SUB
-        draw_text(canvas, self.gen_status or "点击上方按钮开始生成", (param_x1 + 14, status_y),
-                  font_size=10, color=status_color)
+        if self.gen_status:
+            sc = self.COLOR_OK if "✅" in self.gen_status else (self.COLOR_ERR if "❌" in self.gen_status else self.COLOR_TEXT)
+            draw_text(canvas, self.gen_status, (param_x1 + 14, status_y + 10), font_size=11, color=sc)
 
-        # —— 预览区 (右半) ——
+        # —— 预览面板 (右半) ——
         prev_x1 = param_x2 + self.MARGIN
         prev_x2 = content_area[2]
         prev_y1 = content_area[1]
@@ -399,10 +390,7 @@ class TagManager:
 
     def _render_whitelist(self, canvas, x1, y1, x2, y2):
         """白名单管理 Tab — 30 个 Tag 切换方块"""
-        cv2.line(canvas, (x1 + 8, y1 + 30), (x2 - 8, y1 + 30), self.COLOR_BORDER, 1)
-        draw_text(canvas, "✅ 白名单管理", (x1 + self.MARGIN, y1 + 20), font_size=14, color=self.COLOR_ACCENT, bold=True)
-
-        content_area = (x1 + self.MARGIN, y1 + self.MARGIN + 30,
+        content_area = (x1 + self.MARGIN, y1 + self.MARGIN,
                         x2 - self.MARGIN, y2 - self.MARGIN)
 
         # —— 顶部操作条 ——
@@ -505,12 +493,7 @@ class TagManager:
         except Exception as e:
             log.warning(f"恢复上次活动 Tab 设置失败: {e}")
 
-        print("\n" + "=" * 52)
-        print(" AprilTag 管理器 (cv2 GUI)")
-        print("   左侧 Tab 卡片切换 | 点击退出或 [Q/ESC] 关闭")
-        print("   Tab 1: 图纸生成 (import generate_tags)")
-        print("   Tab 2: 白名单管理 (0~29 ID toggle)")
-        print("=" * 52 + "\n")
+        log.info("AprilTag 管理器已启动。")
 
         try:
             while True:

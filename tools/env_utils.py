@@ -70,21 +70,22 @@ def check_env_status(force_refresh: bool = False) -> dict:
     snapshots = glob.glob(os.path.join(PROJECT_ROOT, "data", "snapshots", "color_*.png"))
     status['snapshot_count'] = len(snapshots)
 
-    # 标定场景管理器与当前活动场景
+    # 标定场景管理器与当前工况场景
     scene_mgr = CalibrationSceneManager() if CalibrationSceneManager else None
-    active_scene = scene_mgr.get_active_scene() if scene_mgr else None
+    current_scene = scene_mgr.get_current_scene() if scene_mgr else None
     status['scene_mgr'] = scene_mgr
-    status['active_scene'] = active_scene
+    status['current_scene'] = current_scene
+    status['active_scene'] = current_scene  # 兼容旧代码键
 
-    # 采图数据集统计 (以当前活动场景为主，兼容旧路径)
-    if active_scene:
-        status['calib_image_count'] = active_scene.image_count
-        status['has_tag_map'] = active_scene.ba_solved
-        status['has_manifest'] = os.path.exists(active_scene.manifest_path)
-        status['manifest_path'] = active_scene.manifest_path
-        status['image_dir'] = active_scene.raw_images_dir
-        status['map_path'] = active_scene.map_path
-        status['is_published'] = active_scene.is_published
+    # 采图数据集统计 (以当前工况场景为主，兼容旧路径)
+    if current_scene:
+        status['calib_image_count'] = current_scene.image_count
+        status['has_tag_map'] = current_scene.ba_solved
+        status['has_manifest'] = os.path.exists(current_scene.manifest_path)
+        status['manifest_path'] = current_scene.manifest_path
+        status['image_dir'] = current_scene.raw_images_dir
+        status['map_path'] = current_scene.map_path
+        status['is_published'] = current_scene.is_published
     else:
         calib_images = glob.glob(os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "*.png"))
         status['calib_image_count'] = len(calib_images)

@@ -192,7 +192,8 @@ class StudioBARunner:
                         self.ba_progress = 0.62 + 0.22 * sub_pct
 
                     self.ba_sub_progress = sub_pct
-                    self.ba_sub_text = f"[{stg_name}] 轮次 #{cur_it}/{max_it} | 实时 RMSE: {cur_rmse:.3f} px"
+                    display_max = max(max_it, cur_it)
+                    self.ba_sub_text = f"[{stg_name}] 轮次 #{cur_it}/{display_max} | 实时 RMSE: {cur_rmse:.3f} px"
 
                 self.ba_progress = 0.40
                 self.ba_stage_text = "阶段 3/4: 两阶段 Cauchy 稳健核平差全局收敛求解..."

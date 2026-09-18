@@ -78,10 +78,10 @@ log = get_logger(__name__)
 
 try:
     from src.calibration.scene_manager import CalibrationSceneManager
-    _active_sc = CalibrationSceneManager().get_active_scene()
-    CALIB_IMAGES_DIR = _active_sc.raw_images_dir
-    DEFAULT_MAP_PATH = _active_sc.map_path
-    MANIFEST_PATH = _active_sc.manifest_path
+    _cur_sc = CalibrationSceneManager().get_current_scene()
+    CALIB_IMAGES_DIR = _cur_sc.raw_images_dir
+    DEFAULT_MAP_PATH = _cur_sc.map_path
+    MANIFEST_PATH = _cur_sc.manifest_path
 except Exception:
     CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
     DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
@@ -120,18 +120,16 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
                 sc = next((s for s in self.scene_mgr.list_scenes()
                            if os.path.normpath(s.raw_images_dir) == norm_target or os.path.normpath(s.scene_dir) == norm_target), None)
             else:
-                sc = self.scene_mgr.get_active_scene()
+                sc = self.scene_mgr.get_current_scene()
 
             if not sc:
-                sc = self.scene_mgr.get_active_scene()
+                sc = self.scene_mgr.get_current_scene()
             self.current_scene = sc
             self.current_scene_id = sc.scene_id if sc else ""
-            self.active_scene = sc
         except Exception:
             self.scene_mgr = None
             self.current_scene = None
             self.current_scene_id = ""
-            self.active_scene = None
 
         self.map_path = map_path or (self.current_scene.map_path if self.current_scene else DEFAULT_MAP_PATH)
         self.image_dir = image_dir or (self.current_scene.raw_images_dir if self.current_scene else CALIB_IMAGES_DIR)
@@ -255,7 +253,6 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         # 2. 重新指向新场景
         self.current_scene = target_sc
         self.current_scene_id = target_sc.scene_id
-        self.active_scene = target_sc
         self.image_dir = target_sc.raw_images_dir
         self.manifest_path = target_sc.manifest_path
         self.map_path = target_sc.map_path
@@ -668,29 +665,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         if force_window_focus:
             force_window_focus(window_name)
 
-        print("\n" + "=" * 80)
-        print("         AprilTag 离线标定与空间建图综合工作站 (Offline Studio)")
-        print("=" * 80)
-        print(f" [采图资产目录] : {self.image_dir} (共 {len(self.image_files)} 帧)")
-        print(f" [空间立体地图] : {self.map_path}")
-        print(" [工作流指南]   :")
-        print("   - [↑] / [↓] 或 [W] / [S] : 上下顺序切换当前选定的图像帧")
-        print("   - [E]                    : 执行工序 3 工业级超精重提取 (5路增强+2x超分+0.01px精修)")
-        print("   - [D]                    : 运行当前帧漏检病因切片诊断")
-        print("   - [V]                    : 循环切换视口模式 (混合 ⇋ 3D双棱柱 ⇋ 2D残差矢量)")
-        print("   - [滚轮 (中间画布)]      : 以鼠标为中心实时精准放大/缩小图像 (0.4x ~ 15.0x)")
-        print("   - [右键/中键拖拽]        : 在中间画布中自由平移浏览图像细节")
-        print("   - [滚轮 (左侧栏)]        : 上下滚动浏览帧序列列表")
-        print("   - [双击画布] / [Z] / [0] : 一键重置图像缩放和平移为适应视口 (1.0x)")
-        print("   - [T] / [Space]          : 翻转当前帧有效性状态 (保留 ⇋ 剔除)")
-        print("   - [X]                    : 切换左栏视图 (紧凑列表 ⇋ 逐帧多轮残差演进矩阵宽表)")
-        print("   - [B]                    : 异步执行全局平差优化 (全量批处理 Batch BA) 并就地热重载")
-        print("   - [P]                    : 全量重算并刷新所有帧精度体检残差指标")
-        print("   - [R]                    : 导出离线全景精度体检 Markdown 质检单")
-        print("   - [M]                    : 保存当前优化后的空间立体地图")
-        print("   - [Backspace] / [Delete] : 一键复位清空空间立体地图 (重置为未建图纯观测状态)")
-        print("   - [Q] / [ESC]            : 安全退出工作台返回控制台")
-        print("=" * 80 + "\n")
+        log.info(f"AprilTag 离线标定工作站已启动: {len(self.image_files)} 帧图像, 地图: {self.map_path}")
 
         canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
 
@@ -783,9 +758,9 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
                     self.export_verification_report()
                 elif key in (ord('m'), ord('M')):      # M 键 -> 保存地图
                     ManifestRepository.save_map(self.tags_map_data, self.map_path)
-                    if self.active_scene:
-                        self.active_scene.refresh_stats()
-                        self.active_scene.save_meta()
+                    if self.current_scene:
+                        self.current_scene.refresh_stats()
+                        self.current_scene.save_meta()
                     self.set_toast("空间立体地图已保存至当前场景！")
                 elif key in (ord('u'), ord('U')):      # U 键 -> 发布至生产全局地图
                     self.publish_to_production()

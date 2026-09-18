@@ -3,10 +3,10 @@
 ================================================================================
 验证：
 1. 场景创建、命名过滤与元数据生成
-2. 活动场景切换与持久化标记
+2. 工况场景默认定位与切换
 3. 场景克隆与物理沙盒独立性
 4. 场景发布至生产环境 (config/tags_map.yaml 与 config.yaml)
-5. 活动场景删除守门保护
+5. 场景自由删除与保护
 6. 历史数据无损自动迁移 (Auto-migration)
 """
 
@@ -52,8 +52,8 @@ class TestCalibrationSceneManager(unittest.TestCase):
         self.assertTrue(os.path.exists(scene1.meta_path))
         self.assertIn("bench_a", scene1.scene_id)
         
-        # 验证自动设为活动场景
-        self.assertEqual(self.mgr.get_active_scene_id(), scene1.scene_id)
+        # 验证自动获取工况场景
+        self.assertEqual(self.mgr.get_current_scene_id(), scene1.scene_id)
 
         # 创建第二个场景
         scene2 = self.mgr.create_scene(alias="bench_b", description="工位B测试")
@@ -63,18 +63,18 @@ class TestCalibrationSceneManager(unittest.TestCase):
         self.assertIn(scene1.scene_id, scene_ids)
         self.assertIn(scene2.scene_id, scene_ids)
 
-    def test_switch_active_scene(self):
-        """测试活动场景切换"""
+    def test_switch_current_scene(self):
+        """测试工况场景切换"""
         scene1 = self.mgr.create_scene(alias="s1")
         scene2 = self.mgr.create_scene(alias="s2")
 
-        self.assertEqual(self.mgr.get_active_scene_id(), scene2.scene_id)
+        self.assertEqual(self.mgr.get_current_scene_id(), scene2.scene_id)
         
         # 切换回 scene1
         ok = self.mgr.set_active_scene(scene1.scene_id)
         self.assertTrue(ok)
-        self.assertEqual(self.mgr.get_active_scene_id(), scene1.scene_id)
-        self.assertEqual(self.mgr.get_active_scene().scene_id, scene1.scene_id)
+        self.assertEqual(self.mgr.get_current_scene_id(), scene1.scene_id)
+        self.assertEqual(self.mgr.get_current_scene().scene_id, scene1.scene_id)
 
     def test_clone_scene_independence(self):
         """测试场景克隆与沙盒独立性"""

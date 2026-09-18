@@ -114,7 +114,7 @@ class StudioWorkflowMixin:
             return
 
         ManifestRepository.save_map(self.tags_map_data, self.map_path)
-        target_sc = getattr(self, "current_scene", self.active_scene)
+        target_sc = self.current_scene
         if self.scene_mgr and target_sc:
             ok, msg = self.scene_mgr.publish_to_production(target_sc.scene_id)
             if ok:
@@ -126,8 +126,8 @@ class StudioWorkflowMixin:
 
     def export_verification_report(self):
         """导出 Markdown 全景精度质检单"""
-        if self.active_scene:
-            report_dir = self.active_scene.reports_dir
+        if self.current_scene:
+            report_dir = self.current_scene.reports_dir
         else:
             report_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
         os.makedirs(report_dir, exist_ok=True)

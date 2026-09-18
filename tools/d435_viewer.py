@@ -786,11 +786,7 @@ class D435Viewer:
         content_w = 1024
         content_h = 576
 
-        print("\n" + "=" * 68)
-        print(" D435/USB 相机纯预览工具 (未连接)")
-        print("   顶部: 相机类型 → 分辨率 → [开启] → 预览控制按钮")
-        print("   键盘: [Space]暂停 | [V]排列 | [A]自动色阶 | [Q/ESC]退出")
-        print("=" * 68 + "\n")
+        log.info("D435 深度相机诊断工具已启动。")
 
         fps_counter = 0
         fps_time = time.time()
