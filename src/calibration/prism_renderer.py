@@ -4,7 +4,7 @@
 统一 3D 四棱柱渲染器 (PrismRenderer)
 ====================================
 收编四处重复的棱柱投影绘制实现 (verification_visualizer 双棱柱对比、
-tracker/renderer Studio 同款棱柱、tag_capture_wizard / tag_map_builder 建图可视化棱柱)。
+tracker/renderer Studio 同款棱柱、capture_wizard / tag_map_builder 建图可视化棱柱)。
 
 纯函数式设计：输入相机内参与位姿，输出 OpenCV 绘制调用；
 颜色 / 尺寸 / 透明度全部参数化，坐标轴绘制可选。

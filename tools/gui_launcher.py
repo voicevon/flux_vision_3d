@@ -180,20 +180,20 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             key_id="tag_wizard",
             shortcut="4",
             title="采图向导 (Wizard)",
-            subtitle="角度雷达交互指引/空格极速连拍/自动归档沙盒",
+            subtitle="GUI先行纯预览/空格连拍保存/自动归档场景",
             category="B — Tag 标定流水线",
             is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_capture_wizard.py"],
+            command=[sys.executable, "tools/capture/capture_wizard.py"],
             tag_color=COLOR_B,
-            summary="【现场采图助手】专职采图向导：交互式指导相机移动至不同高度与俯仰角，高效采集高质量标定样本。",
+            summary="【现场采图助手】专职采图向导：GUI 先行启动，点[开启]进入实时预览，空格连拍保存采集样本。",
             details=[
-                "提供雷达式多视角视盘指引（俯视、大俯仰角、大滚转角、高低多层位态）",
-                "按 [空格键] 极速无感连拍，样本自动存入当前场景 raw_images/ 目录",
-                "实时 AprilTag 检出回显与白闪快门反馈，采图完毕后返回主中枢自动热重载"
+                "启动仅加载界面不开相机，选择相机与分辨率后点击 [开启] 进入实时预览",
+                "按 [空格键] 极速连拍保存，样本自动存入当前场景 raw_images/ 目录",
+                "[ / ] 调节曝光、[E] 切换自动曝光，白闪快门反馈，返回主中枢自动热重载"
             ],
-            inputs=["RealSense 深度相机 (或 --mock 仿真)"],
+            inputs=["RealSense / USB 相机 (界面内点击 [开启] 启动取流)"],
             outputs=["当前活动场景 raw_images/view_*.png 原始高质量未压缩图集"],
-            quick_tips="快捷键: [3] 启动 | 采图界面中 [空格] 拍摄归档 | [R] 重置批次 | [ESC] 完成返回"
+            quick_tips="快捷键: [3] 启动 | 预览中 [空格] 拍摄保存 | [ / ] 曝光调节 | [ESC]/[Q] 退出"
         ),
 
         ToolCardMeta(

@@ -212,14 +212,12 @@ class SceneHubApp:
         cv2.destroyAllWindows()
 
     def _launch_capture_wizard(self):
-        """启动 AprilTag 专属多视角交互式采图向导 (tag_capture_wizard.py)"""
+        """启动多视角交互式采图向导 (tools/capture/capture_wizard.py)"""
         sc = self.state.get_selected_scene()
         target_dir = sc.raw_images_dir if sc else ""
-        cmd = [sys.executable, os.path.join(PROJECT_ROOT, "tools", "calibration", "tag_capture_wizard.py")]
+        cmd = [sys.executable, os.path.join(PROJECT_ROOT, "tools", "capture", "capture_wizard.py")]
         if target_dir:
             cmd.extend(["--output-dir", target_dir])
-        if self.force_mock:
-            cmd.append("--mock")
         self._run_subtool(cmd, "多视角交互采图向导")
 
     def _on_mouse_event(self, event, x, y, flags, param):

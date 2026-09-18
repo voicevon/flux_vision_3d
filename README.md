@@ -174,7 +174,7 @@ python tools/cli_menu.py
 flowchart TD
     S1["<b>工序 1: 标靶准备</b><br>生成 0~29 号矢量标靶与 A4 排版 PDF<br><i>(generate_apriltags.py)</i>"]
     S2["<b>工序 2: 场景管理 (Scene Hub)</b><br>新建工况沙盒 / 选定当前活动场景<br><i>(python -m tools.scene_hub)</i>"]
-    S3["<b>工序 3: 图像采集</b><br>多视角连拍或原地交互抓拍<br><i>(tag_capture_wizard.py)</i>"]
+    S3["<b>工序 3: 图像采集</b><br>多视角连拍或原地交互抓拍<br><i>(capture_wizard.py)</i>"]
     S4["<b>工序 4: 离线超精重提取</b><br>16级网格 + 双尺度 CLAHE + 亚像素精修<br><i>(tag_super_extractor.py)</i>"]
     S5["<b>工序 5: 离线平差与体检 (Studio)</b><br>交互审核 + 两阶段 BA 平差<br><i>(studio/app.py)</i>"]
     S6["<b>工序 6: 生效与在线跟踪</b><br>一键原子发布到生产 + Robot 在线跟踪<br><i>(tracker/app.py)</i>"]
@@ -186,7 +186,7 @@ flowchart TD
 | :---: | :--- | :--- |
 | **顶级 `[G]`** | **芦笋上料自动化 (Dashboard)**<br>`gui_launcher.py` | **1280x1000 工业科技总控大屏**：常驻硬件探针、卡片网格、右侧动态即时说明大屏 (Live Inspector)，统一调度全系统生产、标定与测试任务 |
 | **顶级 `[2]` / `[H]`** | **工况与场景管理中枢 (Scene Hub)**<br>`tools/scene_hub/` | **1280x720 场景与数据总控台**：场景工作空间/数据容器管理、健康体检大屏、相册大图巡检；直接执行 `python -m tools.scene_hub` 即可启动 |
-| **`[2]`** | **多视角交互采图向导**<br>`tag_capture_wizard.py` | 专职采图工具：交互式指导相机移动至不同高度与俯仰角，按空格连拍，样本自动存入当前场景沙盒 |
+| **`[2]`** | **多视角交互采图向导**<br>`capture_wizard.py` | 专职采图工具：GUI 先行纯预览，点[开启]取流，按空格连拍保存，样本自动存入当前场景沙盒 |
 | **`[S]`** | **离线标定工作站 (Studio)**<br>`tools/studio/app.py` | **一站式离线解算工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
 | **`[3]`** | **超精重提取引擎**<br>`tag_super_extractor.py` | 16 级阈值网格 + 自适应双尺度 CLAHE + 亚像素级角点精修，极限召回暗光/反光/弱对比度标靶 |
 | **`[4]`** | **静默空间建图求解**<br>`tag_map_builder.py` | 纯计算命令行求解器：图论连通性建模 $\rightarrow$ 两阶段 BA（Cauchy 鲁棒核 + MAD 粗差清洗） |
@@ -203,7 +203,7 @@ flowchart TD
 
 #### 1. 架构解耦与核心职责
 - **场景即工作空间 (Workspace)**：场景是数据的容器（包含样本图像 `raw_images/`、元数据 `scene_meta.yaml`、平差地图 `tags_map.yaml` 与质检报告 `reports/`），与具体的相机传感器和标定算法解耦；
-- **专职采图工具委托**：Scene Hub 自身不再运行 USB 相机取流循环，避免占用相机硬件句柄。用户按 `[C]` 键或点击 `[C] 采图向导` 时，中枢通过子进程无缝唤起专职采图向导 `tag_capture_wizard.py`，采图结束后自动平滑重载新图像并刷新状态元数据；
+- **专职采图工具委托**：Scene Hub 自身不再运行 USB 相机取流循环，避免占用相机硬件句柄。用户按 `[C]` 键或点击 `[C] 采图向导` 时，中枢通过子进程无缝唤起专职采图向导 `capture_wizard.py`，采图结束后自动平滑重载新图像并刷新状态元数据；
 - **底部状态栏沙盒胶囊**：右下角胶囊直观反馈当前场景的沙盒隔离状态（`SANDBOX: ★ 生产运行基准` / `SANDBOX: 已平差 (RMSE ...)` / `SANDBOX: 草稿沙盒`），彻底脱离对相机连接的硬依赖。
 
 #### 2. 活动场景 (Active) 与生产基准 (Production) 安全隔离
@@ -342,9 +342,12 @@ flux_vision_3d/
 │   ├── d435_viewer.py             #    RealSense D435 实时相机视窗与交互探针 (含 --mock)
 │   ├── find_top_asparagus.py      #    单帧抓取位姿解算 (输出 SCARA G-code 与 JSON)
 │   │
+│   ├── capture/                   # 📷 多视角采图向导 (纯预览+保存, 与标定解耦)
+│   │   ├── capture_wizard.py      #    【工序2】交互采图向导 (GUI先行/空格连拍/曝光调节)
+│   │   └── renderer.py            #    向导工具栏/画布/Toast 渲染器
+│   │
 │   └── calibration/               # 🎯 标定流水线小工具链
 │       ├── generate_apriltags.py  #    【工序1】标靶矢量生成与 A4 排版 PDF
-│       ├── tag_capture_wizard.py  #    【工序2】多视角交互采图向导
 │       ├── tag_super_extractor.py #    【工序3】离线超精重提取引擎 (16级网格+CLAHE)
 │       ├── tag_map_builder.py     #    【工序4】空间立体建图与两阶段 BA 平差求解
 │       ├── tag_manifest_reviewer.py #  采图清单质检画板: 交互式保留/剔除审核

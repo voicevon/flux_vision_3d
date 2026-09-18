@@ -137,7 +137,7 @@ graph TD
 | :--- | :--- | :--- |
 | **标靶图纸生成** | `tools/calibration/generate_apriltags.py` | 生成 0~29 号 16h5 高清标靶与 1:1 A4 排版 PDF |
 | **AprilTag 管理器** | `tools/calibration/tag_manager.py` | 左右两栏 GUI：图纸生成 + 30 个 Tag ID 白名单管理 (写回 `config.yaml`) |
-| **交互采图向导** | `tools/calibration/tag_capture_wizard.py` | 实时视频流 + 双路互补检测 + 空格一键连拍多视角相片 |
+| **交互采图向导** | `tools/capture/capture_wizard.py` | 实时视频流纯预览 + 空格一键连拍保存多视角相片 |
 | **离线超精重提取引擎** | `tools/calibration/tag_super_extractor.py` | 16 级致密阈值网格 + CLAHE + 2x 超分 + CONTOUR 轮廓拟合，输出高质量观测清单 |
 | **采图清单质检画板** | `tools/calibration/tag_manifest_reviewer.py` | 轻量级原生 GUI 画板，鼠标点击保留/剔除，连通性实时状态 |
 | **空间平差建图求解器** | `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD 清洗、Quiver 图与体检报告；`solve_single_tag_pnp` 支持 `expected_z_cam` 法向先验参数防 180° 翻转 |

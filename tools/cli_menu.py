@@ -101,7 +101,7 @@ def print_calibration_banner(status):
     print(f"   {C_GREEN}[1]{C_RESET} AprilTag 标靶图纸生成                  (生成 0~29 号高清标靶与 1:1 A4 排版 PDF)")
     print("")
     print(f"{C_BOLD} [ 二、 图像采集与外部向导 (Image Acquisition) ]{C_RESET}")
-    print(f"   {C_GREEN}[2]{C_RESET} AprilTag 多视角交互式采图向导          (自动存入当前场景 raw_images/，空格一键连拍)")
+    print(f"   {C_GREEN}[2]{C_RESET} 多视角交互式采图向导                  (纯预览+保存，存入当前场景 raw_images/，空格连拍)")
     print("")
     print(f"{C_BOLD} [ 三、 离线解算与质量闭环 (Offline Pipeline & QA) ]{C_RESET}")
     print(f"   {C_GREEN}{C_BOLD}[S]{C_RESET} {C_CYAN}{C_BOLD}进入 AprilTag 离线标定综合工作站 (Offline Studio)  ★ 自动装载当前活动场景{C_RESET}")
@@ -233,18 +233,13 @@ def run_generate_tags():
     pause_prompt()
 
 
-def run_tag_capture_wizard(status=None):
+def run_capture_wizard(status=None):
     active_scene = status.get('active_scene') if status else None
     scene_name = active_scene.scene_id if active_scene else "默认场景"
-    print(f"\n{C_CYAN}[采图]{C_RESET} 正在启动 AprilTag 交互式多视角采图向导 (当前场景: {C_GREEN}{scene_name}{C_RESET})...")
-    # 检查硬件
-    ok, mode = ensure_camera_connected()
-    cmd = [sys.executable, "tools/calibration/tag_capture_wizard.py"]
+    print(f"\n{C_CYAN}[采图]{C_RESET} 正在启动多视角采图向导 (当前场景: {C_GREEN}{scene_name}{C_RESET})...")
+    cmd = [sys.executable, "tools/capture/capture_wizard.py"]
     if active_scene:
         cmd.extend(["--output_dir", active_scene.raw_images_dir])
-    if mode == "mock" or not ok:
-        print(f"{C_YELLOW}[提示]{C_RESET} 正在以 --mock 仿真模式启动采图向导...")
-        cmd.append("--mock")
     
     res = subprocess.run(cmd)
     if res.returncode != 0:
@@ -671,7 +666,7 @@ def submenu_calibration_suite(cached_status=None):
         elif choice == '1':
             run_generate_tags()
         elif choice == '2':
-            run_tag_capture_wizard(status)
+            run_capture_wizard(status)
         elif choice == '3':
             run_tag_super_extractor(status)
         elif choice == '4':

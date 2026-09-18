@@ -18,7 +18,7 @@ Dashboard 第 5 张卡片「Robot 在线跟踪」的主工具：
 工具栏 (双排, 组间空白分隔):
   第一排: [相机类型 ▼] [分辨率 ▼] [开启/关闭] | [串口 ▼] [连接机械臂] [M84+G92] [Park] ... [退出 X]
   第二排 (第一组居左, 第二组跟踪居右):
-    第一组: [一次性建立世界坐标系] [确定世界坐标系] | [XY平面 ▼] [√显示已知Tag] | [识别目标·单次] [√连续识别]
+    第一组: [一次性建立世界坐标系] [确定世界坐标系] | [XY平面 ▼] [√显示已知Tag] | [目标 ▼] [识别目标·单次] [√连续识别]
     第二组: [跟踪目标·单次] [√连续跟踪]
 快捷键: [S] 一次性建立世界坐标系  [P] XY平面下拉  [L] 确定/解除世界坐标系  [A] 显示已知Tag  [R] 连续识别  [C] 连接/断开机械臂  [T] 勾选/取消连续跟踪  [X]/[ESC] 退出
 
@@ -110,7 +110,7 @@ class RobotOnlineTracker:
         self.camera = CameraController(self.engine)
 
         # 4. 工具栏状态 (借鉴 d435_viewer: 相机类型 → 分辨率 → 开关; 绘制由 TrackerRenderer 负责)
-        self.active_dropdown = None     # "CAMERA_TYPE_DROPDOWN" | "RES_DROPDOWN" | "PLANE_DROPDOWN" | "PORT_DROPDOWN" | None
+        self.active_dropdown = None     # "CAMERA_TYPE_DROPDOWN" | "RES_DROPDOWN" | "PLANE_DROPDOWN" | "TARGET_DROPDOWN" | "PORT_DROPDOWN" | None
         self.plane_z = 0                # XY 平面绘制高度 (mm, 下拉框选择)
         # XY 平面高度选项与标注: 锚点档位/标注从世界坐标地图动态生成, 基础档位为固定梯度
         self.anchor_z_labels = {int(round(pos[2])): f" (Tag {tid})"
@@ -128,6 +128,11 @@ class RobotOnlineTracker:
         self.win_mgr = GuiWindowManager(app_id="robot_online_tracker")  # 窗口/缩放/偏好单源管理
 
         # 5. 识别与世界系锁定状态 (相机开启默认纯预览, FR-12.5/12.6)
+        self.target_kind = "tag"       # 跟踪目标类型: "tag"=Tag 2号标靶 / "asparagus"=顶层芦笋
+        self.target_options = [
+            ("tag",       "Tag 2号"),
+            ("asparagus", "顶层芦笋"),
+        ]
         self.recog_tag2_on = False     # "识别 Tag 2" 乒乓开关 (默认关, 仅识别目标 Tag)
         self.show_anchors_on = False   # "显示已知 Tag" 乒乓开关 (绿=BA理论 / 蓝=实测)
         self.show_xy_plane_on = False  # "XY平面" 下拉选择状态 (False=不绘制, True=绘制 plane_z 高度平面)
@@ -214,7 +219,7 @@ class RobotOnlineTracker:
 
     # ------------------------------ 工具栏状态持久化 ------------------------------
     def _load_viewer_state(self):
-        """从 config/gui_settings.json 恢复上次退出时的下拉选择 (相机/分辨率/XY平面/串口)"""
+        """从 config/gui_settings.json 恢复上次退出时的下拉选择 (相机/分辨率/XY平面/目标类型/串口)"""
         try:
             if not os.path.exists(GUI_SETTINGS_FILE):
                 return
@@ -231,6 +236,9 @@ class RobotOnlineTracker:
                 if isinstance(pz, int) and pz in self.plane_z_choices:
                     self.show_xy_plane_on = True
                     self.plane_z = pz
+            # 跟踪目标类型下拉: 仅接受合法选项
+            if any(k == state.get("target_kind") for k, _ in self.target_options):
+                self.target_kind = state["target_kind"]
             # 机械臂串口: 上次选择的 COM 口
             if state.get("robot_port"):
                 self.robot.port = str(state["robot_port"])
@@ -238,7 +246,7 @@ class RobotOnlineTracker:
             log.warning(f"恢复相机查看器状态失败，使用默认配置: {e}")
 
     def _save_viewer_state(self):
-        """保存下拉选择 (相机/分辨率/XY平面/串口) 到 config/gui_settings.json"""
+        """保存下拉选择 (相机/分辨率/XY平面/目标类型/串口) 到 config/gui_settings.json"""
         try:
             root = {}
             if os.path.exists(GUI_SETTINGS_FILE):
@@ -255,6 +263,7 @@ class RobotOnlineTracker:
                 "resolution": self.camera.resolution,
                 "show_plane": bool(self.show_xy_plane_on),
                 "plane_z": int(self.plane_z),
+                "target_kind": str(self.target_kind),
                 "robot_port": str(self.robot.port or ""),
             }
             node["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -675,6 +684,22 @@ class RobotOnlineTracker:
         self._save_viewer_state()
         self.set_toast(f"机械臂串口已选择: {port_key}, 点击 [连接机械臂] 拨号")
 
+    def select_target_kind(self, kind):
+        """目标类型下拉选择: "tag"=Tag 2号标靶 / "asparagus"=顶层芦笋;
+        切换后旧目标的解算结果立即作废 (避免用 A 目标坐标驱动 B 目标跟踪)"""
+        if kind == self.target_kind:
+            return
+        label = dict(self.target_options).get(kind, kind)
+        self.target_kind = kind
+        self.measured = None
+        self.recog_tag2_on = False
+        self.support_ids = []
+        self._save_viewer_state()
+        if kind == "asparagus":
+            self.set_toast("目标已切换: 顶层芦笋 (识别功能需深度流接入, 即将上线)")
+        else:
+            self.set_toast(f"目标已切换: {label}")
+
     def _send_m84_g92(self):
         """[M84+G92] 合并按钮: 后台线程先发 M84 释放电机, 再发 G92 设零点"""
         if self.robot_connecting:
@@ -761,6 +786,9 @@ class RobotOnlineTracker:
 
     def trigger_recog_target_once(self):
         """[识别目标·单次]: 实时流中解算一帧目标世界坐标, 结果经 Toast 显示"""
+        if self.target_kind == "asparagus":
+            self.set_toast("顶层芦笋识别需 RealSense 深度流接入, 功能开发中", True)
+            return
         if self.recognizing or self.sampling:
             self.set_toast("世界坐标系流程执行中, 请稍候", True)
             return
@@ -903,6 +931,9 @@ class RobotOnlineTracker:
             self.set_toast("已显示已知 Tag 位置 (绿=BA理论 / 蓝=实测)" if self.show_anchors_on
                            else "已知 Tag 位置显示已关闭")
         elif btn_id == "TOGGLE_RECOG":
+            if not self.recog_tag2_on and self.target_kind == "asparagus":
+                self.set_toast("顶层芦笋识别需 RealSense 深度流接入, 功能开发中", True)
+                return
             self.recog_tag2_on = not self.recog_tag2_on
             if not self.recog_tag2_on:
                 self.support_ids = []
@@ -923,6 +954,12 @@ class RobotOnlineTracker:
                 label = self.plane_z_labels.get(self.plane_z, "")
                 self.set_toast(f"XY 平面已重绘至 Z={self.plane_z} mm{label}")
             self._save_viewer_state()
+        elif btn_id == "TOGGLE_TARGET_DD":
+            self.active_dropdown = None if self.active_dropdown == "TARGET_DROPDOWN" \
+                else "TARGET_DROPDOWN"
+        elif btn_id.startswith("DD_TARGET_"):
+            self.active_dropdown = None
+            self.select_target_kind(payload)
         elif btn_id == "TRIGGER_RECOG":
             self.trigger_recognize()
         elif btn_id == "TRIGGER_RECOG_TARGET":
@@ -964,9 +1001,10 @@ class RobotOnlineTracker:
         print(" Robot 在线跟踪 (GUI 已启动, 相机未开启)")
         print("   顶部工具栏 (双排, 组间空白分隔): 第一排 相机类型→分辨率→[开启] ‖ [串口▼]→[连接机械臂]→[M84+G92]→[Park]")
         print("   第二排 (第一组居左 | 第二组跟踪居右):")
-        print("     第一组 [一次性建立世界坐标系][确定世界坐标系] | [XY平面▼][√显示已知Tag] | [识别目标·单次][√连续识别]")
+        print("     第一组 [一次性建立世界坐标系][确定世界坐标系] | [XY平面▼][√显示已知Tag] | [目标▼][识别目标·单次][√连续识别]")
         print("     第二组 [跟踪目标·单次][√连续跟踪]")
         print("   [一次性建立世界坐标系] 一键单帧闭环: 开相机→拍一张→关相机→识别Tag(蓝棱柱)→确定世界坐标系→地图白名单绿棱柱")
+        print("   [目标▼] 选择跟踪目标类型: Tag 2号标靶 / 顶层芦笋 (芦笋识别需深度流, 开发中)")
         print("   [识别目标·单次] 实时流中解算一帧目标世界坐标 (Toast 显示) | [√连续识别] 勾选=逐帧解算")
         print("   [跟踪目标·单次] 单条 G1 水平平移 (Z=80/E=90 锁定, 仅跟踪 X/Y, F3000) 到位+M114 偏差回读 | [√连续跟踪] 勾选=自动跟随")
         print("   机械臂消息面板: 跟踪/M84/G92 按钮下方, 逐条显示 指令 G-code→回读/偏差")

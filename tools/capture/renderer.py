@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AprilTag 采图向导 - 渲染器:
+"""多视角采图向导 - 渲染器:
 顶部单排工具栏 (相机类型/分辨率/开启, 与 Robot 在线跟踪第一排左半部分同款) /
 下拉浮层 / 画布合成 / Toast。
-只读 TagCaptureWizard 的状态并绘制, 不修改业务状态;
+只读 CaptureWizard 的状态并绘制, 不修改业务状态;
 按钮命中表 (buttons) 每帧由 draw_toolbar 重建, 供主控制器鼠标分发使用。
 """
 
@@ -30,12 +30,11 @@ COLOR_TEXT_SUB = GuiTheme.TEXT_SUB        # 副文字
 COLOR_ACCENT = GuiTheme.ACCENT            # 主题强调色
 COL_WHITE = GuiTheme.WHITE
 COL_YELLOW = (90, 200, 245)               # 提示文字 (数据可视化色, 本地保留)
-COL_PANEL_BG = (26, 26, 30)               # Toast 底色 (数据可视化色, 本地保留)
 
 TOOLBAR_H = 44  # 顶部工具栏高度 (单排: 相机类型/分辨率/开启 ... 退出)
 
 
-class WizardRenderer:
+class CaptureRenderer:
     """采图向导渲染器: 输入主控制器状态, 输出画布与按钮命中表"""
 
     def __init__(self, wizard):

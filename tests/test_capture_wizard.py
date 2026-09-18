@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-单元测试：AprilTag 采图向导 GUI 化改造
-覆盖 渲染器工具栏命中表 / 画布合成冒烟 / 工具栏状态持久化 / 相机开关状态机
+单元测试：多视角采图向导 (纯预览 + 保存 瘦身版)
+覆盖 渲染器工具栏命中表 / 画布合成冒烟 / 工具栏状态持久化 /
+     相机开关状态机 / 保存快照
 """
 import os
 import sys
@@ -15,20 +16,20 @@ import numpy as np
 # 添加工程根目录到 sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import tools.calibration.tag_capture_wizard as wizard_mod
-from tools.calibration.tag_capture_wizard import TagCaptureWizard, APP_ID
-from tools.calibration.wizard_renderer import TOOLBAR_H
+import tools.capture.capture_wizard as wizard_mod
+from tools.capture.capture_wizard import CaptureWizard, APP_ID
+from tools.capture.renderer import TOOLBAR_H
 
 
 def make_wizard():
-    """构造 mock 模式向导实例 (输出目录与 settings 文件均指向临时路径, 避免污染真实数据)。
+    """构造向导实例 (输出目录与 settings 文件均指向临时路径, 避免污染真实数据)。
     GUI_SETTINGS_FILE 重定向后保持生效, 使测试内的 _save_viewer_state 也写入临时文件。"""
     tmp_dir = tempfile.mkdtemp(prefix="wizard_test_")
     wizard_mod.GUI_SETTINGS_FILE = os.path.join(tmp_dir, "gui_settings.json")
-    return TagCaptureWizard(output_dir=tmp_dir, mock_mode=True)
+    return CaptureWizard(output_dir=tmp_dir)
 
 
-class TestWizardRenderer(unittest.TestCase):
+class TestCaptureWizard(unittest.TestCase):
 
     def test_toolbar_buttons_and_hit_test(self):
         """工具栏命中表: 常态 4 类按钮 id 存在且可命中; 下拉展开后出现选项按钮"""
@@ -98,36 +99,50 @@ class TestWizardRenderer(unittest.TestCase):
         self.assertEqual((wiz.frame_w, wiz.frame_h), (1280, 720))
 
     def test_camera_toggle_state_machine(self):
-        """相机开关状态机: mock 模式下 开启->取流出帧 / 关闭->停流, get_frame 未开启返回 None"""
+        """相机开关状态机: 未开启 get_frame 返回 None; toggle 翻转取流状态;
+        开启失败时报 Toast 不静默, 开启成功后可正常关回"""
         wiz = make_wizard()
         self.assertFalse(wiz.pipeline_running)
-        self.assertIsNone(wiz.get_frame(0))  # 未开启: 不取帧也不回退 Mock
+        self.assertIsNone(wiz.get_frame(0))  # 未开启: 不取帧
 
-        wiz._toggle_camera()  # 开启 (mock 后端)
-        self.assertTrue(wiz.pipeline_running)
-        self.assertTrue(wiz._cam_srv.is_mock)
-        frame = wiz.get_frame(0)
-        self.assertIsNotNone(frame)
-        self.assertEqual(frame.shape, (720, 1280, 3))
+        wiz._toggle_camera()  # 有物理相机则成功, 无则失败 Toast (与硬件环境无关)
+        started = wiz.pipeline_running
+        if started:
+            self.assertIsNotNone(wiz.get_frame(0))
+        else:
+            self.assertNotEqual(wiz.status_toast, "")
 
         wiz._toggle_camera()  # 关闭
         self.assertFalse(wiz.pipeline_running)
+        self.assertIsNone(wiz.get_frame(0))
 
     def test_change_resolution_and_type(self):
-        """切换分辨率/相机类型: 运行中切换分辨率自动重启取流, 类型切换先停流"""
+        """切换分辨率/相机类型: 未运行时仅更新状态并持久化"""
         wiz = make_wizard()
-        wiz._toggle_camera()
-        self.assertTrue(wiz.pipeline_running)
 
         wiz._change_resolution("1280x720")
         self.assertEqual(wiz.resolution, "1280x720")
         self.assertEqual((wiz.frame_w, wiz.frame_h), (1280, 720))
-        # 运行中切换分辨率: 先停再按新分辨率自动重启 (与 Robot 在线跟踪行为一致)
-        self.assertTrue(wiz.pipeline_running)
 
         wiz._select_camera_type("usb")
         self.assertEqual(wiz.camera_type, "usb")
-        self.assertFalse(wiz.pipeline_running)  # 类型切换: 运行中先停流
+
+        # 持久化已写入临时 settings 文件
+        with open(wizard_mod.GUI_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            root = json.load(f)
+        self.assertEqual(root[APP_ID]["viewer_state"]["resolution"], "1280x720")
+
+    def test_save_image_snapshot(self):
+        """保存快照: 纯原图保存 (无标注图/无观测清单), 计数递增"""
+        wiz = make_wizard()
+        frame = np.full((720, 1280, 3), 60, dtype=np.uint8)
+        path = wiz.save_image(frame)
+
+        self.assertEqual(wiz.image_count, 1)
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(os.path.basename(path).startswith("view_0001"))
+        # 瘦身后不再产出标注子目录
+        self.assertFalse(os.path.exists(os.path.join(wiz.output_dir, "visualized")))
 
 
 if __name__ == "__main__":

@@ -53,7 +53,7 @@ HOVER_TOOLTIPS: Dict[str, List[str]] = {
         "  • 观测置信度、重投影误差统计、参与帧数",
         "  • 全局 RMSE / 物理偏差 / 迭代次数等元信息",
         "",
-        "下游 (tag_capture_wizard / tag_studio / robot_tracker)",
+        "下游 (capture_wizard / tag_studio / robot_tracker)",
         "启动时会自动加载此文件作为已知空间基准。",
         "",
         "快捷键: [M]  建议每次 BA 平差后立即保存",

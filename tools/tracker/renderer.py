@@ -127,7 +127,7 @@ class TrackerRenderer:
     def draw_toolbar(self, canvas):
         """顶部双排工具栏 (组间以空白分隔):
         第一排: 相机类型 ▼ | 分辨率 ▼ | 开启/关闭 ‖ 串口 ▼ | 连接机械臂 | M84+G92 | Park ... 退出 X
-        第二排: [一次性建立世界坐标系] [确定世界坐标系] | [XY平面 ▼] [√显示已知Tag] | [识别目标·单次] [√连续识别] ‖ [跟踪目标·单次] [√连续跟踪]
+        第二排: [一次性建立世界坐标系] [确定世界坐标系] | [XY平面 ▼] [√显示已知Tag] | [目标 ▼] [识别目标·单次] [√连续识别] ‖ [跟踪目标·单次] [√连续跟踪]
                 (第一组: 世界坐标系+显示选项+识别, 居左 | 第二组: 跟踪, 居右; 组内以细分隔线分小组, 组间大空白)
         """
         tr = self.tr
@@ -326,12 +326,21 @@ class TrackerRenderer:
         self._draw_checkbox(canvas, (an_x1, u1, an_x2, u2), "显示已知Tag", tr.show_anchors_on)
         self.buttons.append(("TOGGLE_ANCHORS", (an_x1, u1, an_x2, u2), None))
 
-        # ---- 第一组 · 小组3 (最右侧): 识别目标 (单次 + 连续) ----
+        # ---- 第一组 · 小组3 (最右侧): 目标选择 + 识别 (单次 + 连续) ----
         sep2 = an_x2 + (g_gap - s_gap) // 2
         cv2.line(canvas, (sep2, u1 + 2), (sep2, u2 - 2), COLOR_BORDER, 1)
 
-        # 12. [识别目标·单次] 一键解算一帧目标世界坐标 (实时流中, 结果 Toast 显示)
-        ro_x1 = sep2 + (g_gap - s_gap) // 2 + s_gap
+        # 12. [目标▼] 下拉框: 跟踪目标类型 (Tag 2号标靶 / 顶层芦笋)
+        tg_x1 = sep2 + (g_gap - s_gap) // 2 + s_gap
+        tg_x2 = tg_x1 + 138
+        tg_label = dict(tr.target_options).get(tr.target_kind, tr.target_kind)
+        self._draw_dropdown_button(canvas, (tg_x1, u1, tg_x2, u2), f"目标: {tg_label}",
+                                   is_open=(tr.active_dropdown == "TARGET_DROPDOWN"))
+        self.buttons.append(("TOGGLE_TARGET_DD", (tg_x1, u1, tg_x2, u2), "TARGET_DROPDOWN"))
+        self._target_rect = (tg_x1, u1, tg_x2, u2)
+
+        # 13. [识别目标·单次] 一键解算一帧目标世界坐标 (实时流中, 结果 Toast 显示)
+        ro_x1 = tg_x2 + s_gap
         ro_x2 = ro_x1 + 110
         ro_hover = self._is_hover((ro_x1, u1, ro_x2, u2))
         cv2.rectangle(canvas, (ro_x1, u1), (ro_x2, u2),
@@ -343,7 +352,7 @@ class TrackerRenderer:
                   COLOR_BTN_TEXT_HOVER if ro_hover else COLOR_TEXT_SUB, True)
         self.buttons.append(("TRIGGER_RECOG_TARGET", (ro_x1, u1, ro_x2, u2), None))
 
-        # 13. [√连续识别] 勾选框 (勾选=逐帧解算目标世界坐标, FR-12.6)
+        # 14. [√连续识别] 勾选框 (勾选=逐帧解算目标世界坐标, FR-12.6)
         rc_x1 = ro_x2 + s_gap
         rc_x2 = rc_x1 + 104
         self._draw_checkbox(canvas, (rc_x1, u1, rc_x2, u2), "连续识别", tr.recog_tag2_on)
@@ -351,7 +360,7 @@ class TrackerRenderer:
 
         # ============ 第二组: 跟踪目标 (大空白分隔, 内分单次/连续两个小组) ============
 
-        # 14. [跟踪目标·单次] 单次到位: 执行一次"抬起→平移→下探"+ M114 偏差回读
+        # 15. [跟踪目标·单次] 单次到位: 执行一次"抬起→平移→下探"+ M114 偏差回读
         t1_x1 = rc_x2 + m_gap
         t1_x2 = t1_x1 + 110
         t1_hover = self._is_hover((t1_x1, u1, t1_x2, u2))
@@ -370,7 +379,7 @@ class TrackerRenderer:
         draw_text(canvas, t1_label, (t1_x1 + 8, u1 + (u2 - u1 - 16) // 2 - 1), t1_size, t1_txt, True)
         self.buttons.append(("TRIGGER_TRACK_ONCE", (t1_x1, u1, t1_x2, u2), None))
 
-        # 15. [√连续跟踪] 勾选框 (勾选=末端自动跟随目标最新位置)
+        # 16. [√连续跟踪] 勾选框 (勾选=末端自动跟随目标最新位置)
         t2_x1 = t1_x2 + s_gap
         t2_x2 = t2_x1 + 104
         self._draw_checkbox(canvas, (t2_x1, u1, t2_x2, u2), "连续跟踪", tr.track_armed)
@@ -388,6 +397,9 @@ class TrackerRenderer:
             self._render_dropdown_popup(canvas, self._plane_z_rect,
                                         tr.plane_options,
                                         tr.plane_z if tr.show_xy_plane_on else None, "DD_PLANE_")
+        elif tr.active_dropdown == "TARGET_DROPDOWN" and self._target_rect:
+            self._render_dropdown_popup(canvas, self._target_rect,
+                                        tr.target_options, tr.target_kind, "DD_TARGET_")
         elif tr.active_dropdown == "PORT_DROPDOWN" and self._port_rect:
             port_opts = [(p, p) for p in tr.port_options] or [("", "(无可用串口, 请检查 USB)")]
             self._render_dropdown_popup(canvas, self._port_rect, port_opts,
