@@ -225,6 +225,110 @@ class TestTrackerAsparagusRotation(unittest.TestCase):
             f"笋尖前端应展示角度数值 '+42.5°'，实测调用列表: {called_texts}"
         )
 
+    def test_track_worker_gcode_construction_with_r_and_e_readback(self):
+        """测试 _track_worker 将目标世界角度正确构造到 G1 E 轴指令并计算 4D 偏差"""
+        sent_commands = []
+
+        class MockRobot:
+            is_connected = True
+            port = "COM_TEST"
+
+            def send_gcode(self, cmd, timeout=30.0, wait_done=True):
+                sent_commands.append(cmd)
+                return True
+
+            def get_position(self):
+                # 模拟 M114 带有 E 轴回读 (X, Y, Z, E)
+                return (120.5, 340.2, 80.0, 36.0)
+
+        self.tracker.robot = MockRobot()
+        self.tracker.track_log = []
+        self.tracker.last_dev = None
+        self.tracker.TRACK_FEEDRATE = 3000
+        self.tracker.TRACK_LOG_MAX = 8
+
+        target_xyz = np.array([120.0, 340.0, 80.0])
+        target_r = 35.5
+
+        # 执行跟踪工作函数
+        self.tracker._track_worker(target_xyz, target_r=target_r)
+
+        # 校验 G-code 构造
+        self.assertEqual(len(sent_commands), 1)
+        expected_cmd = "G1 X120.00 Y340.00 Z80.00 E35.50 F3000"
+        self.assertEqual(sent_commands[0], expected_cmd)
+
+        # 校验 4D 偏差计算 (包含 ΔR = 36.0 - 35.5 = +0.5°)
+        self.assertIsNotNone(self.tracker.last_dev)
+        self.assertEqual(len(self.tracker.last_dev), 4)
+        self.assertAlmostEqual(self.tracker.last_dev[0], 0.5, places=2)
+        self.assertAlmostEqual(self.tracker.last_dev[1], 0.2, places=2)
+        self.assertAlmostEqual(self.tracker.last_dev[2], 0.0, places=2)
+        self.assertAlmostEqual(self.tracker.last_dev[3], 0.5, places=2)
+
+    def test_robot_serial_m114_e_axis_parsing(self):
+        """测试 RobotSerial 对带有 E 轴的 M114 响应行的正确解析"""
+        import io
+        from src.control.robot_serial import RobotSerial
+
+        rs = RobotSerial(port="")
+        mock_ser = io.BytesIO(b"X:150.25 Y:280.50 Z:80.00 E:45.30 Count X: ...\r\nok\r\n")
+        mock_ser.reset_input_buffer = lambda: None
+        mock_ser.write = lambda b: None
+        rs.ser = mock_ser
+
+        pos = rs.get_position()
+        self.assertIsNotNone(pos)
+        self.assertEqual(len(pos), 4)
+        self.assertAlmostEqual(pos[0], 150.25)
+        self.assertAlmostEqual(pos[1], 280.50)
+        self.assertAlmostEqual(pos[2], 80.00)
+        self.assertAlmostEqual(pos[3], 45.30)
+
+    def test_recognize_worker_populates_measured_r(self):
+        """测试 _recognize_worker 在单帧闭环识别后完整填充 measured_r 与 target_rvec"""
+        # 模拟相机控制器
+        class MockCamera:
+            pipeline_running = True
+            def read_frame(self):
+                return np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        self.tracker.camera = MockCamera()
+        self.tracker.recognizing = True
+        self.tracker.set_toast = lambda msg, is_err=False: None
+        self.tracker._toggle_camera = lambda **kw: None
+        self.tracker.anchor_positions = {0: np.array([0, 0, 0])}
+        self.tracker.theoretical = np.array([100, 200, 0])
+
+        # 模拟 _solve_per_frame 返回完整包含 target_r 的解
+        fake_sol = {
+            "rvec": np.array([0.0, 0.0, 0.0]),
+            "tvec": np.array([0.0, 0.0, 800.0]),
+            "rmse": 0.25,
+            "support": [0],
+            "target_world": np.array([150.0, 250.0, 80.0]),
+            "target_r": -48.6,
+            "target_rvec": np.array([0.1, 0.2, 0.3]),
+            "target_tvec": np.array([10.0, 20.0, 800.0]),
+        }
+        self.tracker._solve_per_frame = lambda det: fake_sol
+        self.tracker.engine.detect_tags = lambda frame: {2: np.zeros((4, 2))}
+        self.tracker._detect_high_precision = lambda f, d: d
+
+        self.tracker.measured = None
+        self.tracker.measured_r = None
+        self.tracker.target_rvec = None
+
+        # 执行单帧识别工作线程函数
+        self.tracker._recognize_worker()
+
+        self.assertIsNotNone(self.tracker.measured)
+        self.assertIsNotNone(self.tracker.measured_r)
+        self.assertAlmostEqual(self.tracker.measured_r, -48.6, places=2)
+        self.assertIsNotNone(self.tracker.target_rvec)
+        self.assertIsNotNone(self.tracker.target_tvec)
+        self.assertTrue(self.tracker.world_locked)
+
 
 if __name__ == "__main__":
     unittest.main()

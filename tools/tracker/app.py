@@ -85,6 +85,7 @@ class RobotOnlineTracker:
     PLANE_Z_STATIC_LABELS = {0: " (地面)"}  # 静态高度标注 (锚点标注按地图动态生成)
     HP_TARGET_SIDE_PX = 240   # 高精度模式: ROI 放大后目标 Tag 边长 (px)
     TRACK_RETRIGGER_MM = 3.0  # 持续跟踪: 目标位移超过该阈值才重新发起移动 (mm)
+    TRACK_RETRIGGER_DEG = 3.0 # 持续跟踪: 目标角度偏转超过该阈值才重新发起旋转 (deg)
     TRACK_MIN_INTERVAL_S = 1.0  # 持续跟踪: 两次移动任务的最小间隔 (s)
     TRACK_FEEDRATE = 3000        # 跟踪水平平移进给率 (mm/min, F 参数)
     PARK_FEEDRATE = 5000         # Park 回放料位水平平移进给率 (mm/min, 高速)
@@ -163,6 +164,7 @@ class RobotOnlineTracker:
         self.last_dev = None        # 最近一次到位偏差 (dx, dy, dz)
         self._last_track_done = 0.0     # 上次跟踪任务完成时刻 (连续跟踪节流)
         self._last_track_target = None  # 上次跟踪目标点 (目标位移 < 阈值不重复触发)
+        self._last_track_r = None       # 上次跟踪目标角度 (目标偏转 < 阈值不重复触发)
         self.robot_pos = None       # 最近一次 M114 末端坐标
         self.track_log = []         # 机械臂消息面板 [(time_str, msg, kind), ...] kind: info/cmd/ok/err
         self.toast = "选择相机类型与分辨率后点击 [开启]"
@@ -367,15 +369,23 @@ class RobotOnlineTracker:
                     p_cam = t2.reshape(3)
                     target_world = R_lock.T @ (p_cam - self.locked_tvec.reshape(3))
                     self.support_ids = ["锁定"]
-                    # 芦笋长轴为 Tag 局部 Y 轴: 计算 Y 轴在世界系水平 XY 平面上的朝向角度 (度)
+                    # 芦笋/工件长轴为 Tag 局部 Y 轴: 计算 Y 轴在世界系水平 XY 平面上的朝向角度 (度)
                     R_w_t2 = R_lock.T @ R_c_t2
-                    v_w_y = R_w_t2[:, 1]  # Y 轴方向向量
+                    v_w_y = R_w_t2[:, 1]  # Y 轴在世界系下的方向向量
                     target_r = float(np.degrees(np.arctan2(v_w_y[1], v_w_y[0])))
                 else:
-                    self.support_ids = []
-                    # 未锁定时用相机系下 Y 轴方向角
-                    v_c_y = R_c_t2[:, 1]
-                    target_r = float(np.degrees(np.arctan2(v_c_y[1], v_c_y[0])))
+                    # 未锁定时: 尝试利用视野内已知锚定标靶临时解算世界系位姿
+                    sol_dyn = self._solve_per_frame(det)
+                    if sol_dyn["rvec"] is not None and sol_dyn["target_world"] is not None:
+                        target_world = np.asarray(sol_dyn["target_world"], dtype=np.float64)
+                        self.support_ids = sol_dyn["support"]
+                        self.rmse = sol_dyn["rmse"]
+                        target_r = sol_dyn["target_r"]
+                    else:
+                        self.support_ids = []
+                        # 无已知标靶时退化为相机系 Y 轴方向角
+                        v_c_y = R_c_t2[:, 1]
+                        target_r = float(np.degrees(np.arctan2(v_c_y[1], v_c_y[0])))
             else:
                 self.target_rvec = None
                 self.target_tvec = None
@@ -637,6 +647,13 @@ class RobotOnlineTracker:
             self.rmse = sol["rmse"]
             if sol["target_world"] is not None:
                 self.measured = np.asarray(sol["target_world"], dtype=np.float64)
+                if sol.get("target_r") is not None:
+                    self.measured_r = float(sol["target_r"])
+                if sol.get("target_rvec") is not None:
+                    self.target_rvec = sol["target_rvec"]
+                if sol.get("target_tvec") is not None:
+                    self.target_tvec = np.asarray(sol["target_tvec"]).reshape((3, 1))
+                self.measured_time = time.time()
             n_map = len(self.anchor_positions) + (1 if self.theoretical is not None else 0)
             self.set_toast(f"识别完成: {len(det)} 枚 Tag(蓝) | 世界坐标系已确定 | "
                            f"地图 {n_map} 枚理论 Tag(绿) | RMSE {sol['rmse']:.2f}px")
@@ -844,6 +861,7 @@ class RobotOnlineTracker:
         target = self.measured.copy()
         target_r = getattr(self, "measured_r", None)
         self._last_track_target = target
+        self._last_track_r = target_r
         self.tracking = True
         self.track_thread = threading.Thread(
             target=self._track_worker, args=(target, target_r), daemon=True)
@@ -859,22 +877,27 @@ class RobotOnlineTracker:
             self.set_toast("机械臂未连接, 请先连接后再勾选跟踪", True)
             return
         self.track_armed = True
-        self.set_toast("连续跟踪已开启: 末端将自动跟随目标最新位置 (位移>3mm 触发)")
+        self.set_toast("连续跟踪已开启: 末端将自动跟随目标最新位置与角度 (位移>3mm 或 偏转>3° 触发)")
 
     def _maybe_continuous_track(self):
-        """连续跟踪调度: 勾选状态下每帧检查, 空闲且目标位移超阈值时发起一次三段式移动"""
+        """连续跟踪调度: 勾选状态下每帧检查, 空闲且目标位移或旋转偏转超阈值时发起移动"""
         if not self.track_armed or self.tracking or not self.robot.is_connected:
             return
         if self.measured is None:
             return
         target = self.measured.copy()
         target_r = getattr(self, "measured_r", None)
-        if self._last_track_target is not None and \
-                np.linalg.norm(target - self._last_track_target) < self.TRACK_RETRIGGER_MM:
+        dist_mm = (float(np.linalg.norm(target - self._last_track_target))
+                   if self._last_track_target is not None else float("inf"))
+        d_deg = (abs((target_r - self._last_track_r + 180.0) % 360.0 - 180.0)
+                 if (target_r is not None and self._last_track_r is not None)
+                 else (float("inf") if (target_r is not None) ^ (self._last_track_r is not None) else 0.0))
+        if dist_mm < self.TRACK_RETRIGGER_MM and d_deg < self.TRACK_RETRIGGER_DEG:
             return
         if time.time() - self._last_track_done < self.TRACK_MIN_INTERVAL_S:
             return
         self._last_track_target = target
+        self._last_track_r = target_r
         self.tracking = True
         self.track_thread = threading.Thread(
             target=self._track_worker, args=(target, target_r), daemon=True)
@@ -886,7 +909,7 @@ class RobotOnlineTracker:
             r_val = float(target_r) if target_r is not None else getattr(self, "measured_r", None)
             e_str = f"E{r_val:.2f}" if r_val is not None else "E90.00"
             r_desc = f"R={r_val:.1f}°" if r_val is not None else "E=90°(默认)"
-            target_pose = (target[0], target[1], 80.0)
+            target_pose = (target[0], target[1], 80.0, r_val if r_val is not None else 90.0)
             self.add_track_log(
                 f"目标 ← 视觉: X{target[0]:.1f} Y{target[1]:.1f} {r_desc} (Z=80 固定)")
             self.track_stage = f"移动中: 水平平移 (Z=80, {r_desc})"
@@ -900,15 +923,28 @@ class RobotOnlineTracker:
             pos = self.robot.get_position()
             self.robot_pos = pos
             if pos is not None:
-                dev = np.array(pos, dtype=np.float64) - np.array(target_pose, dtype=np.float64)
-                self.last_dev = dev
-                self.add_track_log(f"回读: {fmt_point(pos)}", "ok")
-                self.add_track_log(
-                    f"偏差: {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f}"
-                    f" (总 {np.linalg.norm(dev):.2f} mm)", "ok")
-                self.set_toast(
-                    f"到位完成 | 偏差 {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} mm"
-                    f" | 总 {np.linalg.norm(dev):.2f} mm")
+                if len(pos) >= 4:
+                    dev_xyz = np.array(pos[:3], dtype=np.float64) - np.array(target_pose[:3], dtype=np.float64)
+                    dev_r = (float(pos[3]) - float(target_pose[3]) + 180.0) % 360.0 - 180.0
+                    dev = np.array([dev_xyz[0], dev_xyz[1], dev_xyz[2], dev_r], dtype=np.float64)
+                    self.last_dev = dev
+                    self.add_track_log(f"回读: {fmt_point(pos)}", "ok")
+                    self.add_track_log(
+                        f"偏差: {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} R:{dev[3]:+.1f}°"
+                        f" (XYZ {np.linalg.norm(dev_xyz):.2f} mm)", "ok")
+                    self.set_toast(
+                        f"到位完成 | 偏差 {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} mm R:{dev[3]:+.1f}°"
+                        f" | XYZ {np.linalg.norm(dev_xyz):.2f} mm")
+                else:
+                    dev = np.array(pos, dtype=np.float64) - np.array(target_pose[:3], dtype=np.float64)
+                    self.last_dev = dev
+                    self.add_track_log(f"回读: {fmt_point(pos)}", "ok")
+                    self.add_track_log(
+                        f"偏差: {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f}"
+                        f" (总 {np.linalg.norm(dev):.2f} mm)", "ok")
+                    self.set_toast(
+                        f"到位完成 | 偏差 {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} mm"
+                        f" | 总 {np.linalg.norm(dev):.2f} mm")
             else:
                 self.add_track_log("移动完成, M114 回读失败", "err")
                 self.set_toast("移动完成, 但 M114 回读失败")

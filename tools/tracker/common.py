@@ -41,9 +41,13 @@ def list_serial_ports():
 
 
 def fmt_point(p, signed=False):
-    """三维坐标一行式格式化 (一位小数, 右对齐, 无 X/Y/Z 前缀)"""
+    """三维/四维坐标一行式格式化 (一位小数, 右对齐, 无 X/Y/Z 前缀, 支持可选 R 轴)"""
     if p is None:
         return "    --      --      --"
+    if len(p) >= 4:
+        r_str = f"  R:{p[3]:+6.1f}°" if signed else f"  R:{p[3]:6.1f}°"
+        base = f"{p[0]:+8.1f} {p[1]:+8.1f} {p[2]:+8.1f}" if signed else f"{p[0]:8.1f} {p[1]:8.1f} {p[2]:8.1f}"
+        return base + r_str
     if signed:
         return f"{p[0]:+8.1f} {p[1]:+8.1f} {p[2]:+8.1f}"
     return f"{p[0]:8.1f} {p[1]:8.1f} {p[2]:8.1f}"

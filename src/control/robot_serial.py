@@ -156,9 +156,12 @@ class RobotSerial:
                 deadline = time.time() + 2.0
                 while time.time() < deadline:
                     line = self.ser.readline().decode("ascii", errors="ignore").strip()
-                    m = re.search(r"X:\s*([-\d.]+)\s+Y:\s*([-\d.]+)\s+Z:\s*([-\d.]+)", line)
+                    m = re.search(r"X:\s*([-\d.]+)\s+Y:\s*([-\d.]+)\s+Z:\s*([-\d.]+)(?:\s+E:\s*([-\d.]+))?", line)
                     if m:
-                        return (float(m.group(1)), float(m.group(2)), float(m.group(3)))
+                        x, y, z = float(m.group(1)), float(m.group(2)), float(m.group(3))
+                        if m.group(4) is not None:
+                            return (x, y, z, float(m.group(4)))
+                        return (x, y, z)
                     if line.lower().startswith("ok"):
                         break
             except Exception as e:
@@ -166,11 +169,12 @@ class RobotSerial:
                 self._mark_dead()   # 端口级 I/O 异常: 标记断开, 避免僵尸连接
         return None
 
-    def move_to(self, x: float, y: float, z: float,
+    def move_to(self, x: float, y: float, z: float, r: float = None,
                 feed: int = 0, safe_lift_mm: float = 0.0,
                 step_cb=None, stage_pause_s: float = 0.0) -> bool:
         """
         三段式安全移动: 抬起 -> 平移 -> 下探, 每段 M400 等待到位
+        :param r: 可选末端 R 轴旋转角度 (度, 映射为 Marlin E 轴)
         :param feed: XY 平移进给 (mm/min), 0 则用 config feedrate_travel
         :param safe_lift_mm: 抬起相对高度 (mm), 0 则用 config safe_z_mm
         :param step_cb: 可选回调 step_cb(cmd), 每段 G-code 发送前上报 (GUI 调试面板用)
@@ -182,9 +186,10 @@ class RobotSerial:
             return False
         lift = float(safe_lift_mm) if safe_lift_mm > 0 else self.safe_z_mm
         travel_feed = int(feed) if feed > 0 else self.feedrate_travel
+        e_cmd = f" E{r:.2f}" if r is not None else ""
         steps = [
             (f"G1 Z{cur[2] + lift:.2f} F{self.feedrate_grip}", 60.0),   # 抬起
-            (f"G1 X{x:.2f} Y{y:.2f} F{travel_feed}", 60.0),             # 平移
+            (f"G1 X{x:.2f} Y{y:.2f}{e_cmd} F{travel_feed}", 60.0),      # 平移 (+可选旋转)
             (f"G1 Z{z:.2f} F{self.feedrate_grip}", 60.0),               # 下探
         ]
         for i, (cmd, tmo) in enumerate(steps):
