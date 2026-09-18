@@ -203,3 +203,34 @@ class RobotSerial:
             if stage_pause_s > 0 and i < len(steps) - 1:
                 time.sleep(stage_pause_s)
         return True
+
+    def set_gripper(self, close: bool = False, timeout: float = 2.0) -> bool:
+        """
+        控制夹爪开闭 (兼容气动 M3/M4 与舵机 M280 P1/P2 双轨道)
+        :param close: True 为夹紧/闭合, False 为张开/释放
+        """
+        if close:
+            # 闭合夹爪: 气动闭合 M4 + 舵机 Servo 1/2 旋转至 0° 抓紧
+            cmds = ["M4", "M280 P1 S0", "M280 P2 S0"]
+        else:
+            # 打开夹爪: 气动开启 M3 + 舵机 Servo 1/2 旋转至 30° 张开
+            cmds = ["M3", "M280 P1 S30", "M280 P2 S30"]
+
+        ok = True
+        for cmd in cmds:
+            if not self.send_gcode(cmd, timeout=timeout):
+                ok = False
+        return ok
+
+    def set_z_height(self, z_mm: float, timeout: float = 3.0) -> bool:
+        """
+        设置 Z 轴物理高度 (0 ~ 100 mm):
+        SCARA 机械臂物理 Z 轴由 Servo 0 (板载 A11/D65 舵机) 驱动:
+          - M280 P0 S<angle>: 物理舵机角度驱动, 映射关系: Z=0mm -> 270°, Z=100mm -> 0°
+          - G92 Z<val>: 同步 Marlin 内部坐标状态
+        """
+        z_clamped = max(0.0, min(100.0, float(z_mm)))
+        servo_angle = 270.0 - 2.7 * z_clamped
+        ok1 = self.send_gcode(f"M280 P0 S{servo_angle:.0f}", timeout=timeout)
+        ok2 = self.send_gcode(f"G92 Z{z_clamped:.2f}", timeout=timeout)
+        return ok1 and ok2

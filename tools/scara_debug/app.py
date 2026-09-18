@@ -108,6 +108,7 @@ class ScaraDebugApp:
         tx = MockTransceiver() if mock else SerialTransceiver()
         self._handler = MarlinProtocolHandler(tx)
         self.robot = ScaraRobot(self._handler, self._config)
+        self._handler.on_send = lambda cmd: self.add_log(f">> {cmd}")
         self.jog = JogController(self.robot)
         self._workflow = PickAndPlaceWorkflow(self.robot)
         self.presets = PresetManager(self._config.presets_file)
@@ -133,10 +134,10 @@ class ScaraDebugApp:
         # 窗口内部 key 必须纯 ASCII: OpenCV namedWindow 用 ANSI API 创建, 中文名会乱码
         # 且导致 FindWindowW 无法命中, set_unicode_title 静默失效
         self.window_name = "flux_vision_3d | scara_debug"
-        self.window_title = "flux_vision_3d | SCARA 机械臂调试终端 (Flux Loader)"
+        self.window_title = "flux_vision_3d | SCARA 调试"
 
         self.refresh_ports()
-        self.add_log("[就绪] SCARA 调试终端已启动，请选择串口并点击 [连接]。")
+        self.add_log("[就绪] SCARA 调试已启动，请选择串口并点击 [连接]。")
 
     # ------------------------------------------------------------------
     # 日志

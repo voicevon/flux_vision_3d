@@ -226,15 +226,30 @@ class TestTrackerAsparagusRotation(unittest.TestCase):
         )
 
     def test_track_worker_gcode_construction_with_r_and_e_readback(self):
-        """测试 _track_worker 将目标世界角度正确构造到 G1 E 轴指令并计算 4D 偏差"""
+        """测试 _track_worker 完整闭环: 水平平移对位 -> 下探抓取 -> 夹紧 -> 提升 -> Park -> 释放"""
         sent_commands = []
 
         class MockRobot:
             is_connected = True
             port = "COM_TEST"
+            feedrate_grip = 1500
 
             def send_gcode(self, cmd, timeout=30.0, wait_done=True):
                 sent_commands.append(cmd)
+                return True
+
+            def set_gripper(self, close=False, timeout=2.0):
+                if close:
+                    sent_commands.extend(["M4", "M280 P1 S0", "M280 P2 S0"])
+                else:
+                    sent_commands.extend(["M3", "M280 P1 S30", "M280 P2 S30"])
+                return True
+
+            def set_z_height(self, z_mm, timeout=3.0):
+                z_clamped = max(0.0, min(100.0, float(z_mm)))
+                angle = 270.0 - 2.7 * z_clamped
+                sent_commands.append(f"M280 P0 S{angle:.0f}")
+                sent_commands.append(f"G92 Z{z_clamped:.2f}")
                 return True
 
             def get_position(self):
@@ -245,18 +260,43 @@ class TestTrackerAsparagusRotation(unittest.TestCase):
         self.tracker.track_log = []
         self.tracker.last_dev = None
         self.tracker.TRACK_FEEDRATE = 3000
+        self.tracker.PARK_FEEDRATE = 5000
         self.tracker.TRACK_LOG_MAX = 8
 
-        target_xyz = np.array([120.0, 340.0, 80.0])
+        target_xyz = np.array([120.0, 340.0, 20.0])
         target_r = 35.5
 
         # 执行跟踪工作函数
         self.tracker._track_worker(target_xyz, target_r=target_r)
 
-        # 校验 G-code 构造
-        self.assertEqual(len(sent_commands), 1)
-        expected_cmd = "G1 X120.00 Y340.00 Z80.00 E35.50 F3000"
-        self.assertEqual(sent_commands[0], expected_cmd)
+        # 校验关键动作的顺序与指令内容
+        # 1. 初始张开夹爪
+        self.assertIn("M3", sent_commands)
+        # 2. 水平对位 (带目标角度 E35.50)
+        expected_align_cmd = "G1 X120.00 Y340.00 Z80.00 E35.50 F3000"
+        self.assertIn(expected_align_cmd, sent_commands)
+        # 3. 下移 (通过 Servo 0 舵机下探至物料高度 Z=20.00, 角度 216°)
+        expected_down_cmd = "M280 P0 S216"
+        self.assertIn(expected_down_cmd, sent_commands)
+        self.assertIn("G92 Z20.00", sent_commands)
+        # 4. 夹爪夹住物料 (M4)
+        self.assertIn("M4", sent_commands)
+        # 5. 上移 (通过 Servo 0 舵机提升回安全高度 Z=80.00, 角度 54°)
+        expected_up_cmd = "M280 P0 S54"
+        self.assertIn(expected_up_cmd, sent_commands)
+        self.assertIn("G92 Z80.00", sent_commands)
+        # 6. 自动 Park 前往放料位
+        expected_park_cmd = "G1 X-250.00 Y350.00 Z80.00 E90.00 F5000"
+        self.assertIn(expected_park_cmd, sent_commands)
+
+        # 校验时序相对位置
+        idx_align = sent_commands.index(expected_align_cmd)
+        idx_down = sent_commands.index(expected_down_cmd)
+        idx_grip = sent_commands.index("M4")
+        idx_up = sent_commands.index(expected_up_cmd)
+        idx_park = sent_commands.index(expected_park_cmd)
+        self.assertTrue(idx_align < idx_down < idx_grip < idx_up < idx_park,
+                        "动作时序必须严格满足: 平移对准 -> 舵机下探 -> 夹紧 -> 舵机提升 -> Park")
 
         # 校验 4D 偏差计算 (包含 ΔR = 36.0 - 35.5 = +0.5°)
         self.assertIsNotNone(self.tracker.last_dev)
@@ -265,6 +305,28 @@ class TestTrackerAsparagusRotation(unittest.TestCase):
         self.assertAlmostEqual(self.tracker.last_dev[1], 0.2, places=2)
         self.assertAlmostEqual(self.tracker.last_dev[2], 0.0, places=2)
         self.assertAlmostEqual(self.tracker.last_dev[3], 0.5, places=2)
+
+    def test_robot_serial_set_z_height_servo_mapping(self):
+        """测试 RobotSerial.set_z_height 正确将物理高度换算为 Servo 0 角度并同步 G92"""
+        from src.control.robot_serial import RobotSerial
+
+        rs = RobotSerial(port="")
+        sent = []
+        rs.send_gcode = lambda cmd, timeout=3.0: sent.append(cmd) or True
+
+        # 测试最低位 Z=0 -> S270
+        rs.set_z_height(0.0)
+        self.assertEqual(sent, ["M280 P0 S270", "G92 Z0.00"])
+
+        # 测试最高位 Z=100 -> S0
+        sent.clear()
+        rs.set_z_height(100.0)
+        self.assertEqual(sent, ["M280 P0 S0", "G92 Z100.00"])
+
+        # 测试工作高度 Z=80 -> S54
+        sent.clear()
+        rs.set_z_height(80.0)
+        self.assertEqual(sent, ["M280 P0 S54", "G92 Z80.00"])
 
     def test_robot_serial_m114_e_axis_parsing(self):
         """测试 RobotSerial 对带有 E 轴的 M114 响应行的正确解析"""

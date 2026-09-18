@@ -208,6 +208,7 @@ class MarlinProtocolHandler:
 
     def __init__(self, transceiver: ITransceiver) -> None:
         self._tx = transceiver
+        self.on_send = None
 
     @property
     def transceiver(self) -> ITransceiver:
@@ -233,8 +234,14 @@ class MarlinProtocolHandler:
             logger.warning("设备未连接，跳过指令: %s", cmd)
             return []
 
-        logger.info(">> %s", cmd.strip())
-        self._tx.send_line(cmd)
+        clean_cmd = cmd.strip()
+        logger.info(">> %s", clean_cmd)
+        if self.on_send is not None:
+            try:
+                self.on_send(clean_cmd)
+            except Exception:
+                pass
+        self._tx.send_line(clean_cmd)
         if not wait_ok:
             return []
 

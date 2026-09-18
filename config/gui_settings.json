@@ -7,13 +7,13 @@
     "scale_pct": 110,
     "canvas_w": 1280,
     "canvas_h": 1000,
-    "updated_at": "2026-09-19 07:16:56"
+    "updated_at": "2026-09-19 07:48:20"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-19 07:16:53",
+    "updated_at": "2026-09-19 07:54:44",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1920x1080",
@@ -25,9 +25,9 @@
   },
   "scara_debug": {
     "scale_pct": 100,
-    "canvas_w": 1920,
-    "canvas_h": 1017,
-    "updated_at": "2026-09-18 21:14:01"
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-19 07:33:36"
   },
   "scene_hub": {
     "scale_pct": 60,

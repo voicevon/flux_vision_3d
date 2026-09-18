@@ -135,7 +135,7 @@ class ScaraDebugRenderer:
         cv2.rectangle(canvas, (0, 0), (LOGIC_W, 46), (17, 20, 26), -1)
         cv2.line(canvas, (0, 46), (LOGIC_W, 46), COL_BORDER, 1)
         cv2.circle(canvas, (24, 23), 5, COL_ACCENT, -1)
-        draw_text(canvas, "SCARA 机械臂调试终端 (Flux Loader)", (40, 8),
+        draw_text(canvas, "SCARA 调试", (40, 8),
                   font_size=16, color=COL_ACCENT, bold=True)
         draw_text(canvas, "MKS Base V1.6 / Marlin 2.0", (40, 27), font_size=11, color=COL_SUB)
 
@@ -175,16 +175,14 @@ class ScaraDebugRenderer:
     def _render_left_column(self, canvas, app):
         x, w = 12, 396
         # 1. 实时状态
-        cy = self._panel(canvas, x, 58, w, 250, "实时状态 (M114)", accent=COL_GOLD)
+        cy = self._panel(canvas, x, 58, w, 230, "实时状态 (M114)", accent=COL_GOLD)
         p, a = app.robot.current_pose, app.robot.current_angles
-        draw_text(canvas, f"X: {p.x:8.2f} mm", (x + 20, cy), font_size=18, color=COL_TEXT, bold=True)
-        draw_text(canvas, f"Y: {p.y:8.2f} mm", (x + 200, cy), font_size=18, color=COL_TEXT, bold=True)
-        draw_text(canvas, f"Z: {p.z:8.2f} mm", (x + 20, cy + 30), font_size=18, color=COL_TEXT, bold=True)
-        draw_text(canvas, f"R: {p.r:8.2f} deg", (x + 200, cy + 30), font_size=18, color=COL_TEXT, bold=True)
-        draw_text(canvas, f"大臂 θ: {a.theta:7.2f}°", (x + 20, cy + 66), font_size=16, color=COL_SUB)
-        draw_text(canvas, f"小臂 ψ: {a.psi:7.2f}°", (x + 200, cy + 66), font_size=16, color=COL_SUB)
+        # 按照用户要求: X, Y, Z, R 单行展示，一位小数，逗号空格隔开，角度用小圈 °
+        coord_str = f"X: {p.x:.1f}, Y: {p.y:.1f}, Z: {p.z:.1f}, R: {p.r:.1f}°"
+        draw_text(canvas, coord_str, (x + 16, cy + 4), font_size=15, color=COL_TEXT, bold=True)
+        draw_text(canvas, f"大臂 θ: {a.theta:.1f}°,  小臂 ψ: {a.psi:.1f}°", (x + 16, cy + 34), font_size=14, color=COL_SUB)
         # 自动刷新 checkbox
-        cbx, cby = x + 20, cy + 100
+        cbx, cby = x + 16, cy + 72
         checked = app.auto_refresh
         cb_hover = (cbx <= self.mouse_x <= cbx + 200 and cby <= self.mouse_y <= cby + 26)
         cv2.rectangle(canvas, (cbx, cby), (cbx + 22, cby + 22),
@@ -197,12 +195,12 @@ class ScaraDebugRenderer:
         draw_text(canvas, "自动刷新坐标 (0.3s)", (cbx + 32, cby + 3),
                   font_size=13, color=COL_TEXT if checked else COL_SUB, bold=checked)
         self._buttons.append(("auto_refresh", cbx, cby, 200, 26))
-        draw_text(canvas, f"步长: {app.jog.step_info}", (cbx, cby + 36),
+        draw_text(canvas, f"步长: {app.jog.step_info}", (cbx, cby + 34),
                   font_size=12, color=COL_MUTED)
-        self._button(canvas, "refresh_pos", "[手动刷新 M114]", cbx, cby + 62, 200, 28)
+        self._button(canvas, "refresh_pos", "[手动刷新 M114]", cbx, cby + 58, 200, 28)
 
         # 2. 限位诊断
-        cy = self._panel(canvas, x, 320, w, 250, "限位与传感器 (M119)", accent=COL_WARN)
+        cy = self._panel(canvas, x, 300, w, 250, "限位与传感器 (M119)", accent=COL_WARN)
         self._button(canvas, "m119", "[限位诊断 M119]", x + 10, cy, 180, 28)
         lines = app.limit_lines[-7:] if app.limit_lines else ["(点击上方按钮执行诊断)"]
         for i, ln in enumerate(lines):
@@ -363,7 +361,8 @@ class ScaraDebugRenderer:
             cv2.rectangle(canvas, (px, py), (px + pw, py + ph), COL_ACCENT, 1)
             cur_z = round(app.robot.current_pose.z / 10.0) * 10
             cy = py + 4
-            for zv in range(0, 101, 10):
+            # 按照用户要求: 排列顺序反过来, 最上面是 100, 最下面是 0
+            for zv in range(100, -1, -10):
                 mark = "✓ " if zv == cur_z else "  "
                 self._button(canvas, f"dd_z:{zv}", f"{mark}{zv} mm", px + 4, cy, pw - 8, 22)
                 cy += 24
@@ -372,20 +371,23 @@ class ScaraDebugRenderer:
     # 日志区与底栏
     # ------------------------------------------------------------------
     def _render_log_area(self, canvas, app):
-        x, y, w, h = 12, 692, 1256, 84
+        # 扩展日志显示区域，从 y=560 开始，高 214px，可完整展示 10 行通信流水
+        x, y, w, h = 12, 560, 1256, 214
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (16, 19, 24), -1)
         cv2.rectangle(canvas, (x, y), (x + w, y + h), COL_BORDER, 1)
-        draw_text(canvas, "通信日志", (x + 10, y + 4), font_size=11, color=COL_MUTED, bold=True)
-        lines = list(app.log_lines)[-3:]
+        draw_text(canvas, "通信日志 (G-code 实时流水)", (x + 10, y + 4), font_size=11, color=COL_MUTED, bold=True)
+        lines = list(app.log_lines)[-10:]
         for i, ln in enumerate(lines):
             col = COL_SUB
-            if ln.startswith("<"):
+            if ln.startswith("<") or "ok" in ln.lower() or "成功" in ln or "完成" in ln:
                 col = (120, 200, 160)
-            elif "ERR" in ln or "失败" in ln:
+            elif "ERR" in ln or "失败" in ln or "警告" in ln:
                 col = COL_ERR
-            elif ln.startswith(">"):
-                col = (150, 190, 230)
-            draw_text(canvas, ln[:88], (x + 10, y + 22 + i * 20), font_size=12, color=col)
+            elif ln.startswith(">>") or ln.startswith(">"):
+                col = (150, 210, 255)
+            elif "[宏]" in ln:
+                col = COL_GOLD
+            draw_text(canvas, ln[:140], (x + 12, y + 22 + i * 19), font_size=12, color=col)
 
     def _render_footer(self, canvas, app):
         y = LOGIC_H - 22

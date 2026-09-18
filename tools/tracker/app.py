@@ -910,16 +910,21 @@ class RobotOnlineTracker:
             e_str = f"E{r_val:.2f}" if r_val is not None else "E90.00"
             r_desc = f"R={r_val:.1f}°" if r_val is not None else "E=90°(默认)"
             target_pose = (target[0], target[1], 80.0, r_val if r_val is not None else 90.0)
+
+            # 1. 确保夹爪预先打开，平移对准目标上方 (Z=80 安全高度)
+            self.robot.set_gripper(close=False)
             self.add_track_log(
                 f"目标 ← 视觉: X{target[0]:.1f} Y{target[1]:.1f} {r_desc} (Z=80 固定)")
-            self.track_stage = f"移动中: 水平平移 (Z=80, {r_desc})"
+            self.track_stage = f"移动中: 水平平移对位 (Z=80, {r_desc})"
             cmd = (f"G1 X{target[0]:.2f} Y{target[1]:.2f} "
                    f"Z80.00 {e_str} F{self.TRACK_FEEDRATE}")
             self.add_track_log(f"发送: {cmd}", "cmd")
             if not self.robot.send_gcode(cmd, timeout=30.0, wait_done=True):
-                self.add_track_log("移动失败 (无 ok 应答)", "err")
+                self.add_track_log("对位移动失败 (无 ok 应答)", "err")
                 self.set_toast("机械臂移动失败, 详见终端日志", True)
                 return
+
+            # 对位完成，回读坐标计算视觉偏差
             pos = self.robot.get_position()
             self.robot_pos = pos
             if pos is not None:
@@ -928,26 +933,65 @@ class RobotOnlineTracker:
                     dev_r = (float(pos[3]) - float(target_pose[3]) + 180.0) % 360.0 - 180.0
                     dev = np.array([dev_xyz[0], dev_xyz[1], dev_xyz[2], dev_r], dtype=np.float64)
                     self.last_dev = dev
-                    self.add_track_log(f"回读: {fmt_point(pos)}", "ok")
+                    self.add_track_log(f"对位回读: {fmt_point(pos)}", "ok")
                     self.add_track_log(
-                        f"偏差: {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} R:{dev[3]:+.1f}°"
+                        f"对位偏差: {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} R:{dev[3]:+.1f}°"
                         f" (XYZ {np.linalg.norm(dev_xyz):.2f} mm)", "ok")
-                    self.set_toast(
-                        f"到位完成 | 偏差 {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} mm R:{dev[3]:+.1f}°"
-                        f" | XYZ {np.linalg.norm(dev_xyz):.2f} mm")
                 else:
                     dev = np.array(pos, dtype=np.float64) - np.array(target_pose[:3], dtype=np.float64)
                     self.last_dev = dev
-                    self.add_track_log(f"回读: {fmt_point(pos)}", "ok")
+                    self.add_track_log(f"对位回读: {fmt_point(pos)}", "ok")
                     self.add_track_log(
-                        f"偏差: {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f}"
+                        f"对位偏差: {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f}"
                         f" (总 {np.linalg.norm(dev):.2f} mm)", "ok")
-                    self.set_toast(
-                        f"到位完成 | 偏差 {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} mm"
-                        f" | 总 {np.linalg.norm(dev):.2f} mm")
-            else:
-                self.add_track_log("移动完成, M114 回读失败", "err")
-                self.set_toast("移动完成, 但 M114 回读失败")
+
+            # 2. 往下移 (下探至物料表面抓取位: 驱动 Servo 0 舵机升降 + 同步 G92 Z)
+            down_z = float(np.clip(target[2], 0.0, 60.0)) if (len(target) >= 3 and target[2] is not None and 0.0 <= target[2] <= 60.0) else 20.0
+            self.track_stage = f"移动中: 垂直下探至抓取高度 (Z={down_z:.1f})"
+            self.add_track_log(f"执行: Z 轴下探 (Servo 0 -> Z={down_z:.1f}mm)", "cmd")
+            if not self.robot.set_z_height(down_z):
+                self.add_track_log("下探移动失败", "err")
+                self.set_toast("下探移动失败", True)
+                return
+            time.sleep(0.3)  # 下探机械到位等待
+
+            # 3. 夹爪夹住物料 (M4 + 舵机全闭)
+            self.track_stage = "执行中: 夹爪夹紧物料"
+            self.add_track_log("执行: 夹爪夹紧 (M4 / M280 P1/P2 S0)", "cmd")
+            self.robot.set_gripper(close=True)
+            time.sleep(0.3)  # 保压延时确保牢固抓持
+
+            # 4. 上移 (提升回安全高度 Z=80: 驱动 Servo 0 舵机升降 + 同步 G92 Z)
+            self.track_stage = "移动中: 提升至安全高度 (Z=80)"
+            self.add_track_log("执行: Z 轴提升 (Servo 0 -> Z=80.0mm)", "cmd")
+            if not self.robot.set_z_height(80.0):
+                self.add_track_log("提升安全高度失败", "err")
+                self.set_toast("提升安全高度失败", True)
+                return
+            time.sleep(0.3)
+
+            # 5. 自动 Park (平移至放料位)
+            self.track_stage = "移动中: 自动前往放料位 Park"
+            cmd_park = f"G1 X-250.00 Y350.00 Z80.00 E90.00 F{self.PARK_FEEDRATE}"
+            self.add_track_log(f"发送: {cmd_park}", "cmd")
+            if not self.robot.send_gcode(cmd_park, timeout=30.0, wait_done=True):
+                self.add_track_log("前往 Park 放料位失败", "err")
+                self.set_toast("前往 Park 放料位失败", True)
+                return
+
+            # 6. 到了 Park 位置，夹爪打开释放物料 (M3 + 舵机全开)
+            self.track_stage = "执行中: 放料位夹爪打开释放"
+            self.add_track_log("执行: 放料位夹爪打开 (M3 / M280 P1/P2 S30)", "cmd")
+            self.robot.set_gripper(close=False)
+            time.sleep(0.2)
+
+            # 7. 整个工作结束，回读放料位末端坐标
+            pos_park = self.robot.get_position()
+            if pos_park is not None:
+                self.robot_pos = pos_park
+                self.add_track_log(f"Park 到位回读: {fmt_point(pos_park)}", "ok")
+            self.add_track_log("跟踪抓取与 Park 放料完成", "ok")
+            self.set_toast("跟踪目标搬运完成: 下探 -> 夹紧 -> 提升 -> Park -> 释放")
         finally:
             self.track_stage = ""
             self.tracking = False
