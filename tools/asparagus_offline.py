@@ -27,6 +27,7 @@ if PROJECT_ROOT not in sys.path:
 import yaml
 
 from src.utils.gui_theme import GuiTheme
+from src.utils.gui_components import draw_dropdown_button, render_dropdown_popup
 from src.utils.gui_window_manager import GuiWindowManager
 from src.utils.text_rendering import draw_text, measure_text
 from src.utils.logger import get_logger
@@ -441,55 +442,24 @@ class AsparagusOfflineApp:
             self._buttons.append((rect, ("btn", label)))
 
     def _draw_dropdown_button(self, canvas, rect, label, is_open=False):
-        """扁平化下拉框按钮"""
-        x1, y1, x2, y2 = rect
-        mx, my = self.mouse_pos
-        hover = (x1 <= mx <= x2 and y1 <= my <= y2)
-        arrow = "▲" if is_open else "▼"
-        if is_open:
-            bg, border, col = GuiTheme.CARD_SEL, GuiTheme.BORDER_SEL, GuiTheme.WHITE
-        elif hover:
-            bg, border, col = GuiTheme.BTN_HOVER, GuiTheme.BORDER_HOVER, GuiTheme.BTN_TEXT_HOVER
-        else:
-            bg, border, col = GuiTheme.BTN, (60, 90, 80), (180, 230, 210)
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), bg, -1)
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), border, 2 if hover or is_open else 1)
+        """扁平化下拉框按钮 (统一调用 gui_components)"""
         m = self._metrics()
-        text = f"{label} {arrow}"
-        (tw, th), _ = measure_text(text, font_size=m["fs_sub"])
-        draw_text(canvas, text, (x1 + ((x2 - x1) - tw) // 2, y1 + ((y2 - y1) - th) // 2),
-                  m["fs_sub"], col, bold=hover or is_open)
+        draw_dropdown_button(canvas, rect, label, is_open, self.mouse_pos, font_size=m["fs_sub"])
 
     def _render_dropdown_popup(self, canvas, rect, options, active_key):
-        """置顶悬浮下拉菜单浮层"""
-        rx1, ry1, rx2, ry2 = rect
+        """置顶悬浮下拉菜单浮层 (统一调用 gui_components)"""
         m = self._metrics()
         item_h = int(28 * m["s"])
-        pop_w = max(rx2 - rx1, int(260 * m["s"]))
-        pop_x1, pop_y1 = rx1, ry2 + 2
-        pop_x2, pop_y2 = pop_x1 + pop_w, pop_y1 + len(options) * item_h + 6
-        H, W = canvas.shape[:2]
-        if pop_y2 > H - 10:
-            pop_y2 = H - 10
-        cv2.rectangle(canvas, (pop_x1, pop_y1), (pop_x2, pop_y2), (24, 28, 36), -1)
-        cv2.rectangle(canvas, (pop_x1, pop_y1), (pop_x2, pop_y2), GuiTheme.BORDER_SEL, 1)
-
-        self._dd_items = []
-        for i, (key, label) in enumerate(options):
-            iy1 = pop_y1 + 3 + i * item_h
-            iy2 = iy1 + item_h
-            if iy2 > pop_y2:
-                break
-            mx, my = self.mouse_pos
-            is_hover = (pop_x1 <= mx <= pop_x2 and iy1 <= my <= iy2)
-            is_active = (key == active_key)
-            if is_active:
-                cv2.rectangle(canvas, (pop_x1 + 2, iy1), (pop_x2 - 2, iy2), GuiTheme.CARD_SEL, -1)
-            elif is_hover:
-                cv2.rectangle(canvas, (pop_x1 + 2, iy1), (pop_x2 - 2, iy2), GuiTheme.BTN_HOVER, -1)
-            col = GuiTheme.WHITE if is_active else (GuiTheme.BTN_TEXT_HOVER if is_hover else GuiTheme.TEXT_SUB)
-            draw_text(canvas, label, (pop_x1 + 10, iy1 + (item_h - 14) // 2), m["fs_sub"], col, bold=is_active)
-            self._dd_items.append(((pop_x1, iy1, pop_x2, iy2), key))
+        btns = render_dropdown_popup(
+            canvas,
+            anchor_rect=rect,
+            options=options,
+            active_key=active_key,
+            btn_prefix="DD_MAP_",
+            item_h=item_h,
+            min_width=int(260 * m["s"]),
+        )
+        self._dd_items = [(item_rect, key) for _, item_rect, key in btns]
 
     def render(self):
         """真矢量渲染: 画布按窗口物理尺寸 1:1 重绘 (imshow 零缩放, 鼠标坐标零偏移)"""

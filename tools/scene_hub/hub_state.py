@@ -87,15 +87,6 @@ class HubState:
         # 初始加载场景
         self.refresh_scenes()
 
-    @property
-    def active_scene_id(self) -> str:
-        """向后兼容属性：返回当前生产运行场景 ID"""
-        return self.prod_scene_id
-
-    @active_scene_id.setter
-    def active_scene_id(self, val: str):
-        self.prod_scene_id = val
-
     def refresh_scenes(self):
         """刷新场景列表与生产场景标识"""
         self.scenes = self.scene_mgr.list_scenes()
@@ -119,13 +110,6 @@ class HubState:
                 return sc
         return None
 
-    def get_active_scene(self) -> CalibrationScene | None:
-        """兼容接口：获取生产场景或首个场景"""
-        prod = self.get_production_scene()
-        if prod:
-            return prod
-        return self.scenes[0] if self.scenes else None
-
     def get_selected_scene(self) -> CalibrationScene | None:
         """获取当前高亮选中的场景"""
         if not self.scenes or self.selected_scene_idx >= len(self.scenes):
@@ -143,14 +127,24 @@ class HubState:
             self.image_strip_offset = 0
             self.load_current_scene_images()
 
-    def set_current_as_active(self) -> bool:
-        """取消活动概念（向后兼容接口：暂存为当前指向的场景，并引导用户发布为生产）"""
+    def publish_selected_to_production(self) -> bool:
+        """将当前选中的场景发布为全局生产运行地图"""
         sc = self.get_selected_scene()
         if not sc:
+            self.set_toast("未选中有效场景")
             return False
-        self.prod_scene_id = sc.scene_id
-        self.set_toast("已取消单一活动场景概念。如需生效至生产环境，请按 [P] 发布！")
-        return True
+        if not sc.ba_solved or not os.path.exists(sc.map_path):
+            self.set_toast("发布失败: 该场景尚未进行 BA 平差解算或地图文件缺失")
+            return False
+        res = self.scene_mgr.publish_to_production(sc.scene_id)
+        ok = res[0] if isinstance(res, (tuple, list)) else bool(res)
+        msg = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else ""
+        if ok:
+            self.refresh_scenes()
+            self.set_toast(f"★ 场景【{sc.name}】已成功发布为全局生产运行地图！")
+        else:
+            self.set_toast(f"发布失败: {msg or '无法写入全局生产地图文件'}")
+        return ok
 
     def load_current_scene_images(self):
         """载入当前选中场景的照片列表"""

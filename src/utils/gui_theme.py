@@ -48,6 +48,12 @@ _DARK = {
     "TEXT_DISABLED":   (115, 130, 145),     # 禁用文字
     "WHITE":        (240, 240, 240),   # 高亮白
     "GRAY":         (165, 165, 170),   # 中性灰
+    # 3D 棱柱与标靶位姿视觉语言规范
+    "PRISM_THEORY": (0, 220, 120),     # 翡翠绿 (BA 理论真值棱柱)
+    "PRISM_OBS":    (240, 180, 0),     # 科技天蓝 (单帧实测感知棱柱, BGR)
+    "RESIDUAL_OK":  (80, 190, 115),    # 微小残差
+    "RESIDUAL_WARN":(0, 165, 255),     # 中度残差警告
+    "RESIDUAL_ERR": (60, 60, 220),     # 严重残差超限
 }
 
 # 按钮 hover 行为参数 (与主题颜色无关, 全局统一; 各 GUI renderer 必须引用, 不得自行硬编码)
@@ -83,6 +89,12 @@ _LIGHT = {
     "TEXT_DISABLED":   (170, 178, 190),       # 禁用文字
     "WHITE":        (255, 255, 255),
     "GRAY":         (120, 126, 136),
+    # 3D 棱柱与标靶位姿视觉语言规范 (亮色适配)
+    "PRISM_THEORY": (0, 160, 80),
+    "PRISM_OBS":    (200, 140, 0),
+    "RESIDUAL_OK":  (40, 140, 90),
+    "RESIDUAL_WARN":(0, 120, 220),
+    "RESIDUAL_ERR": (40, 40, 180),
 }
 
 _THEMES = {"dark": _DARK, "light": _LIGHT}
@@ -93,6 +105,25 @@ class GuiTheme:
 
     ACTIVE = _ACTIVE
     BTN_BEHAVIOR = BTN_BEHAVIOR   # 按钮 hover 行为参数 (与颜色无关, 同一单源)
+
+    # 3D 标靶棱柱与双轨比对视图模式选项 (全局跨应用标准)
+    VIEW_MODE_OPTIONS = [
+        ("3d", "3D 双四棱柱对比"),
+        ("2d", "2D 识别框与残差矢量"),
+        ("mix", "混合透视模式"),
+    ]
+
+    BA_VIEW_OPTIONS = [
+        ("3d", "3D 翡翠绿棱柱"),
+        ("2d", "2D 理论投影框"),
+        ("off", "隐藏 (关闭显示)"),
+    ]
+
+    OBS_VIEW_OPTIONS = [
+        ("3d", "3D 科技天蓝棱柱"),
+        ("2d", "2D 实测识别框"),
+        ("off", "隐藏 (关闭显示)"),
+    ]
 
     @classmethod
     def apply(cls, name: str = "dark"):

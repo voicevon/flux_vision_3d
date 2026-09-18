@@ -14,7 +14,8 @@ import numpy as np
 
 from src.utils.text_rendering import measure_text, put_text
 from src.utils.viewport_manager import draw_styled_button
-from tools.studio.studio_ui_common import FILTER_MODE_OPTIONS, SORT_MODE_OPTIONS, draw_dropdown_button
+from src.utils.gui_components import draw_dropdown_button
+from tools.studio.studio_ui_common import FILTER_MODE_OPTIONS, SORT_MODE_OPTIONS
 
 
 class StudioFrameListMixin:

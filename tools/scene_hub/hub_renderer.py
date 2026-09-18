@@ -109,7 +109,7 @@ class HubRenderer:
                 real_idx = scroll_start + i
                 if 236 <= mx <= 324 and cy + 6 <= my <= cy + 30:
                     return ("card_badge", real_idx)
-                if sc.scene_id == state.active_scene_id and (228 <= mx <= 324 and cy + 36 <= my <= cy + 64):
+                if 228 <= mx <= 324 and cy + 36 <= my <= cy + 64:
                     return ("card_pub", real_idx)
 
         # 右侧相册面板按钮
@@ -141,7 +141,7 @@ class HubRenderer:
         cache_key = (
             state.view_mode,
             state.selected_scene_idx,
-            state.active_scene_id,
+            state.prod_scene_id,
             state.selected_image_idx,
             state.image_strip_offset,
             state.is_help_modal_open,
@@ -833,19 +833,18 @@ class HubRenderer:
             return
 
         sc = state.scenes[state.context_menu_scene_idx]
-        is_active = (sc.scene_id == state.active_scene_id)
+        is_prod = (sc.scene_id == state.prod_scene_id or sc.is_published)
         mx, my = state.context_menu_pos
         mpos = (state.mouse_x, state.mouse_y)
 
         menu_w = 216
         item_h = 32
         menu_items = [
-            ("active", "[⏎] 设为全局活动沙盒", (0, 255, 180) if not is_active else self.COLOR_GRAY, "已激活" if is_active else ""),
-            ("publish", "[P] 生效到生产系统", self.COLOR_GOLD if is_active else (140, 140, 140), "已生产" if sc.is_published else ""),
+            ("publish", "[P] 发布为生产运行地图", self.COLOR_GOLD, "★ 当前生产" if is_prod else ""),
             ("rename", "[R] 重命名友好别名", (0, 220, 255), ""),
             ("clone", "[K] 克隆此场景副本", (200, 220, 240), ""),
             ("folder", "[V] 打开场景物理目录", (200, 220, 240), ""),
-            ("delete", "[X] 删除此场景 (安全)", (120, 120, 255), "严禁删活动" if is_active else ""),
+            ("delete", "[X] 删除此场景沙盒", (120, 120, 255), ""),
         ]
 
         menu_h = 34 + len(menu_items) * item_h + 6

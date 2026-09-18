@@ -15,6 +15,10 @@ import numpy as np
 from src.utils.gui_theme import (
     GuiTheme,
 )
+from src.utils.gui_components import (
+    draw_dropdown_button,
+    render_dropdown_popup,
+)
 from src.utils.text_rendering import draw_text
 
 # 视觉样式常量 (BGR, 统一取自 GuiTheme 主题单源)
@@ -69,47 +73,15 @@ class CaptureRenderer:
         bh = GuiTheme.BTN_BEHAVIOR
         return int(size * bh["HOVER_SCALE"]), (bold or bh["HOVER_BOLD"])
 
-    # ------------------------------ 下拉控件 ------------------------------
+    # ------------------------------ 下拉控件 (统一接入 gui_components) ------------------------------
     def _draw_dropdown_button(self, canvas, rect, label, is_open):
-        """扁平化下拉按钮 (与 tracker renderer 同款)"""
-        x1, y1, x2, y2 = rect
-        is_hover = self._is_hover(rect)
-        if is_open:
-            bg_col, border_col, text_col = COLOR_BTN_HOVER, COLOR_BORDER_SEL, COL_WHITE
-            arrow = "▲"
-        elif is_hover:
-            bg_col, border_col, text_col = COLOR_BTN_HOVER, COLOR_BORDER_HOVER, COL_WHITE
-            arrow = "▼"
-        else:
-            bg_col, border_col, text_col = COLOR_CARD_BG, COLOR_BORDER, COLOR_TEXT_SUB
-            arrow = "▼"
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), bg_col, -1)
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), border_col, 1)
-        dd_size, dd_bold = self._hover_text(is_hover, 14)
-        draw_text(canvas, f"{label} {arrow}", (x1 + 8, y1 + (y2 - y1) // 2 - 8),
-                  dd_size, text_col, dd_bold)
+        """扁平化下拉按钮 (统一调用 gui_components)"""
+        draw_dropdown_button(canvas, rect, label, is_open, self.mouse_pos, font_size=14)
 
     def _render_dropdown_popup(self, canvas, rect, options, active_key, btn_prefix):
-        """置顶悬浮下拉列表浮层 (与 tracker renderer 同款)"""
-        rx1, ry1, rx2, ry2 = rect
-        item_h = 30
-        pop_w = max(rx2 - rx1, 210)
-        pop_x1, pop_y1 = rx1, ry2 + 2
-        pop_x2, pop_y2 = pop_x1 + pop_w, pop_y1 + len(options) * item_h + 6
-        overlay = canvas.copy()
-        cv2.rectangle(overlay, (pop_x1, pop_y1), (pop_x2, pop_y2), (30, 34, 42), -1)
-        cv2.addWeighted(overlay, 0.96, canvas, 0.04, 0, canvas)
-        cv2.rectangle(canvas, (pop_x1, pop_y1), (pop_x2, pop_y2), COLOR_BORDER_SEL, 1)
-
-        for i, (key, label) in enumerate(options):
-            iy1 = pop_y1 + 3 + i * item_h
-            iy2 = iy1 + item_h
-            is_active = (key == active_key)
-            if is_active:
-                cv2.rectangle(canvas, (pop_x1 + 2, iy1), (pop_x2 - 2, iy2), COLOR_CARD_SEL, -1)
-            draw_text(canvas, label, (pop_x1 + 10, iy1 + (item_h - 16) // 2 - 2), 15,
-                      COLOR_ACCENT if is_active else COL_WHITE, bold=is_active)
-            self.buttons.append((f"{btn_prefix}{i}", (pop_x1 + 2, iy1, pop_x2 - 2, iy2), key))
+        """置顶悬浮下拉列表浮层 (统一调用 gui_components)"""
+        btns = render_dropdown_popup(canvas, rect, options, active_key, btn_prefix=btn_prefix, item_h=30)
+        self.buttons.extend(btns)
 
     # ------------------------------ 工具栏 ------------------------------
     def draw_toolbar(self, canvas):

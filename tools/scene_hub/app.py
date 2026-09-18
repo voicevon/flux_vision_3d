@@ -297,16 +297,14 @@ class SceneHubApp:
                 item_idx = (y - (my + 32)) // item_h
                 self.state.close_context_menu()
                 if item_idx == 0:
-                    self.state.set_current_as_active()
-                elif item_idx == 1:
                     self._handle_publish_to_production()
-                elif item_idx == 2:
+                elif item_idx == 1:
                     self._handle_rename_scene()
-                elif item_idx == 3:
+                elif item_idx == 2:
                     self._handle_clone_scene()
-                elif item_idx == 4:
+                elif item_idx == 3:
                     self._handle_open_directory()
-                elif item_idx == 5:
+                elif item_idx == 4:
                     self._handle_delete_scene()
                 return
 

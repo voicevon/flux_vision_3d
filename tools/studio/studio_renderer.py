@@ -25,9 +25,13 @@ from src.utils.text_rendering import draw_text, get_cached_font, measure_text, p
 
 # 共享常量与模块级绘制函数已迁移至 studio_ui_common, 此处 re-import 保持
 # 既有外部导入路径 (from tools.studio.studio_renderer import ...) 兼容可用。
-from tools.studio.studio_ui_common import (
+from src.utils.gui_theme import GuiTheme
+from src.utils.gui_components import (
     draw_dashboard_button,
     draw_dropdown_button,
+    render_dropdown_popup as common_render_dropdown_popup,
+)
+from tools.studio.studio_ui_common import (
     VIEW_MODE_OPTIONS,
     FILTER_MODE_OPTIONS,
     SORT_MODE_OPTIONS,
@@ -505,43 +509,16 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
         options: List[Tuple[str, str]],
         active_key: str
     ):
-        """置顶悬浮下拉列表浮层"""
-        rx1, ry1, rx2, ry2 = rect
-        item_h = 32
-        pop_w = max(rx2 - rx1, 190)
-        pop_h = len(options) * item_h + 6
-        pop_x1 = rx1
-        pop_y1 = ry2 + 2
-        pop_x2 = pop_x1 + pop_w
-        pop_y2 = pop_y1 + pop_h
-
-        overlay = canvas.copy()
-        cv2.rectangle(overlay, (pop_x1, pop_y1), (pop_x2, pop_y2), (18, 20, 26), -1)
-        cv2.addWeighted(overlay, 0.95, canvas, 0.05, 0, canvas)
-        cv2.rectangle(canvas, (pop_x1, pop_y1), (pop_x2, pop_y2), (0, 200, 255), 1)
-
-        mx, my = studio.mouse_pos
-        for idx, (opt_key, opt_label) in enumerate(options):
-            iy1 = pop_y1 + 3 + idx * item_h
-            iy2 = iy1 + item_h - 1
-            is_active = (opt_key == active_key)
-            is_hover = (pop_x1 <= mx <= pop_x2 and iy1 <= my <= iy2)
-
-            if is_active:
-                row_bg = (52, 45, 20)
-                txt_col = (0, 230, 255)
-            elif is_hover:
-                row_bg = (36, 42, 56)
-                txt_col = (255, 255, 255)
-            else:
-                row_bg = (22, 25, 32)
-                txt_col = (190, 190, 190)
-
-            cv2.rectangle(canvas, (pop_x1 + 3, iy1), (pop_x2 - 3, iy2), row_bg, -1)
-            prefix = "✔ " if is_active else "  "
-            (tw, th), _ = measure_text(prefix + opt_label, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
-            put_text(canvas, prefix + opt_label, (pop_x1 + 8, iy1 + (item_h + th) // 2 - 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, txt_col, 1, cv2.LINE_AA)
-
-            btn_id = f"DD_SELECT_{studio.active_dropdown}_{opt_key}"
-            studio.gui_buttons.append((btn_id, (pop_x1, iy1, pop_x2, iy2), (studio.active_dropdown, opt_key)))
+        """置顶悬浮下拉列表浮层 (统一委托给公共 gui_components)"""
+        reg_btns = common_render_dropdown_popup(
+            canvas,
+            anchor_rect=rect,
+            options=options,
+            active_key=active_key,
+            btn_prefix=f"DD_SELECT_{pop_name}_",
+            item_h=32,
+            min_width=190,
+        )
+        for _, item_rect, opt_key in reg_btns:
+            btn_id = f"DD_SELECT_{pop_name}_{opt_key}"
+            studio.gui_buttons.append((btn_id, item_rect, (pop_name, opt_key)))

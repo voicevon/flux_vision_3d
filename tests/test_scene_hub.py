@@ -25,11 +25,17 @@ class TestSceneHub(unittest.TestCase):
         self.empty_legacy = os.path.join(self.test_root, "empty_legacy")
         os.makedirs(self.test_dir, exist_ok=True)
         os.makedirs(self.empty_legacy, exist_ok=True)
-        self.scene_mgr = CalibrationSceneManager(scenes_dir=self.test_dir, legacy_dir=self.empty_legacy)
+        self.test_prod_map = os.path.join(self.test_root, "config", "tags_map.yaml")
+        self.test_config_yaml = os.path.join(self.test_root, "config.yaml")
+        self.scene_mgr = CalibrationSceneManager(
+            scenes_dir=self.test_dir,
+            legacy_dir=self.empty_legacy,
+            prod_map_path=self.test_prod_map,
+            config_path=self.test_config_yaml
+        )
         # 创建两个测试场景
         self.sc1 = self.scene_mgr.create_scene(alias="site_a", description="测试工况A")
         self.sc2 = self.scene_mgr.create_scene(alias="site_b", description="测试工况B")
-        self.scene_mgr.set_active_scene(self.sc1.scene_id)
 
     def tearDown(self):
         shutil.rmtree(self.test_root, ignore_errors=True)
@@ -47,7 +53,7 @@ class TestSceneHub(unittest.TestCase):
         self.assertFalse(streamer.is_running)
 
     def test_hub_state_navigation(self):
-        """测试 HubState 场景切换与活动场景设置"""
+        """测试 HubState 场景切换与发布生产操作"""
         state = HubState(self.scene_mgr, force_mock=True)
         self.assertEqual(len(state.scenes), 2)
         # 降序排序下，最新创建的 sc2 在 index 0，先创建的 sc1 在 index 1
@@ -60,9 +66,14 @@ class TestSceneHub(unittest.TestCase):
         self.assertEqual(state.selected_scene_idx, 1)
         self.assertEqual(state.get_selected_scene().scene_id, self.sc1.scene_id)
 
-        # 设为活动场景
-        self.assertTrue(state.set_current_as_active())
-        self.assertEqual(state.active_scene_id, self.sc1.scene_id)
+        # 模拟选中场景具备平差结果并发布为生产运行
+        cur_sc = state.get_selected_scene()
+        cur_sc.ba_solved = True
+        cur_sc.save_meta()
+        with open(cur_sc.map_path, "w", encoding="utf-8") as f:
+            f.write("tags:\n  0:\n    id: 0\n    position: [0.0, 0.0, 0.0]\n    orientation: [0.0, 0.0, 0.0, 1.0]\n")
+        self.assertTrue(state.publish_selected_to_production())
+        self.assertEqual(state.prod_scene_id, cur_sc.scene_id)
 
     def test_hub_state_in_place_capture(self):
         """测试 HubState 原地连拍保存与归档"""
@@ -195,9 +206,8 @@ class TestSceneHub(unittest.TestCase):
         # 验证 Footer 渲染不报错
         renderer._render_footer(canvas, app.state)
 
-        # 验证场景激活点击
-        # 默认当前选中 idx 0，若点击卡片右侧 [设为活动] 区域 (x=250, y=105)
-        self.assertIsNotNone(app.state.active_scene_id)
+        # 验证场景生产运行地图状态
+        self.assertIsNotNone(app.state.prod_scene_id)
 
     def test_three_view_modes_cycle_and_rendering(self):
         """测试三模态视图循环切换与各模态画布渲染稳定性"""

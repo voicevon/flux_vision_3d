@@ -14,7 +14,11 @@ import cv2
 import numpy as np
 
 from src.utils.text_rendering import measure_text, put_text
-from tools.studio.studio_ui_common import BA_VIEW_OPTIONS, OBS_VIEW_OPTIONS, draw_dropdown_button
+from src.utils.gui_theme import GuiTheme
+from src.utils.gui_components import draw_dropdown_button
+
+BA_VIEW_OPTIONS = GuiTheme.BA_VIEW_OPTIONS
+OBS_VIEW_OPTIONS = GuiTheme.OBS_VIEW_OPTIONS
 
 
 class StudioCenterViewMixin:
