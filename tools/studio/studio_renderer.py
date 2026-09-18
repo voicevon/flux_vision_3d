@@ -27,6 +27,7 @@ from src.utils.text_rendering import draw_text, get_cached_font, measure_text, p
 # 既有外部导入路径 (from tools.studio.studio_renderer import ...) 兼容可用。
 from tools.studio.studio_ui_common import (
     draw_dashboard_button,
+    draw_dropdown_button,
     VIEW_MODE_OPTIONS,
     FILTER_MODE_OPTIONS,
     SORT_MODE_OPTIONS,
@@ -177,64 +178,79 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
         # 2. LOGO 右侧紧邻的全局快捷动作按钮
         mx, my = studio.mouse_pos
         btn_y_top, btn_y_bot = 7, top_h - 7
-        bx = 16 + logo_w + 26
+        bx = 16 + logo_w + 20
+
+        # 0. 选择场景下拉框 (首要核心位置)
+        sc_w = 168
+        cur_sc_label = getattr(studio, "current_scene_name", "默认场景")
+        is_sc_open = (studio.active_dropdown == "SCENE_DROPDOWN")
+        draw_dropdown_button(canvas, (bx, btn_y_top, bx + sc_w, btn_y_bot), f"场景: {cur_sc_label}",
+                             is_open=is_sc_open, mouse_pos=(mx, my),
+                             theme_color=(0, 255, 180))
+        studio.dropdown_boxes["SCENE_DROPDOWN"] = {
+            "rect": (bx, btn_y_top, bx + sc_w, btn_y_bot),
+            "options": getattr(studio, "scene_options", []),
+            "active_key": getattr(studio, "current_scene_id", "")
+        }
+        studio.gui_buttons.append(("TOGGLE_SCENE_DROPDOWN", (bx, btn_y_top, bx + sc_w, btn_y_bot), "SCENE_DROPDOWN"))
+        bx += sc_w + 6
 
         # 1. 复位地图 (清空已知平差地图)
-        rst_map_w = 105
+        rst_map_w = 90
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "复位地图",
                               mouse_pos=(mx, my), accent=(70, 60, 210))
         studio.gui_buttons.append(("RESET_MAP", (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "RESET_MAP"))
-        bx += rst_map_w + 10
+        bx += rst_map_w + 6
 
         # 2. 全局全量超精提取 (清空旧角点并从头重提取)
-        ext_w = 135
+        ext_w = 115
         is_ext = getattr(studio, "is_extracting_all", False)
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + ext_w, btn_y_bot),
-                              "正在超精提取..." if is_ext else "全局超精提取",
+                              "提取中..." if is_ext else "超精提取",
                               mouse_pos=(mx, my), is_running=is_ext)
         studio.gui_buttons.append(("SUPER_EXTRACT_ALL", (bx, btn_y_top, bx + ext_w, btn_y_bot), "SUPER_EXTRACT_ALL"))
-        bx += ext_w + 10
+        bx += ext_w + 6
 
         # 3. [B] 全局平差
-        ba_w = 135
+        ba_w = 115
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + ba_w, btn_y_bot),
-                              "正在平差..." if studio.is_ba_running else "全局平差 (B)",
+                              "平差中..." if studio.is_ba_running else "全局平差 (B)",
                               mouse_pos=(mx, my), is_running=studio.is_ba_running)
         studio.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_w, btn_y_bot), "RUN_BA"))
-        bx += ba_w + 10
+        bx += ba_w + 6
 
         # 4. [A] 智能残差剪枝平差
-        prune_w = 135
+        prune_w = 115
         is_prune = getattr(studio, "is_auto_pruning", False)
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + prune_w, btn_y_bot),
-                              "正在剪枝..." if is_prune else "剪枝平差 (A)",
+                              "剪枝中..." if is_prune else "剪枝平差 (A)",
                               mouse_pos=(mx, my), is_running=is_prune)
         studio.gui_buttons.append(("RUN_AUTO_PRUNE_BA", (bx, btn_y_top, bx + prune_w, btn_y_bot), "RUN_AUTO_PRUNE_BA"))
-        bx += prune_w + 10
+        bx += prune_w + 6
 
         # 5. [M] 保存/发布地图
-        s_w = 115
+        s_w = 105
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + s_w, btn_y_bot), "保存地图 (M)",
                               mouse_pos=(mx, my), accent=(0, 215, 90))
         studio.gui_buttons.append(("SAVE_MAP", (bx, btn_y_top, bx + s_w, btn_y_bot), "SAVE_MAP"))
-        bx += s_w + 10
+        bx += s_w + 6
 
         # 6. [P] 全程/全量精度体检重算
-        p_w = 125
+        p_w = 105
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + p_w, btn_y_bot), "全量体检 (P)",
                               mouse_pos=(mx, my))
         studio.gui_buttons.append(("RECOMPUTE_METRICS", (bx, btn_y_top, bx + p_w, btn_y_bot), "RECOMPUTE_METRICS"))
-        bx += p_w + 10
+        bx += p_w + 6
 
         # 7. [R] 导出质检报告
-        r_w = 115
+        r_w = 105
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + r_w, btn_y_bot), "导出报告 (R)",
                               mouse_pos=(mx, my))
         studio.gui_buttons.append(("EXPORT_REPORT", (bx, btn_y_top, bx + r_w, btn_y_bot), "EXPORT_REPORT"))
-        bx += r_w + 10
+        bx += r_w + 6
 
         # 8. 复位保留 (一键恢复所有剔除的观测为有效)
-        rst_keep_w = 105
+        rst_keep_w = 90
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "复位保留",
                               mouse_pos=(mx, my))
         studio.gui_buttons.append(("RESET_KEEP_ALL", (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "RESET_KEEP_ALL"))

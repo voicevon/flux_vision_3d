@@ -114,10 +114,11 @@ class StudioWorkflowMixin:
             return
 
         ManifestRepository.save_map(self.tags_map_data, self.map_path)
-        if self.scene_mgr and self.active_scene:
-            ok, msg = self.scene_mgr.publish_to_production(self.active_scene.scene_id)
+        target_sc = getattr(self, "current_scene", self.active_scene)
+        if self.scene_mgr and target_sc:
+            ok, msg = self.scene_mgr.publish_to_production(target_sc.scene_id)
             if ok:
-                self.set_toast(f"★ 成功发布为生产全局地图！({self.active_scene.name})")
+                self.set_toast(f"★ 成功将【{target_sc.name}】发布为生产全局地图！")
             else:
                 self.set_toast(f"发布失败: {msg}")
         else:

@@ -97,27 +97,46 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
 
     def __init__(
         self,
-        map_path: str = DEFAULT_MAP_PATH,
-        image_dir: str = CALIB_IMAGES_DIR,
+        map_path: str = None,
+        image_dir: str = None,
         marker_size_mm: float = 50.0,
         win_w: int = 1920,
         win_h: int = 1080,
-        manifest_path: Optional[str] = None
+        manifest_path: Optional[str] = None,
+        scene_id: Optional[str] = None
     ):
-        self.map_path = map_path
-        self.image_dir = image_dir
         self.marker_size_mm = marker_size_mm
         self.win_w = win_w
         self.win_h = win_h
 
-        # 场景管理器感知
+        # 场景管理器感知与初始目标场景装配
         try:
             from src.calibration.scene_manager import CalibrationSceneManager
             self.scene_mgr = CalibrationSceneManager()
-            self.active_scene = self.scene_mgr.get_active_scene()
+            if scene_id:
+                sc = self.scene_mgr.get_scene_by_id(scene_id)
+            elif image_dir and image_dir != CALIB_IMAGES_DIR:
+                norm_target = os.path.normpath(image_dir)
+                sc = next((s for s in self.scene_mgr.list_scenes()
+                           if os.path.normpath(s.raw_images_dir) == norm_target or os.path.normpath(s.scene_dir) == norm_target), None)
+            else:
+                sc = self.scene_mgr.get_active_scene()
+
+            if not sc:
+                sc = self.scene_mgr.get_active_scene()
+            self.current_scene = sc
+            self.current_scene_id = sc.scene_id if sc else ""
+            self.active_scene = sc
         except Exception:
             self.scene_mgr = None
+            self.current_scene = None
+            self.current_scene_id = ""
             self.active_scene = None
+
+        self.map_path = map_path or (self.current_scene.map_path if self.current_scene else DEFAULT_MAP_PATH)
+        self.image_dir = image_dir or (self.current_scene.raw_images_dir if self.current_scene else CALIB_IMAGES_DIR)
+        self.manifest_path = manifest_path or (self.current_scene.manifest_path if self.current_scene else os.path.join(self.image_dir, "tag_observations.yaml"))
+        self.manifest_repo = ManifestRepository()
 
         # 1. 初始化视口管理器与物理布局尺寸
         self.viewport = ViewportManager(win_w=win_w, win_h=win_h, top_bar_h=44, bottom_bar_h=52)
@@ -126,8 +145,6 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
 
         # 2. 相机内参与领域模型装配
         self.camera_matrix, self.dist_coeffs = self._load_camera_intrinsics()
-        self.manifest_path = manifest_path or os.path.join(self.image_dir, "tag_observations.yaml")
-        self.manifest_repo = ManifestRepository()
 
         self.engine = OfflineVerificationEngine(
             tags_map={},
@@ -206,6 +223,56 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         # 首次预热并计算全集残差指标
         self.refresh_all_frame_metrics()
 
+    @property
+    def scene_options(self):
+        """动态读取所有可用场景供顶栏下拉菜单展示"""
+        if not self.scene_mgr:
+            return []
+        opts = []
+        for s in self.scene_mgr.list_scenes():
+            tag = "★ " if s.is_published else ""
+            opts.append((s.scene_id, f"{tag}{s.name} ({s.image_count}帧)"))
+        return opts
+
+    @property
+    def current_scene_name(self):
+        return self.current_scene.name if self.current_scene else "默认工位"
+
+    def switch_scene(self, scene_id: str):
+        """实时热切换工作场景：重新装载图像、清单与地图并复位视口与平差引擎"""
+        if not self.scene_mgr:
+            return
+        target_sc = self.scene_mgr.get_scene_by_id(scene_id)
+        if not target_sc:
+            return
+
+        # 1. 自动持久化当前场景已修改数据
+        try:
+            self.data_mgr.save_manifest()
+        except Exception:
+            pass
+
+        # 2. 重新指向新场景
+        self.current_scene = target_sc
+        self.current_scene_id = target_sc.scene_id
+        self.active_scene = target_sc
+        self.image_dir = target_sc.raw_images_dir
+        self.manifest_path = target_sc.manifest_path
+        self.map_path = target_sc.map_path
+
+        # 3. 驱动 data_mgr 重载
+        self.data_mgr.reload_dataset(
+            map_path=self.map_path,
+            image_dir=self.image_dir,
+            manifest_path=self.manifest_path
+        )
+
+        # 4. 更新 BA 调度器中的路径
+        self.ba_runner.map_path = self.map_path
+        self.ba_runner.manifest_path = self.manifest_path
+
+        self.set_toast(f"已热重载切换至场景: 【{target_sc.name}】(共 {len(self.data_mgr.image_files)} 帧)")
+        log.info(f"[STUDIO] 成功切换场景至: {target_sc.name} ({target_sc.scene_id})")
 
     def reset_viewport_zoom(self):
         """重置中间视口缩放与平移状态为适应屏幕 (1.0x)"""
@@ -735,15 +802,17 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
 
 def main():
     parser = argparse.ArgumentParser(description="AprilTag 离线标定与空间建图综合工作站 (Offline Studio)")
-    parser.add_argument("--map", type=str, default=DEFAULT_MAP_PATH, help="标靶空间立体地图路径")
-    parser.add_argument("--images", type=str, default=CALIB_IMAGES_DIR, help="标定采图目录")
+    parser.add_argument("--scene", type=str, default=None, help="目标场景 ID")
+    parser.add_argument("--map", type=str, default=None, help="标靶空间立体地图路径")
+    parser.add_argument("--images", type=str, default=None, help="标定采图目录")
     parser.add_argument("--marker_size", type=float, default=50.0, help="标靶物理边长 (mm)")
     args = parser.parse_args()
 
     studio = TagOfflineStudio(
         map_path=args.map,
         image_dir=args.images,
-        marker_size_mm=args.marker_size
+        marker_size_mm=args.marker_size,
+        scene_id=args.scene
     )
     studio.run()
 

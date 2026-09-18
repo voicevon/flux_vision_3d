@@ -38,11 +38,15 @@ class TestCaptureWizard(unittest.TestCase):
         wiz.renderer.draw_toolbar(canvas)
 
         ids = [btn_id for btn_id, _, _ in wiz.renderer.buttons]
-        for expected in ("TOGGLE_CAM_DD", "TOGGLE_RES_DD", "TOGGLE_CAMERA", "QUIT"):
+        for expected in ("TOGGLE_SCENE_DD", "TOGGLE_CAM_DD", "TOGGLE_RES_DD", "TOGGLE_CAMERA", "QUIT"):
             self.assertIn(expected, ids)
 
-        # 命中检测: 相机类型下拉按钮 (x=8 起) 与退出按钮 (最右 90px) 均可命中
-        hit_cam = wiz.renderer.hit_test(20, TOOLBAR_H // 2)
+        # 命中检测: 场景下拉 (x=8 起)、相机类型下拉按钮 与退出按钮 (最右 90px) 均可命中
+        hit_scene = wiz.renderer.hit_test(20, TOOLBAR_H // 2)
+        self.assertIsNotNone(hit_scene)
+        self.assertEqual(hit_scene[0], "TOGGLE_SCENE_DD")
+
+        hit_cam = wiz.renderer.hit_test(220, TOOLBAR_H // 2)
         self.assertIsNotNone(hit_cam)
         self.assertEqual(hit_cam[0], "TOGGLE_CAM_DD")
         tw = canvas.shape[1]

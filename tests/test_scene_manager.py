@@ -126,16 +126,11 @@ class TestCalibrationSceneManager(unittest.TestCase):
             cfg = yaml.safe_load(f)
         self.assertEqual(cfg["calibration"]["active_scene"], scene.scene_id)
 
-    def test_delete_active_guard(self):
-        """测试禁止删除当前活动场景"""
-        scene1 = self.mgr.create_scene(alias="keep_me")
-        # 尝试删除当前活动场景
-        ok, msg = self.mgr.delete_scene(scene1.scene_id)
-        self.assertFalse(ok)
-        self.assertIn("禁止删除", msg)
+    def test_delete_scene(self):
+        """测试场景自由删除（已解除原禁止删除活动场景限制）"""
+        scene1 = self.mgr.create_scene(alias="del_target")
+        self.assertTrue(os.path.exists(scene1.scene_dir))
 
-        # 切换到另一个场景后，即可安全删除 scene1
-        scene2 = self.mgr.create_scene(alias="active_now")
         ok, msg = self.mgr.delete_scene(scene1.scene_id)
         self.assertTrue(ok)
         self.assertFalse(os.path.exists(scene1.scene_dir))

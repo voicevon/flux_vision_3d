@@ -62,8 +62,29 @@ log = get_logger(__name__)
 
 
 class CaptureWizard:
-    def __init__(self, output_dir: str = DEFAULT_IMAGE_DIR):
-        self.output_dir = output_dir
+    def __init__(self, output_dir: str = None, scene_id: str = None):
+        from src.calibration.scene_manager import CalibrationSceneManager
+        self.scene_mgr = CalibrationSceneManager()
+        self.scenes = self.scene_mgr.list_scenes()
+
+        # 确定初始归档场景
+        is_custom_output = bool(output_dir and output_dir != DEFAULT_IMAGE_DIR)
+        sc = None
+        if scene_id:
+            sc = self.scene_mgr.get_scene_by_id(scene_id)
+        elif is_custom_output:
+            norm_target = os.path.normpath(output_dir)
+            for s in self.scenes:
+                if os.path.normpath(s.raw_images_dir) == norm_target or os.path.normpath(s.scene_dir) == norm_target:
+                    sc = s
+                    break
+
+        if not sc and not is_custom_output:
+            sc = self.scene_mgr.get_active_scene()
+
+        self.current_scene = sc
+        self.current_scene_id = sc.scene_id if sc else ""
+        self.output_dir = sc.raw_images_dir if sc else (output_dir or DEFAULT_IMAGE_DIR)
         os.makedirs(self.output_dir, exist_ok=True)
 
         # 硬件与运行时状态 (必须先声明，严禁在后续被覆盖为 None)
@@ -102,6 +123,34 @@ class CaptureWizard:
         # 统计已有图片数
         existing = glob.glob(os.path.join(self.output_dir, "view_*.png"))
         self.image_count = len(existing)
+
+    @property
+    def scene_options(self):
+        """动态读取所有可用场景供下拉菜单展示"""
+        self.scenes = self.scene_mgr.list_scenes()
+        opts = []
+        for s in self.scenes:
+            tag = "★ " if s.is_published else ""
+            opts.append((s.scene_id, f"{tag}{s.name} ({s.image_count}帧)"))
+        return opts
+
+    @property
+    def current_scene_name(self):
+        return self.current_scene.name if self.current_scene else "默认工位"
+
+    def switch_scene(self, scene_id: str):
+        """实时切换采图目标场景 (照片自动路由至该场景的 raw_images)"""
+        sc = self.scene_mgr.get_scene_by_id(scene_id)
+        if not sc:
+            return
+        self.current_scene = sc
+        self.current_scene_id = sc.scene_id
+        self.output_dir = sc.raw_images_dir
+        os.makedirs(self.output_dir, exist_ok=True)
+        existing = glob.glob(os.path.join(self.output_dir, "view_*.png"))
+        self.image_count = len(existing)
+        self.set_toast(f"已切换归档场景: 【{sc.name}】(当前 {self.image_count} 帧)")
+        log.info(f"采图向导已切换归档场景: {sc.name} ({sc.scene_id}) -> {self.output_dir}")
 
     def set_toast(self, msg: str):
         self.status_toast = msg
@@ -229,13 +278,11 @@ class CaptureWizard:
         cv2.imwrite(raw_filepath, raw_frame)
         log.info(f"[CAPTURE] 快照 #{self.image_count} 拍摄成功: {raw_filepath}")
 
-        # 同步更新活动场景元数据
+        # 同步更新归档场景元数据
         try:
-            from src.calibration.scene_manager import CalibrationSceneManager
-            active_sc = CalibrationSceneManager().get_active_scene()
-            if os.path.normpath(active_sc.raw_images_dir) == os.path.normpath(self.output_dir):
-                active_sc.refresh_stats()
-                active_sc.save_meta()
+            if self.current_scene:
+                self.current_scene.refresh_stats()
+                self.current_scene.save_meta()
         except Exception as e:
             log.warning(f"场景元数据刷新失败 (非致命): {e}")
 
@@ -294,7 +341,13 @@ class CaptureWizard:
 
     def _handle_action(self, btn_id, payload):
         """工具栏按钮动作分发 (与 Robot 在线跟踪同名同义)"""
-        if btn_id == "TOGGLE_CAM_DD":
+        if btn_id == "TOGGLE_SCENE_DD":
+            self.active_dropdown = None if self.active_dropdown == "SCENE_DROPDOWN" \
+                else "SCENE_DROPDOWN"
+        elif btn_id.startswith("DD_SCENE_"):
+            self.active_dropdown = None
+            self.switch_scene(payload)
+        elif btn_id == "TOGGLE_CAM_DD":
             self.active_dropdown = None if self.active_dropdown == "CAMERA_TYPE_DROPDOWN" \
                 else "CAMERA_TYPE_DROPDOWN"
         elif btn_id == "TOGGLE_RES_DD":
@@ -402,10 +455,11 @@ class CaptureWizard:
 
 def main():
     parser = argparse.ArgumentParser(description="多视角采图向导 (纯预览 + 保存)")
-    parser.add_argument("--dir", "--output-dir", "--output_dir", dest="dir", type=str, default=DEFAULT_IMAGE_DIR, help="保存采集图像的目录路径")
+    parser.add_argument("--scene", type=str, default="", help="指定初始归档场景 ID")
+    parser.add_argument("--dir", "--output-dir", "--output_dir", dest="dir", type=str, default=None, help="保存采集图像的目录路径")
     args = parser.parse_args()
 
-    wizard = CaptureWizard(output_dir=args.dir)
+    wizard = CaptureWizard(output_dir=args.dir, scene_id=args.scene)
     wizard.run()
 
 

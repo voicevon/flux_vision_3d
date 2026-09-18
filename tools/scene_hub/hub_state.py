@@ -52,7 +52,7 @@ class HubState:
         self.scene_mgr = scene_mgr or CalibrationSceneManager()
 
         self.scenes: list[CalibrationScene] = []
-        self.active_scene_id = ""
+        self.prod_scene_id = ""
         self.selected_scene_idx = 0
 
         # 当前选中场景的照片列表与大图选中项
@@ -87,10 +87,19 @@ class HubState:
         # 初始加载场景
         self.refresh_scenes()
 
+    @property
+    def active_scene_id(self) -> str:
+        """向后兼容属性：返回当前生产运行场景 ID"""
+        return self.prod_scene_id
+
+    @active_scene_id.setter
+    def active_scene_id(self, val: str):
+        self.prod_scene_id = val
+
     def refresh_scenes(self):
-        """刷新场景列表与活动场景标识"""
+        """刷新场景列表与生产场景标识"""
         self.scenes = self.scene_mgr.list_scenes()
-        self.active_scene_id = self.scene_mgr.get_active_scene_id()
+        self.prod_scene_id = self.scene_mgr.get_production_scene_id()
 
         # 确保选中索引不越界
         if not self.scenes:
@@ -100,11 +109,21 @@ class HubState:
 
         self.load_current_scene_images()
 
-    def get_active_scene(self) -> CalibrationScene | None:
-        """从已载入内存的场景列表中极速获取当前活动场景对象 (0ms)"""
+    def get_production_scene(self) -> CalibrationScene | None:
+        """获取当前发布为生产运行的场景"""
         for sc in self.scenes:
-            if sc.scene_id == self.active_scene_id:
+            if sc.scene_id == self.prod_scene_id:
                 return sc
+        for sc in self.scenes:
+            if sc.is_published:
+                return sc
+        return None
+
+    def get_active_scene(self) -> CalibrationScene | None:
+        """兼容接口：获取生产场景或首个场景"""
+        prod = self.get_production_scene()
+        if prod:
+            return prod
         return self.scenes[0] if self.scenes else None
 
     def get_selected_scene(self) -> CalibrationScene | None:
@@ -125,15 +144,13 @@ class HubState:
             self.load_current_scene_images()
 
     def set_current_as_active(self) -> bool:
-        """将当前选中的场景设为全局活动场景"""
+        """取消活动概念（向后兼容接口：暂存为当前指向的场景，并引导用户发布为生产）"""
         sc = self.get_selected_scene()
         if not sc:
             return False
-        ok = self.scene_mgr.set_active_scene(sc.scene_id)
-        if ok:
-            self.active_scene_id = sc.scene_id
-            self.set_toast(f"已将【{sc.scene_id}】设为全局活动场景！")
-        return ok
+        self.prod_scene_id = sc.scene_id
+        self.set_toast("已取消单一活动场景概念。如需生效至生产环境，请按 [P] 发布！")
+        return True
 
     def load_current_scene_images(self):
         """载入当前选中场景的照片列表"""

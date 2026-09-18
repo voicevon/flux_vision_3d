@@ -125,18 +125,17 @@ class AsparagusOfflineApp:
         self.win_mgr = GuiWindowManager(app_id=APP_ID, base_w=BASE_W, base_h=BASE_H,
                                         min_w=900, min_h=600)
 
+        # 场景管理器感知
+        from src.calibration.scene_manager import CalibrationSceneManager
+        self.scene_mgr = CalibrationSceneManager()
+        self.current_scene_id = "__prod__"  # 默认使用全局生产地图
+        self.active_dropdown = None
+        self._dd_items = []
+        self._scene_rect = None
+
         # 标定链: AprilTag 建图定位器 (一次装载) + 手工标定矩阵回退
         self.tag_localizer = None
-        if self.sys_cfg["tags_map_path"]:
-            tags_path = self.sys_cfg["tags_map_path"]
-            if not os.path.isabs(tags_path):
-                tags_path = os.path.join(PROJECT_ROOT, tags_path)
-            if os.path.exists(tags_path):
-                try:
-                    from src.vision.tag_localizer import TagLocalizer
-                    self.tag_localizer = TagLocalizer(tags_map_path=tags_path)
-                except Exception as exc:
-                    log.warning("AprilTag 定位器加载失败: %s", exc)
+        self._init_localizer()
 
         # 样本与结果状态
         self.samples = []
@@ -165,6 +164,57 @@ class AsparagusOfflineApp:
         self.rescan(auto_load=True)
 
     # ------------------------------ 数据流程 ------------------------------
+    def _init_localizer(self):
+        """装载标靶立体地图"""
+        if self.current_scene_id == "__prod__":
+            tags_path = self.sys_cfg.get("tags_map_path", "")
+            if tags_path and not os.path.isabs(tags_path):
+                tags_path = os.path.join(PROJECT_ROOT, tags_path)
+        else:
+            sc = self.scene_mgr.get_scene_by_id(self.current_scene_id)
+            tags_path = sc.map_path if sc else ""
+
+        if tags_path and os.path.exists(tags_path) and os.path.getsize(tags_path) > 50:
+            try:
+                from src.vision.tag_localizer import TagLocalizer
+                self.tag_localizer = TagLocalizer(tags_map_path=tags_path)
+            except Exception as exc:
+                log.warning("AprilTag 定位器加载失败: %s", exc)
+                self.tag_localizer = None
+        else:
+            self.tag_localizer = None
+
+    @property
+    def scene_options(self):
+        """动态列出可选地图：首项为生产全局地图，后续为各标定场景地图"""
+        opts = [("__prod__", "★ 当前生产地图 (config/tags_map.yaml)")]
+        for s in self.scene_mgr.list_scenes():
+            tag = "★ " if s.is_published else ""
+            status = f"{s.global_rmse_px:.2f}px" if s.ba_solved else "未平差"
+            opts.append((s.scene_id, f"{tag}{s.name} ({s.image_count}帧, {status})"))
+        return opts
+
+    @property
+    def current_scene_name(self):
+        if self.current_scene_id == "__prod__":
+            return "生产地图"
+        sc = self.scene_mgr.get_scene_by_id(self.current_scene_id)
+        return sc.name if sc else "默认"
+
+    def switch_scene(self, scene_key: str):
+        """动态切换标靶立体地图并重新解算当前样本"""
+        self.current_scene_id = scene_key
+        self._init_localizer()
+        if self.tag_localizer:
+            tag_cnt = len(getattr(self.tag_localizer, "tag_poses", {}))
+            self.set_toast(f"已装载【{self.current_scene_name}】地图 (包含 {tag_cnt} 个标靶)")
+        else:
+            self.set_toast(f"【{self.current_scene_name}】尚未平差生成 tags_map.yaml，降级估算！")
+        
+        # 立即重新解算当前样本
+        if 0 <= self.sel_idx < len(self.samples):
+            self._select_sample(self.sel_idx)
+
     def rescan(self, auto_load=False):
         """重新扫描样本目录, 可选自动载入最新样本"""
         self.samples = scan_samples(self.sample_dir)
@@ -372,9 +422,15 @@ class AsparagusOfflineApp:
         elif active:
             bg, border, col = GuiTheme.CARD_SEL, GuiTheme.BORDER_SEL, GuiTheme.WHITE
         elif hover:
-            bg, border, col = GuiTheme.BTN_HOVER, GuiTheme.BORDER_HOVER, GuiTheme.BTN_TEXT_HOVER
+            if "退出" in label:
+                bg, border, col = (45, 38, 75), (80, 80, 220), (230, 230, 255)
+            else:
+                bg, border, col = GuiTheme.BTN_HOVER, GuiTheme.BORDER_HOVER, GuiTheme.BTN_TEXT_HOVER
         else:
-            bg, border, col = GuiTheme.BTN, GuiTheme.BTN_BORDER, GuiTheme.BTN_TEXT
+            if "退出" in label:
+                bg, border, col = GuiTheme.BTN, (60, 60, 110), GuiTheme.BTN_TEXT
+            else:
+                bg, border, col = GuiTheme.BTN, GuiTheme.BTN_BORDER, GuiTheme.BTN_TEXT
         cv2.rectangle(canvas, (x1, y1), (x2, y2), bg, -1)
         cv2.rectangle(canvas, (x1, y1), (x2, y2), border, 2 if hover else 1)
         m = self._metrics()
@@ -383,6 +439,57 @@ class AsparagusOfflineApp:
                   m["fs_sub"], col, bold=(hover and GuiTheme.BTN_BEHAVIOR["HOVER_BOLD"]) or active)
         if enabled:
             self._buttons.append((rect, ("btn", label)))
+
+    def _draw_dropdown_button(self, canvas, rect, label, is_open=False):
+        """扁平化下拉框按钮"""
+        x1, y1, x2, y2 = rect
+        mx, my = self.mouse_pos
+        hover = (x1 <= mx <= x2 and y1 <= my <= y2)
+        arrow = "▲" if is_open else "▼"
+        if is_open:
+            bg, border, col = GuiTheme.CARD_SEL, GuiTheme.BORDER_SEL, GuiTheme.WHITE
+        elif hover:
+            bg, border, col = GuiTheme.BTN_HOVER, GuiTheme.BORDER_HOVER, GuiTheme.BTN_TEXT_HOVER
+        else:
+            bg, border, col = GuiTheme.BTN, (60, 90, 80), (180, 230, 210)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), bg, -1)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), border, 2 if hover or is_open else 1)
+        m = self._metrics()
+        text = f"{label} {arrow}"
+        (tw, th), _ = measure_text(text, font_size=m["fs_sub"])
+        draw_text(canvas, text, (x1 + ((x2 - x1) - tw) // 2, y1 + ((y2 - y1) - th) // 2),
+                  m["fs_sub"], col, bold=hover or is_open)
+
+    def _render_dropdown_popup(self, canvas, rect, options, active_key):
+        """置顶悬浮下拉菜单浮层"""
+        rx1, ry1, rx2, ry2 = rect
+        m = self._metrics()
+        item_h = int(28 * m["s"])
+        pop_w = max(rx2 - rx1, int(260 * m["s"]))
+        pop_x1, pop_y1 = rx1, ry2 + 2
+        pop_x2, pop_y2 = pop_x1 + pop_w, pop_y1 + len(options) * item_h + 6
+        H, W = canvas.shape[:2]
+        if pop_y2 > H - 10:
+            pop_y2 = H - 10
+        cv2.rectangle(canvas, (pop_x1, pop_y1), (pop_x2, pop_y2), (24, 28, 36), -1)
+        cv2.rectangle(canvas, (pop_x1, pop_y1), (pop_x2, pop_y2), GuiTheme.BORDER_SEL, 1)
+
+        self._dd_items = []
+        for i, (key, label) in enumerate(options):
+            iy1 = pop_y1 + 3 + i * item_h
+            iy2 = iy1 + item_h
+            if iy2 > pop_y2:
+                break
+            mx, my = self.mouse_pos
+            is_hover = (pop_x1 <= mx <= pop_x2 and iy1 <= my <= iy2)
+            is_active = (key == active_key)
+            if is_active:
+                cv2.rectangle(canvas, (pop_x1 + 2, iy1), (pop_x2 - 2, iy2), GuiTheme.CARD_SEL, -1)
+            elif is_hover:
+                cv2.rectangle(canvas, (pop_x1 + 2, iy1), (pop_x2 - 2, iy2), GuiTheme.BTN_HOVER, -1)
+            col = GuiTheme.WHITE if is_active else (GuiTheme.BTN_TEXT_HOVER if is_hover else GuiTheme.TEXT_SUB)
+            draw_text(canvas, label, (pop_x1 + 10, iy1 + (item_h - 14) // 2), m["fs_sub"], col, bold=is_active)
+            self._dd_items.append(((pop_x1, iy1, pop_x2, iy2), key))
 
     def render(self):
         """真矢量渲染: 画布按窗口物理尺寸 1:1 重绘 (imshow 零缩放, 鼠标坐标零偏移)"""
@@ -402,7 +509,7 @@ class AsparagusOfflineApp:
         self._draw_image_area(canvas, m, img_p)
         self._draw_result_panel(canvas, m, right_p)
 
-        # 标题栏右侧按钮组
+        # 标题栏右侧按钮组 (从右向左布局)
         bw = int(88 * m["s"])
         bx = W - m["L"]
         batching = bool(self.batch_queue)
@@ -411,11 +518,20 @@ class AsparagusOfflineApp:
             ("停止 [S]", "stop", batching),
             ("重新扫描 [R]", "rescan", True),
             ("导出G-code [E]", "export", bool(self.gcode_text)),
+            ("退出 [X]", "exit", True),
         ]
         for label, _act, enabled in reversed(buttons):
             bx -= bw + int(8 * m["s"])
             self._draw_button(canvas, (bx, int(14 * m["s"]), bx + bw, int(14 * m["s"]) + m["btn_h"]),
                               label, enabled=enabled)
+
+        # 按钮组最左侧：地图场景选择下拉按钮
+        sc_w = int(165 * m["s"])
+        bx -= sc_w + int(8 * m["s"])
+        self._scene_rect = (bx, int(14 * m["s"]), bx + sc_w, int(14 * m["s"]) + m["btn_h"])
+        is_sc_open = (self.active_dropdown == "SCENE_DROPDOWN")
+        self._draw_dropdown_button(canvas, self._scene_rect, f"地图: {self.current_scene_name}", is_open=is_sc_open)
+        self._buttons.append((self._scene_rect, ("toggle_dd", "SCENE_DROPDOWN")))
 
         # 底部状态栏
         yb = H - m["bottom_h"] + int(8 * m["s"])
@@ -447,6 +563,10 @@ class AsparagusOfflineApp:
             cv2.rectangle(canvas, (tx - pad, ty - int(6 * m["s"])), (tx + tw + pad, ty + th + int(8 * m["s"])),
                           GuiTheme.WARN, 1)
             draw_text(canvas, self._toast_msg, (tx, ty), m["fs_body"], GuiTheme.WARN, bold=True)
+
+        # 置顶渲染下拉弹出菜单 (覆盖在所有内容最上层)
+        if self.active_dropdown == "SCENE_DROPDOWN" and self._scene_rect:
+            self._render_dropdown_popup(canvas, self._scene_rect, self.scene_options, self.current_scene_id)
 
         return canvas
 
@@ -607,6 +727,8 @@ class AsparagusOfflineApp:
             self.set_toast(f"已重新扫描: {len(self.samples)} 个样本")
         elif label.startswith("导出"):
             self.export_gcode()
+        elif label.startswith("退出"):
+            self._running = False
 
     def _on_mouse(self, event, x, y, flags, param):
         if event == cv2.EVENT_MOUSEMOVE:
@@ -620,9 +742,23 @@ class AsparagusOfflineApp:
 
         if event == cv2.EVENT_LBUTTONDOWN:
             self.mouse_pos = (x, y)
+            # 1. 优先判定置顶下拉浮层点击
+            if self.active_dropdown and self._dd_items:
+                for rect, key in self._dd_items:
+                    if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
+                        self.active_dropdown = None
+                        self.switch_scene(key)
+                        return
+                self.active_dropdown = None
+
+            # 2. 常规按钮点击
             hit = self.hit_test(x, y)
             if hit:
-                self._on_button(hit[1])
+                act_type, act_val = hit
+                if act_type == "toggle_dd":
+                    self.active_dropdown = None if self.active_dropdown == act_val else act_val
+                elif act_type == "btn":
+                    self._on_button(act_val)
                 return
             for rect, idx in self._sample_rows:
                 if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
@@ -684,7 +820,10 @@ class AsparagusOfflineApp:
 
             cv2.imshow(WINDOW_KEY, self.render())
 
-        cv2.destroyWindow(WINDOW_KEY)
+        try:
+            cv2.destroyWindow(WINDOW_KEY)
+        except Exception:
+            pass
         log.info("芦笋离线验证 GUI 已退出")
 
 

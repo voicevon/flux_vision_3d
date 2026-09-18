@@ -55,21 +55,24 @@ def draw_dropdown_button(
     label: str,
     is_open: bool,
     mouse_pos: Tuple[int, int],
-    prefix: str = ""
+    prefix: str = "",
+    theme_color: Optional[Tuple[int, int, int]] = None,
 ):
     """绘制现代扁平化微质感下拉菜单头部按钮"""
     x1, y1, x2, y2 = rect
     mx, my = mouse_pos
     is_hover = (x1 <= mx <= x2 and y1 <= my <= y2)
 
+    active_col = theme_color if theme_color is not None else (0, 220, 255)
+
     if is_open:
         bg_col = (48, 56, 72)
-        border_col = (0, 220, 255)
+        border_col = active_col
         text_col = (255, 255, 255)
         arrow = "▲"
     elif is_hover:
         bg_col = (36, 40, 52)
-        border_col = (0, 180, 220)
+        border_col = active_col
         text_col = (240, 240, 240)
         arrow = "▼"
     else:

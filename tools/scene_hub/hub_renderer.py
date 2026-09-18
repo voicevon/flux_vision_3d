@@ -229,17 +229,16 @@ class HubRenderer:
                 draw_text(canvas, ttext, (tx + 12, 16), font_size=13, color=(0, 220, 255))
             else:
                 draw_text(canvas, ttext, (tx + 12, 16), font_size=13, color=(160, 175, 195))
-
         # 3. 生产运行场景信息 (x: 546~860, y: 8~42)
-        act_sc = state.get_active_scene()
-        act_name = act_sc.name if act_sc else "未设定"
-        act_id = state.active_scene_id or "无"
+        prod_sc = state.get_production_scene()
+        prod_name = prod_sc.name if prod_sc else "无"
+        prod_id = prod_sc.scene_id if prod_sc else "未设定"
         prod_x, prod_w = 546, 380
         is_hover_prod = (prod_x <= mpos[0] <= prod_x + prod_w and 8 <= mpos[1] <= 42)
         if is_hover_prod:
             cv2.rectangle(canvas, (prod_x, 8), (prod_x + prod_w, 42), (24, 34, 44), -1)
             cv2.rectangle(canvas, (prod_x, 8), (prod_x + prod_w, 42), (0, 255, 200), 1)
-        draw_text(canvas, f"生产运行: 【{act_name}】 ({act_id[:10]})", (prod_x + 10, 16),
+        draw_text(canvas, f"生产运行地图: 【{prod_name}】 ({prod_id[:10]})", (prod_x + 10, 16),
                   font_size=13, color=(0, 255, 180) if is_hover_prod else (0, 240, 140))
 
         # 4. 右上角功能按钮组
@@ -284,7 +283,7 @@ class HubRenderer:
     def _render_left_panel(self, canvas: np.ndarray, state: HubState):
         """渲染左侧综合导航栏 (x: 0~340, y: 50~670)
         - 扩展展示多达 5 张场景卡片，视觉开阔无压迫
-        - 彻底贯彻：【生效生产】专属按钮严格绑定在【活动场景】Item 卡片上
+        - 卡片直接支持 [P 生效生产]，彻底移除冗余的活动场景锁
         - 去除底部冗余无用的快捷键堆砌说明，保持工业界面整洁精炼
         """
         cv2.rectangle(canvas, (0, 50), (340, 670), self.COLOR_PANEL, -1)
@@ -303,7 +302,6 @@ class HubRenderer:
         for i, sc in enumerate(visible_scenes):
             real_idx = scroll_start + i
             is_selected = (real_idx == state.selected_scene_idx)
-            is_active = (sc.scene_id == state.active_scene_id)
             cy = start_y + i * (card_h + 8)
 
             card_col = self.COLOR_CARD_ACTIVE if is_selected else (28, 32, 42)
@@ -330,55 +328,33 @@ class HubRenderer:
             ba_col = (0, 220, 100) if sc.ba_solved else self.COLOR_DARK_GRAY
             put_text(canvas, ba_badge, (20, cy + 58), cv2.FONT_HERSHEY_SIMPLEX, 0.38, ba_col, 1, cv2.LINE_AA)
 
-            # ==== 核心设计：谁是【活动场景】，谁的卡片上才拥有 [P 生效生产] 按钮！====
-            if is_active:
-                # 顶部徽章：[活动中]
-                badge_ax, badge_ay, badge_aw, badge_ah = 236, cy + 6, 88, 24
-                a_hover = (badge_ax <= mpos[0] <= badge_ax + badge_aw and badge_ay <= mpos[1] <= badge_ay + badge_ah)
-                cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah),
-                              (24, 44, 34) if a_hover else (18, 30, 24), -1)
-                cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah),
-                              (0, 255, 180) if a_hover else (0, 200, 120), 2 if a_hover else 1)
-                draw_text(canvas, "● 活动中", (badge_ax + 14, badge_ay + 4), font_size=12,
-                          color=(0, 255, 200) if a_hover else (0, 240, 140), bold=True)
-
-                # 下部专属操作按钮：直接绑定在活动 Item 上！
-                badge_px, badge_py, badge_pw, badge_ph = 228, cy + 36, 96, 28
-                p_hover = (badge_px <= mpos[0] <= badge_px + badge_pw and badge_py <= mpos[1] <= badge_py + badge_ph)
-                if sc.is_published:
-                    # 已经是生产基准
-                    cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
-                                  (36, 40, 24) if p_hover else (26, 28, 16), -1)
-                    cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
-                                  (0, 255, 255) if p_hover else self.COLOR_GOLD, 2 if p_hover else 1)
-                    draw_text(canvas, "★ 生产运行", (badge_px + 10, badge_py + 6), font_size=12,
-                              color=(120, 255, 255) if p_hover else self.COLOR_GOLD, bold=True)
-                else:
-                    # 活动沙盒 -> 赋予直接发布到生产的专属按钮！
-                    cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
-                                  (36, 56, 46) if p_hover else (20, 36, 30), -1)
-                    cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
-                                  (0, 255, 180) if p_hover else (0, 200, 140), 2 if p_hover else 1)
-                    draw_text(canvas, "[P] 生效生产", (badge_px + 8, badge_py + 6), font_size=12,
-                              color=(0, 255, 200) if p_hover else (0, 240, 160), bold=True)
+            # 右侧操作状态与发布按钮
+            badge_px, badge_py, badge_pw, badge_ph = 228, cy + 20, 96, 30
+            p_hover = (badge_px <= mpos[0] <= badge_px + badge_pw and badge_py <= mpos[1] <= badge_py + badge_ph)
+            if sc.is_published:
+                # 生产基准
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (36, 40, 24) if p_hover else (26, 28, 16), -1)
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (0, 255, 255) if p_hover else self.COLOR_GOLD, 2 if p_hover else 1)
+                draw_text(canvas, "★ 生产运行", (badge_px + 10, badge_py + 7), font_size=12,
+                          color=(120, 255, 255) if p_hover else self.COLOR_GOLD, bold=True)
+            elif sc.ba_solved:
+                # 已平差 -> 提供发布至生产的专属按钮
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (36, 56, 46) if p_hover else (20, 36, 30), -1)
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (0, 255, 180) if p_hover else (0, 200, 140), 2 if p_hover else 1)
+                draw_text(canvas, "[P] 生效生产", (badge_px + 8, badge_py + 7), font_size=12,
+                          color=(0, 255, 200) if p_hover else (0, 240, 160), bold=True)
             else:
-                # 非活动场景：提供 [设为活动] 胶囊按钮
-                badge_ax, badge_ay, badge_aw, badge_ah = 236, cy + 6, 88, 24
-                a_hover = (badge_ax <= mpos[0] <= badge_ax + badge_aw and badge_ay <= mpos[1] <= badge_ay + badge_ah)
-                if a_hover:
-                    cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah), (30, 42, 56), -1)
-                    cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah), (0, 220, 255), 1)
-                    draw_text(canvas, "设为活动 ⏎", (badge_ax + 10, badge_ay + 4), font_size=12, color=(0, 240, 255))
-                else:
-                    cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah), (20, 24, 32), -1)
-                    cv2.rectangle(canvas, (badge_ax, badge_ay), (badge_ax + badge_aw, badge_ay + badge_ah), (40, 48, 64), 1)
-                    draw_text(canvas, "草稿沙盒", (badge_ax + 16, badge_ay + 4), font_size=12, color=self.COLOR_DARK_GRAY)
-
-                px, py = 252, cy + 44
-                if sc.is_published:
-                    draw_text(canvas, "★ 生产历史", (px, py), font_size=11, color=self.COLOR_GOLD)
-                else:
-                    draw_text(canvas, "待激活", (px + 10, py), font_size=11, color=self.COLOR_DARK_GRAY)
+                # 未平差普通场景
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (20, 24, 30), -1)
+                cv2.rectangle(canvas, (badge_px, badge_py), (badge_px + badge_pw, badge_py + badge_ph),
+                              (40, 48, 60), 1)
+                draw_text(canvas, "草稿沙盒", (badge_px + 20, badge_py + 7), font_size=12,
+                          color=self.COLOR_DARK_GRAY)
 
         # ==== 2. 场景通用全局操作区 (单条目操作已全面收敛至鼠标右键菜单) ====
         div_y1 = 512
@@ -715,7 +691,7 @@ class HubRenderer:
                 draw_text(canvas, "【生产机制解析】[ESC/H] 关闭说明窗  |  活动场景卡片上点击或按 [P] 可直接生效到生产系统",
                           (20, 686), font_size=14, color=self.COLOR_GOLD, bold=True)
             else:
-                draw_text(canvas, "[↑/↓] 选择场景  [⏎] 设为活动  [P] 生效生产  [C] 采图向导  [S] 离线平差  [F] 切换视图  [ESC] 退出",
+                draw_text(canvas, "[↑/↓] 选择场景  [P] 生效生产  [C] 采图向导  [S] 离线平差  [F] 切换视图  [ESC] 退出",
                           (20, 686), font_size=14, color=(210, 220, 230))
 
         # 2. 右侧 沙盒数据隔离与生产基准胶囊 (x: 930~1265, y: 678~712)

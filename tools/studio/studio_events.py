@@ -124,6 +124,8 @@ class StudioEventMixin:
         elif btn_id == "SAVE_MAP":
             ManifestRepository.save_map(self.tags_map_data, self.map_path)
             self.set_toast(f"空间立体地图已成功保存至 {self.map_path}")
+        elif btn_id == "TOGGLE_SCENE_DROPDOWN":
+            self.active_dropdown = None if self.active_dropdown == "SCENE_DROPDOWN" else "SCENE_DROPDOWN"
         elif btn_id == "TOGGLE_BA_VIEW_DROPDOWN":
             self.active_dropdown = None if self.active_dropdown == "BA_VIEW_DROPDOWN" else "BA_VIEW_DROPDOWN"
         elif btn_id == "TOGGLE_OBS_VIEW_DROPDOWN":
@@ -136,7 +138,9 @@ class StudioEventMixin:
             self.active_dropdown = None if self.active_dropdown == "SORT_DROPDOWN" else "SORT_DROPDOWN"
         elif btn_id.startswith("DD_SELECT_"):
             dd_name, selected_val = extra
-            if dd_name == "BA_VIEW_DROPDOWN":
+            if dd_name == "SCENE_DROPDOWN":
+                self.switch_scene(selected_val)
+            elif dd_name == "BA_VIEW_DROPDOWN":
                 self.ba_view_mode = selected_val
                 self.view_mode = selected_val
                 lbl = dict(BA_VIEW_OPTIONS).get(selected_val, selected_val)

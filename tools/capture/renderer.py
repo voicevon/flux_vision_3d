@@ -125,8 +125,17 @@ class CaptureRenderer:
         y1, y2 = 6, 38
         gap = 6
 
-        # 1. 相机类型下拉 (最左)
-        cam_x1, cam_x2 = 8, 8 + 150
+        # 0. 归档场景下拉 (最左侧)
+        sc_x1, sc_x2 = 8, 8 + 190
+        sc_label = getattr(wiz, "current_scene_name", "默认场景")
+        self._draw_dropdown_button(canvas, (sc_x1, y1, sc_x2, y2), f"场景: {sc_label}",
+                                   is_open=(wiz.active_dropdown == "SCENE_DROPDOWN"))
+        self.buttons.append(("TOGGLE_SCENE_DD", (sc_x1, y1, sc_x2, y2), "SCENE_DROPDOWN"))
+        self._scene_rect = (sc_x1, y1, sc_x2, y2)
+
+        # 1. 相机类型下拉
+        cam_x1 = sc_x2 + gap
+        cam_x2 = cam_x1 + 140
         cam_label = dict(wiz.camera_options).get(wiz.camera_type, wiz.camera_type)
         self._draw_dropdown_button(canvas, (cam_x1, y1, cam_x2, y2), cam_label,
                                    is_open=(wiz.active_dropdown == "CAMERA_TYPE_DROPDOWN"))
@@ -135,7 +144,7 @@ class CaptureRenderer:
 
         # 2. 分辨率下拉
         res_x1 = cam_x2 + gap
-        res_x2 = res_x1 + 110
+        res_x2 = res_x1 + 105
         self._draw_dropdown_button(canvas, (res_x1, y1, res_x2, y2), wiz.resolution,
                                    is_open=(wiz.active_dropdown == "RES_DROPDOWN"))
         self.buttons.append(("TOGGLE_RES_DD", (res_x1, y1, res_x2, y2), "RES_DROPDOWN"))
@@ -143,7 +152,7 @@ class CaptureRenderer:
 
         # 3. 开启/关闭乒乓按钮 (悬停高亮, 与 tracker 同款三态)
         sw_x1 = res_x2 + gap
-        sw_x2 = sw_x1 + 70
+        sw_x2 = sw_x1 + 65
         sw_hover = self._is_hover((sw_x1, y1, sw_x2, y2))
         if wiz.pipeline_running:
             sw_bg, sw_border, sw_txt, sw_label = (55, 45, 30), (255, 160, 40), (255, 200, 80), "关闭"
@@ -170,7 +179,10 @@ class CaptureRenderer:
         self.buttons.append(("QUIT", (exit_x1, y1, exit_x2, y2), None))
 
         # 展开的下拉浮层 (置顶最后绘制)
-        if wiz.active_dropdown == "CAMERA_TYPE_DROPDOWN" and self._camera_type_rect:
+        if wiz.active_dropdown == "SCENE_DROPDOWN" and getattr(self, "_scene_rect", None):
+            self._render_dropdown_popup(canvas, self._scene_rect,
+                                        wiz.scene_options, wiz.current_scene_id, "DD_SCENE_")
+        elif wiz.active_dropdown == "CAMERA_TYPE_DROPDOWN" and self._camera_type_rect:
             self._render_dropdown_popup(canvas, self._camera_type_rect,
                                         wiz.camera_options, wiz.camera_type, "DD_CAM_")
         elif wiz.active_dropdown == "RES_DROPDOWN" and self._resolution_rect:

@@ -88,6 +88,24 @@ class StudioDataManager(StudioDataActionsMixin):
         # 首次加载全集残差指标
         self.refresh_all_frame_metrics()
 
+    def reload_dataset(self, map_path: str, image_dir: str, manifest_path: str):
+        """场景切换时整套重载数据集：路径更新、清单/地图重载、图片扫描与指标重算"""
+        self.map_path = map_path
+        self.image_dir = image_dir
+        self.manifest_path = manifest_path
+        self._super_extractor = None
+
+        self._load_manifest()
+        self._load_tags_map()
+        self._scan_images()
+        self.current_img_idx = 0
+        self.scroll_offset = 0
+
+        self.frame_metrics_cache.clear()
+        self.frame_convergence_matrix.clear()
+        self.convergence_headers.clear()
+        self.refresh_all_frame_metrics()
+
     @property
     def super_extractor(self):
         """惰性装载工序 3 工业级超精重提取引擎"""

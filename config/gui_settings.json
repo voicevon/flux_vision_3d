@@ -7,7 +7,7 @@
     "scale_pct": 100,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-18 18:52:40"
+    "updated_at": "2026-09-18 20:28:41"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -31,20 +31,26 @@
   },
   "scene_hub": {
     "scale_pct": 60,
-    "canvas_w": 768,
-    "canvas_h": 432,
-    "updated_at": "2026-09-18 08:01:00"
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-18 20:21:06"
   },
   "hardware_config": {
     "scale_pct": 100,
     "canvas_w": 760,
     "canvas_h": 560,
-    "updated_at": "2026-09-18 09:06:16"
+    "updated_at": "2026-09-18 19:47:27"
   },
   "capture_wizard": {
     "scale_pct": 100,
-    "canvas_w": 1920,
-    "canvas_h": 1017,
-    "updated_at": "2026-09-18 18:36:11"
+    "canvas_w": 681,
+    "canvas_h": 696,
+    "updated_at": "2026-09-18 20:22:31"
+  },
+  "asparagus_offline": {
+    "scale_pct": 100,
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-18 20:15:33"
   }
 }

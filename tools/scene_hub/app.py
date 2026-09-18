@@ -172,9 +172,9 @@ class SceneHubApp:
             elif raw_key in (2555904, 65363, ord('d'), ord('D'), ord('6'), ord('l'), ord('L')) or key in (ord('d'), ord('D')):
                 self.state.select_image_by_offset(1)
 
-            # [Enter] (回车键: 13, 10): 设为全局活动场景
+            # [Enter] (回车键: 13, 10): 启动离线 Studio 深度平差
             elif raw_key in (13, 10):
-                self.state.set_current_as_active()
+                self._launch_offline_studio()
 
             # [F] 顺次循环切换三模态视图: 标准三栏 -> 全宽大图 -> 纯净健康大屏
             elif key in (ord('f'), ord('F')):
@@ -216,6 +216,8 @@ class SceneHubApp:
         sc = self.state.get_selected_scene()
         target_dir = sc.raw_images_dir if sc else ""
         cmd = [sys.executable, os.path.join(PROJECT_ROOT, "tools", "capture", "capture_wizard.py")]
+        if sc:
+            cmd.extend(["--scene", sc.scene_id])
         if target_dir:
             cmd.extend(["--output-dir", target_dir])
         self._run_subtool(cmd, "多视角交互采图向导")
@@ -371,27 +373,14 @@ class SceneHubApp:
                 target_sc = self.state.scenes[target_idx]
                 card_cy = 90 + idx_in_view * (card_h + gap)
 
-                # 检查是否直接点击了右侧操作胶囊 (x: 226~326)
-                if 226 <= x <= 326:
-                    is_active = (target_sc.scene_id == self.state.active_scene_id)
-                    if is_active:
-                        # 活动场景：上部为 [活动中]，下部为 [P 生效生产] 或 ★生产运行
-                        if card_cy + 36 <= y <= card_cy + 66:
-                            if not target_sc.is_published:
-                                self._handle_publish_to_production()
-                            else:
-                                self.state.toggle_help_modal()
-                            return
-                        elif card_cy + 4 <= y <= card_cy + 30:
-                            self.state.toggle_help_modal()
-                            return
-                    else:
-                        # 非活动场景：上部为 [设为活动 ⏎] 按钮，点击直接激活！
-                        if card_cy + 4 <= y <= card_cy + 32:
-                            self.state.selected_scene_idx = target_idx
-                            self.state.set_current_as_active()
-                            self.state.set_toast(f"已将场景【{target_sc.name}】设为全局活动沙盒！")
-                            return
+                # 检查是否直接点击了右侧操作胶囊 (x: 226~326, y: card_cy + 18 ~ card_cy + 54)
+                if 226 <= x <= 326 and card_cy + 18 <= y <= card_cy + 54:
+                    self.state.selected_scene_idx = target_idx
+                    if not target_sc.is_published and target_sc.ba_solved:
+                        self._handle_publish_to_production()
+                    elif target_sc.is_published:
+                        self.state.toggle_help_modal()
+                    return
 
                 # 点击卡片其余区域：选中该场景并载入图像
                 self.state.selected_scene_idx = target_idx
@@ -499,9 +488,6 @@ class SceneHubApp:
         sc = self.state.get_selected_scene()
         if not sc:
             return
-        if sc.scene_id == self.state.active_scene_id:
-            self.state.set_toast("【安全保护】严禁删除当前活动场景！请先切换活动场景。")
-            return
 
         ok, msg = self.scene_mgr.delete_scene(sc.scene_id)
         self.state.refresh_scenes()
@@ -536,6 +522,7 @@ class SceneHubApp:
         if not sc:
             return
         cmd = [sys.executable, "tools/studio/app.py",
+               "--scene", sc.scene_id,
                "--images", sc.raw_images_dir,
                "--map", sc.map_path]
         self._run_subtool(cmd, "Offline Studio 深度平差工作站")

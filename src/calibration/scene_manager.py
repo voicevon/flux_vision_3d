@@ -364,8 +364,49 @@ class CalibrationSceneManager:
         scenes.sort(key=lambda s: (s.created_at, s.scene_id), reverse=True)
         return scenes
 
+    def get_production_scene_id(self) -> str:
+        """获取当前发布为生产运行的场景 ID (优先读 config.yaml 生产记录，次选 is_published 标记)"""
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+                calib = cfg.get("calibration", {})
+                prod_id = calib.get("prod_scene_id") or calib.get("active_scene", "")
+                if prod_id and os.path.isdir(os.path.join(self.scenes_dir, prod_id)):
+                    return prod_id
+            except Exception:
+                pass
+
+        for sc in self.list_scenes():
+            if sc.is_published:
+                return sc.scene_id
+        return ""
+
+    def get_production_scene(self) -> Optional[CalibrationScene]:
+        """获取当前发布为生产运行的场景对象"""
+        pid = self.get_production_scene_id()
+        return self.get_scene_by_id(pid) if pid else None
+
+    def get_scene_by_id(self, scene_id: str, force_refresh: bool = False) -> Optional[CalibrationScene]:
+        """根据场景 ID 检索场景对象 (带缓存支持)"""
+        if not scene_id:
+            return None
+        target_dir = os.path.join(self.scenes_dir, scene_id)
+        if not os.path.isdir(target_dir):
+            return None
+        if not force_refresh and scene_id in self._cached_scenes:
+            return self._cached_scenes[scene_id]
+        scene = CalibrationScene.load(target_dir, force_refresh=force_refresh)
+        if scene:
+            self._cached_scenes[scene_id] = scene
+        return scene
+
     def get_active_scene_id(self) -> str:
-        """获取当前激活场景的 ID"""
+        """获取默认场景 ID (兼容向后调用：优先生产场景，次选活动标记文件，兜底最新场景)"""
+        prod_id = self.get_production_scene_id()
+        if prod_id:
+            return prod_id
+
         if os.path.exists(self.active_marker_file):
             try:
                 with open(self.active_marker_file, "r", encoding="utf-8") as f:
@@ -375,46 +416,38 @@ class CalibrationSceneManager:
             except Exception:
                 pass
         
-        # 回退逻辑：如果标记文件损坏或指向空，选首个场景或创建默认场景
-        existing = [d for d in os.listdir(self.scenes_dir) if not d.startswith(".") and os.path.isdir(os.path.join(self.scenes_dir, d))]
-        if existing:
-            return sorted(existing)[-1]
+        scenes = self.list_scenes()
+        if scenes:
+            return scenes[0].scene_id
         return ""
 
     def get_active_scene(self, force_refresh: bool = False) -> CalibrationScene:
-        """获取当前活动场景对象 (带内存缓存，避免重复全量反序列化大文件)"""
+        """获取默认场景对象 (兼容向后调用：优先生产场景，次选最新场景，无场景则自动初始化)"""
         active_id = self.get_active_scene_id()
-        if not force_refresh and self._cached_active_scene is not None and self._cached_active_scene.scene_id == active_id:
-            return self._cached_active_scene
-
         if active_id:
-            scene = CalibrationScene.load(os.path.join(self.scenes_dir, active_id), force_refresh=force_refresh)
+            scene = self.get_scene_by_id(active_id, force_refresh=force_refresh)
             if scene:
-                self._cached_active_scene = scene
                 return scene
 
-        # 若无有效场景则自动构建默认场景
         new_scene = self.create_scene(alias="默认工位", description="系统自动初始化默认场景")
-        self._cached_active_scene = new_scene
         return new_scene
 
     def set_active_scene(self, scene_id: str) -> bool:
-        """设置当前活动场景"""
+        """设置活动场景 (向前兼容保留接口)"""
         target_dir = os.path.join(self.scenes_dir, scene_id)
         if not os.path.isdir(target_dir):
             return False
-        
         try:
             with open(self.active_marker_file, "w", encoding="utf-8") as f:
                 f.write(scene_id.strip())
-            self._cached_active_scene = CalibrationScene.load(target_dir)
+            self._cached_scenes[scene_id] = CalibrationScene.load(target_dir)
             return True
         except Exception as e:
-            log.error(f"[SCENE] 切换活动场景失败: {e}")
+            log.warning(f"[SCENE] 写入活动场景标记失败: {e}")
             return False
 
     def invalidate_cache(self):
-        """显式使活动场景与列表缓存失效"""
+        """显式使场景列表与对象缓存失效"""
         self._cached_active_scene = None
         self._cached_scenes.clear()
 
@@ -430,7 +463,6 @@ class CalibrationSceneManager:
         else:
             scene_id = f"{timestamp}_scene"
 
-        # 避免极短时间内冲突，自增序列
         counter = 1
         original_id = scene_id
         while os.path.exists(os.path.join(self.scenes_dir, scene_id)):
@@ -447,9 +479,12 @@ class CalibrationSceneManager:
         )
         scene.ensure_directories()
         scene.save_meta()
-        
-        # 自动设为当前活动场景
-        self.set_active_scene(scene_id)
+        self._cached_scenes[scene_id] = scene
+        try:
+            with open(self.active_marker_file, "w", encoding="utf-8") as f:
+                f.write(scene_id.strip())
+        except Exception:
+            pass
         return scene
 
     def clone_scene(self, src_scene_id: str, new_alias: str, description: str = "") -> Optional[CalibrationScene]:
@@ -479,6 +514,7 @@ class CalibrationSceneManager:
 
         new_scene.refresh_stats()
         new_scene.save_meta()
+        self._cached_scenes[new_scene.scene_id] = new_scene
         return new_scene
 
     def rename_scene(self, scene_id: str, new_name: str, new_description: Optional[str] = None) -> bool:
@@ -496,13 +532,14 @@ class CalibrationSceneManager:
         if new_description is not None:
             scene.description = new_description
         scene.save_meta()
+        self._cached_scenes[scene_id] = scene
         return True
 
     def publish_to_production(self, scene_id: Optional[str] = None) -> Tuple[bool, str]:
         """将指定场景的 tags_map.yaml 安全原子发布覆盖至 config/tags_map.yaml 并记录至 config.yaml"""
         target_id = scene_id or self.get_active_scene_id()
         if not target_id:
-            return False, "无可发布的活动场景"
+            return False, "无可发布的场景"
 
         scene_dir = os.path.join(self.scenes_dir, target_id)
         scene = CalibrationScene.load(scene_dir)
@@ -521,35 +558,42 @@ class CalibrationSceneManager:
             # 2. 原子拷贝
             shutil.copy2(scene.map_path, self.prod_map_path)
 
-            # 3. 更新 config.yaml 中的 active_scene 字段
+            # 3. 更新 config.yaml 中的 prod_scene_id 与 active_scene 字段
             if os.path.exists(self.config_path):
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     cfg = yaml.safe_load(f) or {}
                 if "calibration" not in cfg:
                     cfg["calibration"] = {}
-                cfg["calibration"]["active_scene"] = target_id
+                cfg["calibration"]["prod_scene_id"] = target_id
+                cfg["calibration"]["active_scene"] = target_id  # 保持旧逻辑兼容
                 with open(self.config_path, "w", encoding="utf-8") as f:
                     yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
-            # 4. 更新场景的元数据标志
-            scene.is_published = True
-            scene.save_meta()
+            # 4. 同步各场景的发布状态 (唯有被发布场景 is_published=True)
+            for other_sc in self.list_scenes():
+                if other_sc.scene_id == target_id:
+                    other_sc.is_published = True
+                    other_sc.save_meta()
+                elif other_sc.is_published:
+                    other_sc.is_published = False
+                    other_sc.save_meta()
+
+            self.invalidate_cache()
             return True, f"成功将场景 [{target_id}] 发布为全局生产运行地图 (RMSE: {scene.global_rmse_px:.3f}px)"
         except Exception as e:
             return False, f"发布至生产环境发生异常: {e}"
 
     def delete_scene(self, scene_id: str) -> Tuple[bool, str]:
-        """安全物理删除指定场景 (禁止删除当前正在激活的场景)"""
-        active_id = self.get_active_scene_id()
-        if scene_id == active_id:
-            return False, "禁止删除当前正在激活的活动场景！请先切换至其他场景。"
-
+        """安全物理删除指定场景 (允许删除任意非空场景)"""
         scene_dir = os.path.join(self.scenes_dir, scene_id)
         if not os.path.isdir(scene_dir):
             return False, f"场景目录不存在: {scene_id}"
 
         try:
             shutil.rmtree(scene_dir)
+            if scene_id in self._cached_scenes:
+                del self._cached_scenes[scene_id]
+            self.invalidate_cache()
             return True, f"已成功删除场景: {scene_id}"
         except Exception as e:
             return False, f"删除场景发生异常: {e}"
