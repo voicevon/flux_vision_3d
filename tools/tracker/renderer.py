@@ -18,8 +18,9 @@ from tools.tracker.common import (
     COLOR_TEXT_DISABLED, COLOR_TEXT_SUB, COL_BLUE,
     COL_CYAN, COL_GRAY, COL_GREEN, COL_PANEL_BG, COL_PANEL_EDGE, COL_RED,
     COL_WHITE, COL_YELLOW, TOOLBAR_H,
-    PRISM_HW_MM, PRISM_HEIGHT_MM, _tag_local_frame, fmt_point)
-from src.utils.text_rendering import draw_text
+    PRISM_HW_MM, PRISM_HEIGHT_MM, _tag_local_frame, fmt_point,
+    ASPARAGUS_WIDTH_MM, ASPARAGUS_LENGTH_MM, ASPARAGUS_HALF_LENGTH_MM, ASPARAGUS_HALF_WIDTH_MM, fmt_pose_4d)
+from src.utils.text_rendering import draw_text, measure_text
 from src.utils.gui_theme import GuiTheme
 from src.calibration.prism_renderer import draw_prism, COLORS_THEORY, COLORS_OBSERVED
 
@@ -452,27 +453,164 @@ class TrackerRenderer:
             cv2.circle(canvas, pb, 4, dot_c, -1, cv2.LINE_AA)     # 底面中心点
             cv2.line(canvas, pb, tuple(proj["top_center"]), dot_c, 1, cv2.LINE_AA)
 
+    def _draw_asparagus_stem(self, canvas, rvec, tvec, yaw_deg=None):
+        """沿 Tag 局部 Y 轴绘制 3D 拟真芦笋长棒 (宽 15mm x 长 200mm, 以Tag为中心对称延伸各 100mm):
+        - +Y 轴正向为芦笋头部/笋尖 (0 ~ +100mm): 鲜绿色 (Fresh Green) + 指向微箭头
+        - 中后过渡段 (-70 ~ 0mm): 由翠绿平滑过渡至乳白色
+        - -Y 轴负向为芦笋尾部/根部 (-100 ~ -70mm): 纯白切口 (Root White)
+        """
+        if rvec is None or tvec is None:
+            return
+        tr = self.tr
+        K = tr.engine.camera_matrix
+        dist = tr.engine.dist_coeffs
+        h_c, w_c = canvas.shape[:2]
+
+        half_w = ASPARAGUS_HALF_WIDTH_MM    # 7.5 mm
+        half_l = ASPARAGUS_HALF_LENGTH_MM   # 100.0 mm
+
+        # 分段渲染: 沿 Y 轴切分为 20 个微切片，逐段透视投影并进行平滑色彩插值
+        num_slices = 20
+        y_coords = np.linspace(-half_l, half_l, num_slices + 1)
+
+        COL_TIP_GREEN = (70, 225, 90)     # 鲜翠绿 (BGR)
+        COL_ROOT_WHITE = (245, 245, 245)  # 根部白 (BGR)
+        COL_STEM_EDGE = (40, 160, 60)     # 外轮廓边框色 (BGR)
+
+        poly_slices = []
+        for i in range(num_slices):
+            y1, y2 = y_coords[i], y_coords[i + 1]
+            y_mid = (y1 + y2) * 0.5
+
+            # 计算该段的插值颜色
+            if y_mid >= 0.0:
+                # 头部 (0 ~ +100mm): 翠绿色
+                cur_color = COL_TIP_GREEN
+            elif y_mid <= -70.0:
+                # 根部末端 (-100 ~ -70mm): 纯白色
+                cur_color = COL_ROOT_WHITE
+            else:
+                # 过渡段 (-70 ~ 0mm): 绿 -> 白 线性平滑渐变
+                t = float(-y_mid / 70.0)  # 0.0(绿) -> 1.0(白)
+                cur_color = (
+                    int(round((1.0 - t) * COL_TIP_GREEN[0] + t * COL_ROOT_WHITE[0])),
+                    int(round((1.0 - t) * COL_TIP_GREEN[1] + t * COL_ROOT_WHITE[1])),
+                    int(round((1.0 - t) * COL_TIP_GREEN[2] + t * COL_ROOT_WHITE[2])),
+                )
+
+            # 该微段的 4 个局部 3D 点
+            pts_3d = np.array([
+                [-half_w, y1, 0.0],
+                [ half_w, y1, 0.0],
+                [ half_w, y2, 0.0],
+                [-half_w, y2, 0.0],
+            ], dtype=np.float64)
+
+            proj, _ = cv2.projectPoints(pts_3d, rvec, tvec, K, dist)
+            proj_2d = proj.reshape(-1, 2)
+            if np.all(np.isfinite(proj_2d)):
+                p_poly = proj_2d.astype(np.int32)
+                poly_slices.append((p_poly, cur_color))
+
+        # 1. 绘制各切片多边形填充
+        for p_poly, col in poly_slices:
+            cv2.fillPoly(canvas, [p_poly], col, cv2.LINE_AA)
+
+        # 2. 整体外轮廓加粗边框
+        outer_3d = np.array([
+            [-half_w, -half_l, 0.0],
+            [ half_w, -half_l, 0.0],
+            [ half_w,  half_l, 0.0],
+            [-half_w,  half_l, 0.0],
+        ], dtype=np.float64)
+        outer_proj, _ = cv2.projectPoints(outer_3d, rvec, tvec, K, dist)
+        outer_2d = outer_proj.reshape(-1, 2).astype(np.int32)
+        cv2.polylines(canvas, [outer_2d], True, COL_STEM_EDGE, 2, cv2.LINE_AA)
+
+        # 3. 尾部根部切口横截面加粗白色标识 (纯白切口)
+        cv2.line(canvas, tuple(outer_2d[0]), tuple(outer_2d[1]), (255, 255, 255), 3, cv2.LINE_AA)
+
+        # 4. 头部尖端三角形箭头 (+Y 方向延伸 15mm 绿色箭头，指向笋尖朝向)
+        tip_3d = np.array([
+            [-half_w * 1.2, half_l, 0.0],
+            [ half_w * 1.2, half_l, 0.0],
+            [ 0.0,          half_l + 18.0, 0.0],
+        ], dtype=np.float64)
+        tip_proj, _ = cv2.projectPoints(tip_3d, rvec, tvec, K, dist)
+        tip_2d = tip_proj.reshape(-1, 2).astype(np.int32)
+        cv2.fillPoly(canvas, [tip_2d], COL_TIP_GREEN, cv2.LINE_AA)
+        cv2.polylines(canvas, [tip_2d], True, (30, 150, 40), 2, cv2.LINE_AA)
+
+        # 5. 笋尖前端角度数值显示 (纯数值无汉字, 居中投影在尖端前方, 防遮挡胶囊底衬)
+        if yaw_deg is not None:
+            # 笋尖箭头顶点在 Y = half_l + 18mm, 角度文字锚定在尖端前方 10mm (Y = half_l + 28mm)
+            text_anchor_3d = np.array([[0.0, half_l + 28.0, 0.0]], dtype=np.float64)
+            anchor_proj, _ = cv2.projectPoints(text_anchor_3d, rvec, tvec, K, dist)
+            proj_pt = anchor_proj.reshape(-1, 2)[0]
+            if np.all(np.isfinite(proj_pt)):
+                tx, ty = int(round(proj_pt[0])), int(round(proj_pt[1]))
+                ang_str = f"{yaw_deg:+.1f}°"
+                font_size = 15
+                (tw, th), _ = measure_text(ang_str, font_size=font_size, bold=True)
+
+                pad_x, pad_y = 6, 3
+                x1 = tx - tw // 2 - pad_x
+                y1 = ty - th // 2 - pad_y
+                x2 = tx + tw // 2 + pad_x
+                y2 = ty + th // 2 + pad_y + 1
+
+                # 画面边界防溢出保护
+                ch, cw = canvas.shape[:2]
+                if x1 < 4:
+                    x2 += 4 - x1
+                    x1 = 4
+                if x2 > cw - 4:
+                    x1 -= x2 - (cw - 4)
+                    x2 = cw - 4
+                if y1 < 4:
+                    y2 += 4 - y1
+                    y1 = 4
+                if y2 > ch - 4:
+                    y1 -= y2 - (ch - 4)
+                    y2 = ch - 4
+
+                # 防遮挡胶囊底板 (深黑灰背景 + 鲜绿描边, 确保在任何背景/长条上均清晰可见)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (20, 24, 28), -1)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (70, 210, 100), 1, cv2.LINE_AA)
+
+                # 绘制高亮抗锯齿角度数值 (RGB 鲜绿色)
+                draw_text(canvas, ang_str, (x1 + pad_x, y1 + pad_y), font_size=font_size,
+                          color=(90, 240, 120), bold=True)
+
     def draw_overlay(self, canvas, det):
-        """叠加层: 目标 Tag 绿色高亮框 + Studio 同款蓝色实测棱柱 (含底面/顶面中心点)"""
+        """叠加层: 芦笋 3D 拟真绿头白尾长条 (宽15mm x 长200mm) + 目标 Tag 绿色高亮框 + 实测棱柱"""
         tr = self.tr
         corners = det.get(tr.target_tag_id)
         if corners is None:
             return
         pts = corners.reshape((-1, 2)).astype(np.int32)
-        cv2.polylines(canvas, [pts], True, COL_GREEN, 3, cv2.LINE_AA)
-        if tr.recog_tag2_on or tr.show_anchors_on:
-            # 目标 Tag 法向先验: 世界系已锁定时用"朝向天空"先验消除 IPPE 二义性 180° 翻转
+
+        # 优先使用主流程解算得出的位姿，或当场解算
+        rvec_b, tvec_b = tr.target_rvec, tr.target_tvec
+        if rvec_b is None or tvec_b is None:
             z_exp = None
             if tr.world_locked and tr.locked_rvec is not None:
                 R_lock, _ = cv2.Rodrigues(tr.locked_rvec)
                 z_exp = R_lock @ np.array([0.0, 0.0, 1.0])
             ok_b, rvec_b, tvec_b = tr.engine.solve_single_tag_pnp(corners, expected_z_cam=z_exp)
             if ok_b:
-                self._draw_studio_prism(canvas, rvec_b, np.asarray(tvec_b).reshape(3, 1), False,
-                                        is_target=True)
-        cx, cy = pts.mean(axis=0).astype(int)
-        cv2.drawMarker(canvas, (cx, cy), COL_GREEN, cv2.MARKER_CROSS, 18, 2)
-        draw_text(canvas, f"Tag {tr.target_tag_id}", (cx + 12, cy - 24), 17, COL_GREEN, True)
+                tvec_b = np.asarray(tvec_b).reshape(3, 1)
+
+        # 1. 优先绘制芦笋 3D 拟真彩色长棒 (宽 15mm x 长 200mm, 尖端前端展示防遮挡角度数据)
+        if rvec_b is not None and tvec_b is not None:
+            self._draw_asparagus_stem(canvas, rvec_b, tvec_b, yaw_deg=tr.measured_r)
+
+        # 2. 完整保留原有的 Tag 2 绿色识别四边形角点框 (只留绿框, 去掉中心文字及汉字)
+        cv2.polylines(canvas, [pts], True, COL_GREEN, 3, cv2.LINE_AA)
+
+        # 3. 若开启棱柱显示，叠加 Studio 同款蓝色实测棱柱
+        if (tr.recog_tag2_on or tr.show_anchors_on) and rvec_b is not None and tvec_b is not None:
+            self._draw_studio_prism(canvas, rvec_b, tvec_b, False, is_target=True)
 
     def draw_anchor_overlay(self, canvas, det):
         """已知标靶棱柱叠加 (与 Offline Studio 同款棱柱参数, 数据源=相机实时帧):
@@ -661,7 +799,7 @@ class TrackerRenderer:
         """左上信息面板 (实测 / 理论 / 偏差 / 世界系状态 / 机械臂状态)"""
         tr = self.tr
         x1, y1 = 14, y_off + 14
-        x2, y2 = 478, y_off + 296
+        x2, y2 = 512, y_off + 296
         overlay = canvas.copy()
         cv2.rectangle(overlay, (x1, y1), (x2, y2), COL_PANEL_BG, -1)
         cv2.addWeighted(overlay, 0.62, canvas, 0.38, 0, canvas)
@@ -681,7 +819,8 @@ class TrackerRenderer:
             draw_text(canvas, "支撑: 无已知标靶入镜, 世界位姿失效",
                       (x1 + 14, y), 15, COL_RED)
         y += 26
-        draw_text(canvas, f"实测 {fmt_point(tr.measured)}",
+        r_txt = f"  R: {tr.measured_r:+6.1f}°" if getattr(tr, "measured_r", None) is not None else "  R:    -- "
+        draw_text(canvas, f"实测 {fmt_point(tr.measured)}{r_txt}",
                   (x1 + 14, y), 17, COL_GREEN if tr.measured is not None else COL_GRAY, True)
         y += 26
         theo_txt = f"理论 {fmt_point(tr.theoretical)}" if tr.theoretical is not None \

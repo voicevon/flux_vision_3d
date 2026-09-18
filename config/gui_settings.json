@@ -7,13 +7,13 @@
     "scale_pct": 110,
     "canvas_w": 1280,
     "canvas_h": 1000,
-    "updated_at": "2026-09-19 06:30:42"
+    "updated_at": "2026-09-19 06:59:38"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-19 06:30:58",
+    "updated_at": "2026-09-19 06:57:31",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1920x1080",
@@ -33,13 +33,13 @@
     "scale_pct": 60,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-18 22:41:56"
+    "updated_at": "2026-09-19 06:47:04"
   },
   "hardware_config": {
     "scale_pct": 100,
     "canvas_w": 760,
     "canvas_h": 560,
-    "updated_at": "2026-09-18 22:09:27"
+    "updated_at": "2026-09-19 06:49:51"
   },
   "capture_wizard": {
     "scale_pct": 100,
@@ -51,7 +51,7 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-19 06:15:37"
+    "updated_at": "2026-09-19 06:44:48"
   },
   "d435_viewer": {
     "scale_pct": 100,

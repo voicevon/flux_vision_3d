@@ -65,3 +65,20 @@ def _tag_local_frame(wc):
 
 PRISM_HW_MM = 15.0        # 棱柱截面半宽 mm (截面 30x30, 与 Offline Studio 一致)
 PRISM_HEIGHT_MM = 75.0    # 棱柱生长高度 mm (与 Offline Studio 一致)
+
+# ============================ 芦笋几何物理尺寸 (宽15mm x 长200mm, 以Tag中心对称延伸各100mm) ============================
+ASPARAGUS_WIDTH_MM = 15.0         # 芦笋物理宽度 (mm)
+ASPARAGUS_LENGTH_MM = 200.0       # 芦笋物理总长 (mm)
+ASPARAGUS_HALF_LENGTH_MM = 100.0  # 芦笋半长 (以 Tag 为中心对称延伸各 100mm)
+ASPARAGUS_HALF_WIDTH_MM = 7.5     # 芦笋半宽 (mm)
+
+
+def fmt_pose_4d(p, r_deg=None):
+    """四维位姿格式化 (X Y Z R)"""
+    if p is None:
+        return "    --      --      --      --"
+    base = f"{p[0]:7.1f} {p[1]:7.1f} {p[2]:7.1f}"
+    if r_deg is not None:
+        return f"{base}  R:{r_deg:+6.1f}°"
+    return f"{base}  R:   -- "
+

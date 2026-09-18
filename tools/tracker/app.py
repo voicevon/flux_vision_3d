@@ -149,6 +149,9 @@ class RobotOnlineTracker:
 
         # 6. 跟踪运行状态
         self.measured = None        # 目标 Tag 世界坐标实测 (EMA 平滑)
+        self.measured_r = None      # 目标 Tag 局部 Y 轴偏航角/旋转角 R (度, 世界系水平投影, EMA 平滑)
+        self.target_rvec = None     # 目标 Tag 相机系旋转向量 (供 3D 拟真芦笋投影)
+        self.target_tvec = None     # 目标 Tag 相机系平移向量 (供 3D 拟真芦笋投影)
         self.measured_time = 0.0    # 最近一次目标成功解算的时刻 (单次识别结果判定)
         self.rmse = None            # 世界位姿 PnP 重投影 RMSE (px)
         self.support_ids = []       # 支撑世界位姿解算的标靶 ID
@@ -347,6 +350,7 @@ class RobotOnlineTracker:
         det = self.engine.detect_tags(frame)
         det = self._detect_high_precision(frame, det)  # 目标 Tag ROI 放大重检 (高精度)
         target_world = None
+        target_r = None
         c2 = det.get(self.target_tag_id)
 
         if c2 is not None:
@@ -354,25 +358,48 @@ class RobotOnlineTracker:
             R_lock = (cv2.Rodrigues(self.locked_rvec)[0]
                       if (self.world_locked and self.locked_rvec is not None) else None)
             z_exp = None if R_lock is None else R_lock @ np.array([0.0, 0.0, 1.0])
-            ok2, _, t2 = self.engine.solve_single_tag_pnp(c2, expected_z_cam=z_exp)
+            ok2, rvec2, t2 = self.engine.solve_single_tag_pnp(c2, expected_z_cam=z_exp)
             if ok2:
+                self.target_rvec = rvec2
+                self.target_tvec = t2.reshape((3, 1))
+                R_c_t2, _ = cv2.Rodrigues(rvec2)
                 if R_lock is not None:
                     p_cam = t2.reshape(3)
                     target_world = R_lock.T @ (p_cam - self.locked_tvec.reshape(3))
                     self.support_ids = ["锁定"]
+                    # 芦笋长轴为 Tag 局部 Y 轴: 计算 Y 轴在世界系水平 XY 平面上的朝向角度 (度)
+                    R_w_t2 = R_lock.T @ R_c_t2
+                    v_w_y = R_w_t2[:, 1]  # Y 轴方向向量
+                    target_r = float(np.degrees(np.arctan2(v_w_y[1], v_w_y[0])))
                 else:
                     self.support_ids = []
+                    # 未锁定时用相机系下 Y 轴方向角
+                    v_c_y = R_c_t2[:, 1]
+                    target_r = float(np.degrees(np.arctan2(v_c_y[1], v_c_y[0])))
+            else:
+                self.target_rvec = None
+                self.target_tvec = None
+        else:
+            self.target_rvec = None
+            self.target_tvec = None
 
-        # 更新显示状态 (实测坐标 EMA 平滑抑制抖动)
+        # 更新显示状态 (实测坐标与 R 轴旋转角 EMA 平滑抑制抖动)
         if target_world is not None:
             p = target_world
             self.measured = p if self.measured is None else 0.5 * self.measured + 0.5 * p
+            if target_r is not None:
+                if self.measured_r is None:
+                    self.measured_r = target_r
+                else:
+                    diff = (target_r - self.measured_r + 180.0) % 360.0 - 180.0
+                    self.measured_r = (self.measured_r + 0.4 * diff + 180.0) % 360.0 - 180.0
             self.measured_time = time.time()
         return det
 
     def _solve_per_frame(self, det):
         """确定世界坐标系流程用: 识别锚定标靶 (排除 Tag 2) -> 相机世界位姿 PnP"""
-        sol = {"support": [], "rmse": None, "target_world": None,
+        sol = {"support": [], "rmse": None, "target_world": None, "target_r": None,
+               "target_rvec": None, "target_tvec": None,
                "rvec": None, "tvec": None}
 
         obj_list, img_list, ids = [], [], []
@@ -403,11 +430,17 @@ class RobotOnlineTracker:
                 if c2 is not None:
                     # 目标 Tag 法向"朝向天空"先验: 用锚定 PnP 旋转把世界 +Z 映到相机系
                     R_wc, _ = cv2.Rodrigues(rvec)
-                    ok2, _, t2 = self.engine.solve_single_tag_pnp(
+                    ok2, rvec2, t2 = self.engine.solve_single_tag_pnp(
                         c2, expected_z_cam=R_wc @ np.array([0.0, 0.0, 1.0]))
                     if ok2:
                         p_cam = t2.reshape(3)                      # 目标 Tag 中心 (相机系)
                         sol["target_world"] = R_wc.T @ (p_cam - tvec.reshape(3))  # -> 世界系
+                        sol["target_rvec"] = rvec2
+                        sol["target_tvec"] = t2
+                        R_c_t2, _ = cv2.Rodrigues(rvec2)
+                        R_w_t2 = R_wc.T @ R_c_t2
+                        v_w_y = R_w_t2[:, 1]
+                        sol["target_r"] = float(np.degrees(np.arctan2(v_w_y[1], v_w_y[0])))
         return sol
 
     def _detect_high_precision(self, frame, det):
@@ -809,10 +842,11 @@ class RobotOnlineTracker:
             self.set_toast("尚无有效的目标解算结果, 请先识别目标", True)
             return
         target = self.measured.copy()
+        target_r = getattr(self, "measured_r", None)
         self._last_track_target = target
         self.tracking = True
         self.track_thread = threading.Thread(
-            target=self._track_worker, args=(target,), daemon=True)
+            target=self._track_worker, args=(target, target_r), daemon=True)
         self.track_thread.start()
 
     def toggle_track_armed(self):
@@ -834,6 +868,7 @@ class RobotOnlineTracker:
         if self.measured is None:
             return
         target = self.measured.copy()
+        target_r = getattr(self, "measured_r", None)
         if self._last_track_target is not None and \
                 np.linalg.norm(target - self._last_track_target) < self.TRACK_RETRIGGER_MM:
             return
@@ -842,21 +877,21 @@ class RobotOnlineTracker:
         self._last_track_target = target
         self.tracking = True
         self.track_thread = threading.Thread(
-            target=self._track_worker, args=(target,), daemon=True)
+            target=self._track_worker, args=(target, target_r), daemon=True)
         self.track_thread.start()
 
-    def _track_worker(self, target):
-        """跟踪线程: 单条 G1 水平平移 (Z=80 固定, E=90 固定, 仅跟踪 X/Y) -> M114 回读 -> 偏差计算
-        (Z 轴不再参与三段式抬起→下探; 直接平移到目标 X/Y, Z 锁死安全高度 80mm, R 轴锁死 90°)"""
+    def _track_worker(self, target, target_r=None):
+        """跟踪线程: 单条 G1 水平平移 (Z=80 固定, 联动 X/Y 与 R 轴/E 轴角度) -> M114 回读 -> 偏差计算"""
         try:
-            # 跟踪目标位姿: X/Y 来自视觉解算, Z 固定 80 (安全高度), E 固定 90 (R 轴)
+            r_val = float(target_r) if target_r is not None else getattr(self, "measured_r", None)
+            e_str = f"E{r_val:.2f}" if r_val is not None else "E90.00"
+            r_desc = f"R={r_val:.1f}°" if r_val is not None else "E=90°(默认)"
             target_pose = (target[0], target[1], 80.0)
             self.add_track_log(
-                f"目标 ← 视觉: X{target[0]:.1f} Y{target[1]:.1f} "
-                f"(Z=80 固定, E=90 固定)")
-            self.track_stage = "移动中: 水平平移 (Z=80, E=90 锁定)"
+                f"目标 ← 视觉: X{target[0]:.1f} Y{target[1]:.1f} {r_desc} (Z=80 固定)")
+            self.track_stage = f"移动中: 水平平移 (Z=80, {r_desc})"
             cmd = (f"G1 X{target[0]:.2f} Y{target[1]:.2f} "
-                   f"Z80.00 E90.00 F{self.TRACK_FEEDRATE}")
+                   f"Z80.00 {e_str} F{self.TRACK_FEEDRATE}")
             self.add_track_log(f"发送: {cmd}", "cmd")
             if not self.robot.send_gcode(cmd, timeout=30.0, wait_done=True):
                 self.add_track_log("移动失败 (无 ok 应答)", "err")
