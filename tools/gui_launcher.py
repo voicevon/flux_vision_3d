@@ -116,151 +116,149 @@ def build_tools_catalog() -> List[ToolCardMeta]:
         ToolCardMeta(
             key_id="scene_hub",
             shortcut="1",
-            title="场景管理",
-            subtitle="★ 顶层数据总控！沙盒画廊/大图巡检/生产发布",
+            title="场景",
+            subtitle="",
             category="A — 环境场景",
             is_gui=True,
             command=[sys.executable, "-m", "tools.scene_hub"],
             tag_color=COLOR_A,
-            summary="【首位核心中枢】视觉系统的工况沙盒容器与数据总控驾驶舱，连接采集、平差与生产部署。",
+            summary="视觉工况场景数据中枢，支持多沙盒隔离、标定平差与生产一键发布。",
             details=[
-                "多工况画廊管理：选择、新建、重命名、克隆与独立物理沙盒数据隔离",
-                "三大视图模式：标准三栏工作台 / 单帧大图全宽巡检 / 纯净几何健康看板",
-                "场景几何健康度体检：动态覆盖率热力、留一盲测残差分布与两阶段平差指标",
-                "严格恪守【工况沙盒隔离、标定平差验证、生产原子发布】工业安全基准"
+                "工况沙盒管理：多场景创建、重命名、克隆与物理存储隔离",
+                "多视角画廊看板：标准三栏工作台、大图巡检与几何健康度视图",
+                "场景健康体检：覆盖率分析、留一盲测残差与两阶段平差指标",
+                "生产原子发布：标定成果一键发布至生产环境 tags_map.yaml"
             ],
-            inputs=["data/calibration_scenes/ 工况沙盒目录"],
-            outputs=["工况场景管理、scene_meta.yaml、一键原子发布到 config/tags_map.yaml"],
+            inputs=["data/calibration_scenes/ 场景目录"],
+            outputs=["scene_meta.yaml、生产发布 config/tags_map.yaml"],
             quick_tips="快捷键: [1] 启动 | 中枢内 [⏎] 激活 | [P] 发布生产 | [S] 进Studio",
         ),
 
         ToolCardMeta(
             key_id="hardware_config",
             shortcut="2",
-            title="确定输入输出设备",
-            subtitle="输入: 相机+分辨率 / 输出: 机械臂+串口",
+            title="输入输出设备",
+            subtitle="",
             category="A — 环境场景",
             is_gui=True,
             command=[sys.executable, "tools/hardware_config.py"],
             tag_color=COLOR_A,
-            summary="【设备选型】确定输入输出设备：输入-默认摄像机与分辨率、输出-机械臂类型 (SCARA/Delta) 与默认串口。",
+            summary="确定系统输入输出硬件选型，配置统一持久化供各模块自动读取。",
             details=[
-                "选择默认摄像机类型 (RealSense / USB 摄像头) 及其默认分辨率",
-                "选择机械臂类型: SCARA (串联) 或 Delta (并联), 并指定默认串口",
-                "配置统一持久化, 各生产工具启动时自动读取, 免去重复选择"
+                "输入相机选型：选择 RealSense 或 USB 摄像头及工作分辨率",
+                "输出机械臂选型：选择 SCARA (串联) 或 Delta (并联) 构型",
+                "通信端口配置：指定机械臂默认连接串口通信参数",
+                "全局配置持久化：保存至系统配置文件，启动各工具时自动生效"
             ],
-            inputs=["无 (纯配置界面)"],
-            outputs=["设备选型配置文件 (相机选型/分辨率/机械臂类型/默认串口)"],
-            quick_tips="快捷键: [2] 启动 | 下拉选择后自动保存, 下次启动全系统生效",
+            inputs=["系统配置文件 config.yaml"],
+            outputs=["硬件设备选型与串口通信参数"],
+            quick_tips="快捷键: [2] 启动 | 下拉选择后自动保存生效",
         ),
 
         # ===== B — Tag 标定流水线 (4张，2×2) =====
         ToolCardMeta(
             key_id="tag_manager",
             shortcut="3",
-            title="AprilTag 管理器",
-            subtitle="图纸生成 + 白名单管理 (cv2 GUI)",
+            title="AprilTag",
+            subtitle="图纸生成 + 白名单管理",
             category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/calibration/tag_manager.py"],
             tag_color=COLOR_B,
-            summary="【标定流水线 Step 0】统一管理 AprilTag 16h5 标靶：图纸生成 (PNG/PDF) + 白名单配置 (0~29 ID toggle)。",
+            summary="AprilTag 16h5 标靶统一管理，支持标靶图纸生成与白名单配置。",
             details=[
-                "📐 图纸生成 Tab: 一键生成 ID 00~29 高清 PNG + 2 页 A4 PDF 排版 + 总览网格预览",
-                "✅ 白名单管理 Tab: 30 个 Tag ID 方块 toggle / 全选 / 清空 / 预设 (0+18~29)",
-                "💾 白名单直接写回 config.yaml → calibration.valid_tag_ids",
-                "💾 窗口位置、缩放、当前 Tab、生成参数 自动持久化"
+                "图纸生成：一键生成 ID 0~29 标靶高清图与 A4 打印 PDF",
+                "白名单管理：30 个 Tag ID 启用/禁用与快速预设切换",
+                "配置同步：白名单直接写回 config.yaml valid_tag_ids",
+                "打印要求：按 100% 实际尺寸打印，请勿勾选适应页面"
             ],
-            inputs=["系统已安装 reportlab 库 (pip install reportlab)"],
-            outputs=["data/apriltags_16h5/ (PNG+PDF) | config.yaml (valid_tag_ids)"],
-                        quick_tips="快捷键: [3] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF，勿选“适应页面”"
+            inputs=["reportlab 依赖库 (用于 PDF 排版导出)"],
+            outputs=["data/apriltags_16h5/ (PNG/PDF) | config.yaml 白名单"],
+            quick_tips="快捷键: [3] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF"
         ),
 
         ToolCardMeta(
             key_id="tag_wizard",
             shortcut="4",
-            title="采图向导 (Wizard)",
-            subtitle="GUI先行纯预览/空格连拍保存/自动归档场景",
+            title="采图",
+            subtitle="",
             category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/capture/capture_wizard.py"],
             tag_color=COLOR_B,
-            summary="【现场采图助手】专职采图向导：GUI 先行启动，点[开启]进入实时预览，空格连拍保存采集样本。",
+            summary="交互式现场采图助手，提供实时画面预览与快捷连拍采集。",
             details=[
-                "启动仅加载界面不开相机，选择相机与分辨率后点击 [开启] 进入实时预览",
-                "按 [空格键] 极速连拍保存，样本自动存入当前场景 raw_images/ 目录",
-                "[ / ] 调节曝光、[E] 切换自动曝光，白闪快门反馈，返回主中枢自动热重载"
+                "相机画面预览：启动界面后按需开启相机视频取流",
+                "快捷连拍采图：空格键一键拍照并自动归档至当前场景",
+                "曝光实时调节：支持曝光微调与白闪快门视觉反馈",
+                "中枢自动同步：采集完成后数据自动同步至场景管理中枢"
             ],
-            inputs=["RealSense / USB 相机 (界面内点击 [开启] 启动取流)"],
-            outputs=["选定工况场景 raw_images/view_*.png 原始高质量未压缩图集"],
-            quick_tips="快捷键: [3] 启动 | 预览中 [空格] 拍摄保存 | [ / ] 曝光调节 | [ESC]/[Q] 退出"
+            inputs=["RealSense 深度相机或 USB 摄像头"],
+            outputs=["当前工况场景 raw_images/ 原始图集"],
+            quick_tips="快捷键: [4] 启动 | 预览中 [空格] 拍摄保存 | [ESC]/[Q] 退出"
         ),
 
         ToolCardMeta(
             key_id="tag_studio",
             shortcut="5",
-            title="离线标定工作站 (Studio)",
-            subtitle="多视角审核/两阶段 BA 平差/智能剪枝/质检闭环",
+            title="Offline Studio",
+            subtitle="",
             category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/studio/app.py"],
             tag_color=COLOR_B,
-            summary="【离线标定核心】一站式样本交互审核、高精两阶段 BA 平差求解、智能剪枝与质检闭环。",
+            summary="离线标定核心工作站，提供多视角样本交互审核与两阶段 BA 平差求解。",
             details=[
-                "自动装载当前工况沙盒场景，多视角图像九宫格缩略图交互式审核与启闭",
-                "两阶段全局平差：Cauchy 鲁棒核粗平差 + MAD 统计自适应清洗 + LM 精平差",
-                "智能残差剪枝 (Auto-Prune)：自动迭代剪除反光/微动导致的高残差外点，拓扑安全守门",
-                "视网膜级热力覆盖度评估，一键导出 Markdown 格式全面质检体检报告",
-                "内置支持工具：标靶图纸生成 (A4 PDF) 与漏检病因切片诊断已全面打通支持"
+                "样本交互审核：多视角图像缩略图快速浏览与启闭",
+                "两阶段 BA 平差：Cauchy 粗平差结合 LM 精平差高精度求解",
+                "智能残差剪枝：自动剔除高残差反光外点，守门拓扑结构",
+                "质检与体检报告：视网膜热力覆盖度评估并导出质检报告"
             ],
-            inputs=["选定工况场景 raw_images/", "相机内参 camera_intrinsics.yaml"],
-            outputs=["当前场景 tags_map.yaml", "reports/studio_qa_report_*.md 质检报告"],
-            quick_tips="快捷键: [5] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
+            inputs=["当前场景 raw_images/、相机内参文件"],
+            outputs=["当前场景 tags_map.yaml、质检评估报告"],
+            quick_tips="快捷键: [5] 启动 | 工作站内 [⏎] 求解 | [P] 剪枝 | [R] 导出报告"
         ),
 
         ToolCardMeta(
             key_id="asparagus_offline",
             shortcut="6",
-            title="芦笋抓取位姿离线验证",
-            subtitle="文件照片输入/批量解算/G-code 预览",
+            title="芦笋抓取位置",
+            subtitle="",
             category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/asparagus_offline.py"],
             tag_color=COLOR_B,
-            summary="【标定收尾验证】完全离线工具：文件照片输入，解算顶层芦笋空间位姿并预览 SCARA 抓取 G-code。",
+            summary="离线解算芦笋空间位姿，验证抓取算法并预览 SCARA 机械臂 G-code。",
             details=[
-                "数据源为文件照片：默认扫描 data/snapshots/ 快照 (d435_viewer [S] 抓拍)，--dir 指定目录",
-                "彩色 png + 对齐深度 npy 成对 → 完整 3D 链路：台面拟合/实例切分/顶层判决/SCARA 位姿",
-                "纯照片自动降级 2D 预览：轴线倾角与标称距离估算尺寸，不生成抓取 G-code",
-                "内参与标定链与生产同源：config.yaml 内参按快照分辨率自动缩放，AprilTag 建图/手工矩阵三级降级",
-                "一键批量解算目录全样本，输出 reports/asparagus_batch_report_*.md 汇总报表"
+                "文件样本载入：基于快照图像或指定目录样本离线解算",
+                "3D 空间解算：台面点云拟合、实例切分与顶层芦笋空间位姿判决",
+                "G-code 路径预览：实时计算 SCARA 机械臂抓取动作路径与坐标",
+                "批量报表导出：一键批量验证样本库并输出汇总报表"
             ],
-            inputs=["样本照片目录 (data/snapshots/ 或 --dir)", "config.yaml (内参/标定矩阵/机械臂参数)", "tags_map.yaml (AprilTag 建图, 可选)"],
-            outputs=["标注可视化与检测结果列表", "SCARA 抓取 G-code 预览与导出 (reports/)", "批量汇总报表 (reports/asparagus_batch_report_*.md)"],
-            quick_tips="快捷键: [6] 启动 | 界面内 [↑↓] 切换样本 | [B] 批量解算 | [E] 导出G-code | [ESC] 退出"
+            inputs=["样本照片目录 (data/snapshots/ 或 --dir)"],
+            outputs=["芦笋位姿检测结果、抓取 G-code 预览与批量报表"],
+            quick_tips="快捷键: [6] 启动 | [↑↓] 切换样本 | [B] 批量解算 | [ESC] 退出"
         ),
 
         ToolCardMeta(
             key_id="robot_online_tracker",
             shortcut="7",
             title="Robot 在线跟踪",
-            subtitle="Tag2 世界坐标实时解算/机械臂联动跟踪/相机位置校准",
+            subtitle="",
             category="B — Tag 标定流水线",
             is_gui=True,
             command=[sys.executable, "tools/tracker/app.py"],
             tag_color=COLOR_B,
-            summary="【在线联动校准】真实相机实时解算目标 Tag 世界坐标，机械臂三段式安全路径跟踪并对比末端偏差。",
+            summary="实时解算标靶空间世界坐标，联动机械臂安全跟踪并比对末端偏差。",
             details=[
-                "GUI 先行启动，顶部工具栏选择相机 (RealSense D435 / USB 摄像头) 与分辨率后一键开启",
-                "视野内已知标靶世界角点 PnP 解相机世界位姿，进而实时解出目标 Tag (默认 2 号) 世界坐标",
-                "开启相机后为纯预览；[确定世界坐标系] 一键执行：识别锚定标靶(不含Tag2)→动态采样滤波(5~30帧,偏差<2mm提前收敛)→求解零点→锁定",
-                "[识别 Tag 2] 开关打开后每帧仅识别 Tag 2，锁定状态下解算其世界坐标",
-                "按 [T] 经串口 (FR-7.1) 以\"抬起→平移→下探\"安全路径驱动末端跟踪目标 Tag",
-                "到位后 M114 回读末端实际坐标，与视觉解算坐标同屏对比偏差，用于相机位置校准"
+                "实时世界坐标解算：PnP 算法实时计算目标 Tag 3D 世界坐标",
+                "世界坐标系标定：锚定标靶采样滤波并一键锁定原点",
+                "机械臂安全跟踪：三段式安全路径驱动机械臂末端靠近目标",
+                "末端偏差比对：回读机械臂实际坐标与视觉解算同屏比对校准"
             ],
-            inputs=["RealSense D435 或 USB 摄像头", "当前场景世界坐标地图 tags_map.yaml", "机械臂串口 COM3 (config.yaml robot)"],
+            inputs=["RealSense 或 USB 相机、tags_map.yaml、机械臂串口"],
             outputs=["屏幕实时世界坐标显示、机械臂末端到位偏差统计"],
-            quick_tips="快捷键: [7] 启动 | 界面内 [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定世界坐标系 | [C] 连接机械臂 | [T] 触发跟踪 | [X] 退出"
+            quick_tips="快捷键: [7] 启动 | [A] 标靶 | [L] 定原点 | [C] 连机械臂 | [T] 跟踪"
         ),
 
         # ===== D — 生产调试 =====
@@ -268,41 +266,39 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             key_id="d435_live",
             shortcut="8",
             title="RealSense 诊断",
-            subtitle="硬件检测/深度探针/顶部按钮栏",
+            subtitle="硬件检测/深度探针/双流画面",
             category="D — 生产调试",
             is_gui=True,
             command=[sys.executable, "tools/d435_viewer.py"],
             tag_color=COLOR_D,
-            summary="【纯预览诊断】RealSense 物理深度相机查看器，无任何识别/保存等业务功能。",
+            summary="RealSense 深度相机纯预览诊断，支持 RGB 与对齐深度双流探针。",
             details=[
-                "实时 RGB + 对齐深度流，支持独立开关 RGB/Depth 画面",
-                "上下/左右排列切换，暂停定格，缩放放大缩小",
-                "鼠标探针: 毫米级深度与 (X, Y, Z) 空间坐标",
-                "深度热力图色阶可微调，支持自动量程"
+                "实时双流显示：独立开关 RGB 与对齐深度流画面",
+                "多视窗排布：支持上下/左右排列切换与画面缩放",
+                "空间深度探针：鼠标悬停读取毫米级深度与 3D 坐标",
+                "深度色阶微调：支持自动量程与热力图色彩映射"
             ],
             inputs=["Intel RealSense D435 深度相机 或 USB 摄像头"],
             outputs=["屏幕实时预览画面与深度探针读数 (不落盘)"],
-            quick_tips="快捷键: [8] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
+            quick_tips="快捷键: [8] 启动 | [Space] 暂停 | [V] 排列 | [S] 抓拍 | [Q] 退出"
         ),
 
         # ===== D — 生产调试 (续，SCARA 机械臂调试) =====
         ToolCardMeta(
             key_id="scara_debug",
             shortcut="9",
-            title="SCARA 机械臂调试 (Flux Loader)",
-            subtitle="串口点动/回零设零/夹爪舵机/搬运宏/G-code 透传",
+            title="SCARA 机械臂调试",
+            subtitle="点动/回零/设零/舵机/G-code 透传",
             category="D — 生产调试",
             is_gui=True,
             command=[sys.executable, "tools/scara_debug/app.py"],
             tag_color=COLOR_D,
-            summary="【机械臂调试台】MKS Base V1.6 (Marlin) SCARA 调试终端，功能与 CLI 调试器一比一的图形化界面。",
+            summary="SCARA 机械臂图形化调试终端，支持轴点动、回零设零与 G-code 透传。",
             details=[
-                "串口连接管理：自动枚举端口、手动输入连接、--mock 仿真模式",
-                "限位诊断 M119 / 一键三轴回零 G28 / 设零 G92 / 坐标刷新 M114 / 释放电机 M84",
-                "笛卡尔与关节角点动 (W/S/A/D/U/J/Q/E + O/L/I/K)，1/10/50mm 三档步长",
-                "Z 轴快捷升降与指定高度，双/单夹爪舵机开闭控制",
-                "直达目标坐标、预设工位跳转 (与 CLI 共享 ~/.flux_loader/presets.json)",
-                "芦笋搬运节拍宏 N 次循环、原生 G-code 指令透传与应答日志"
+                "串口连接管理：自动枚举端口连接并支持仿真模式",
+                "核心运动控制：限位诊断、三轴回零、坐标设零与电机释放",
+                "点动与舵机控制：笛卡尔与关节角点动，支持末端夹爪开闭",
+                "工位跳转与透传：预设工位跳转、搬运节拍宏与原生 G-code 透传"
             ],
             inputs=["MKS Base V1.6 串口 (如 COM11)", "几何参数 loader_core/config.py"],
             outputs=["串口 G-code 指令下发、机械臂动作执行与通信日志"],
@@ -313,22 +309,22 @@ def build_tools_catalog() -> List[ToolCardMeta]:
         ToolCardMeta(
             key_id="sys_diagnose_tests",
             shortcut="T",
-            title="系统环境深度诊断与测试套件",
-            subtitle="[T] 驱动与依赖诊断 / 85+ 项自动化 CI/CD 全量测试",
+            title="系统环境诊断与测试",
+            subtitle="[T] 驱动与依赖诊断 / 自动化测试套件",
             category="D — 生产调试",
             is_gui=False,
             command=[sys.executable, "tools/diagnose_env.py"],
             tag_color=COLOR_D,
-            summary="【系统健康与质量守门】全面检查系统环境依赖，并提供工程全量自动化测试套件。",
+            summary="全面检查系统运行环境依赖，并提供全量自动化测试套件守门。",
             details=[
-                "全面检查 Python、OpenCV、NumPy C-API 及 RealSense USB 3.0 驱动就绪状态",
-                "排查 yaml、PIL、matplotlib、scipy 等工业科学计算包环境版本",
-                "全量测试执行命令：python -m unittest discover -s tests -p \"test_*.py\"",
-                "涵盖数学平差 (BA)、图论连通拓扑、外参盲测体检与 UI 状态机，保障发布质量"
+                "核心依赖检查：排查 Python、OpenCV、NumPy 及相机驱动状态",
+                "科学计算库诊断：检查 yaml、matplotlib、scipy 等工业计算包",
+                "全量自动化测试：一键运行 unittest 测试矩阵验证代码稳定性",
+                "质量安全守门：覆盖平差算法、拓扑连通性与 UI 状态机"
             ],
             inputs=["系统底层环境注册表与 tests/ 全量测试框架"],
             outputs=["嵌入式终端实时输出逐项绿勾诊断报告与全工程测试矩阵"],
-            quick_tips="快捷键: [T] 启动环境深度诊断 (内嵌终端) | 遇到红叉时依提示执行 pip 修复命令",
+            quick_tips="快捷键: [T] 启动环境深度诊断 (内嵌终端) | 遇到红叉时依提示执行修复",
             mode="TERM"
         ),
 
@@ -341,36 +337,17 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             is_gui=False,
             command=[sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
             tag_color=COLOR_D,
-            summary="【环境维护】一键安装或更新项目全部 Python 依赖包，确保与 requirements.txt 严格对齐。",
+            summary="一键安装或更新项目 Python 依赖包，确保与 requirements.txt 严格对齐。",
             details=[
-                "安装/更新 requirements.txt 中声明的全部依赖",
-                "自动处理 numpy、opencv、pyrealsense2、pyyaml 等核心包",
-                "离线/网络环境均可运行，失败时终端会提示缺失源"
+                "依赖自动安装：安装 requirements.txt 中声明的全部依赖",
+                "核心库版本锁定：自动处理 numpy、opencv、pyrealsense2 等核心包",
+                "离线与在线兼容：支持本地轮子包与源配置提示",
+                "环境快速就绪：克隆项目或更新依赖后的一键初始化入口"
             ],
             inputs=["requirements.txt 文件"],
             outputs=["pip 安装进度与版本锁定结果"],
             quick_tips="快捷键: [P] 启动 (内嵌终端) | 首次克隆项目后必执行",
             mode="TERM"
-        ),
-
-        ToolCardMeta(
-            key_id="open_cmd",
-            shortcut="X",
-            title="项目根目录命令行 (CMD)",
-            subtitle="[X] 打开 CMD，工作目录自动定位到 flux_vision_3d",
-            category="D — 生产调试",
-            is_gui=False,
-            command=["cmd.exe", "/k", "cd /d " + os.path.dirname(os.path.dirname(os.path.abspath(__file__)))],
-            tag_color=COLOR_D,
-            summary="【开发快速入口】一键打开 CMD 并自动 cd 到项目根目录，省去手动路径粘贴。",
-            details=[
-                "Windows CMD 自动定位到 flux_vision_3d 项目根目录",
-                "保持窗口打开 (/k)，可连续执行 python / pytest / git 等命令",
-                "配合 requirements.txt 依赖安装、调试脚本运行等高频操作"
-            ],
-            inputs=["无"],
-            outputs=["新 CMD 窗口，路径已在项目根"],
-            quick_tips="快捷键: [X] 启动 | CMD 窗口会保持打开等待输入"
         ),
     ]
     return catalog
@@ -556,7 +533,7 @@ class GuiLauncherApp:
         # ── 1.5 嵌入式终端滚轮回看 (普通滚轮 + 终端视图 + 鼠标在右侧大屏内) ──────
         if event == cv2.EVENT_MOUSEWHEEL and not handled and self._is_terminal_view():
             s = self.scale_pct / 100.0
-            CW = max(200, int(370 * s))
+            CW = max(130, int(222 * s))
             SX = max(6, int(12 * s))
             X0 = max(8, int(15 * s))
             split_x = X0 + CW * 2 + SX + max(8, int(15 * s))
@@ -574,11 +551,11 @@ class GuiLauncherApp:
         s = self.scale_pct / 100.0
         # 鼠标左键点击
         if event == cv2.EVENT_LBUTTONDOWN:
-            # 顶部右上角退出按钮 (自适应右对齐)
-            bw = int(125 * s)
-            bh = int(34 * s)
-            bx = self.canvas_w - bw - int(15 * s)
-            by = int(10 * s)
+            # 顶部右上角退出按钮 (自适应右对齐，纯“退出”)
+            bw = max(60, int(80 * s))
+            bh = max(24, int(34 * s))
+            bx = self.canvas_w - bw - max(8, int(15 * s))
+            by = max(6, int(10 * s))
             if bx <= x <= bx + bw and by <= y <= by + bh:
                 self._running = False
                 return
@@ -623,26 +600,26 @@ class GuiLauncherApp:
         # 方向键：将卡片索引映射到 (row, col) 坐标后导航
         # row 0: idx 0-1 (A 环境场景 2张并列)
         # rows 1-3: idx 2-6 (B 5张: 2+2+1)
-        # rows 4-6: idx 7-11 (D 5张: 2+2+1)
+        # rows 4-5: idx 7-10 (D 4张: 2+2)
         def idx_to_rc(i: int) -> Tuple[int, int]:
             if i <= 1:
                 return (0, i)
             if 2 <= i <= 6:   # B 区
                 b = i - 2
                 return (b // 2 + 1, b % 2)
-            d = i - 7         # D 区
+            d = i - 7         # D 区 (4张: 2+2)
             return (d // 2 + 4, d % 2)
 
         def rc_to_idx(r: int, c: int) -> int:
             if r == 0:
                 return min(c, 1)
-            if 1 <= r <= 3:   # B 区 (row3 仅左列)
+            if 1 <= r <= 3:   # B 区 (row3 仅左列 idx 6)
                 base_b = (r - 1) * 2
                 return min(2 + base_b + c, 6)
-            if 4 <= r <= 6:   # D 区 (row6 仅左列)
+            if 4 <= r <= 5:   # D 区 (row4: idx 7, 8; row5: idx 9, 10)
                 base_d = (r - 4) * 2
-                return min(7 + base_d + c, 11)
-            return 11
+                return min(7 + base_d + c, 10)
+            return 10
 
         row, col = idx_to_rc(self.selected_tool_idx)
 
@@ -654,7 +631,7 @@ class GuiLauncherApp:
             return
 
         if raw_key in (2621440, 65364, 40):    # 下
-            if row < 6:
+            if row < 5:
                 row += 1
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
@@ -712,7 +689,6 @@ class GuiLauncherApp:
             # 单字母快捷键 (无数字键卡片)
             't': "sys_diagnose_tests",
             'p': "pip_install",
-            'x': "open_cmd",
         }
 
         if key_char in shortcut_map:
@@ -727,15 +703,15 @@ class GuiLauncherApp:
     def _get_card_rect(self, idx: int) -> Tuple[int, int, int, int]:
         """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
-        布局 (7行，3分组):
-          row 0    A 环境场景 (2张并列)
-          rows 1-3  B Tag 标定流水线 (5张: 2+2+1)
-          rows 4-6  D 生产调试 (5张: 2+2+1)
+        布局 (6行，3分组，共 11 张卡片):
+          row 0     A 环境场景 (2张并列: idx 0~1)
+          rows 1-3  B Tag 标定流水线 (5张: 2+2+1, idx 2~6)
+          rows 4-5  D 生产调试 (4张: 2+2, idx 7~10)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
         CH = max(40, int(70 * s))
-        CW = max(200, int(370 * s))
+        CW = max(130, int(222 * s))
         SX = max(6, int(12 * s))
         SY = max(4, int(8 * s))
         GY = max(16, int(40 * s))
@@ -750,7 +726,7 @@ class GuiLauncherApp:
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        # D: 5张 (2+2+1, 3行)
+        # D: 4张 (2+2, 2行: idx 7~10)
         d = idx - 7
         base_y = Y0 + LH + CH + GY + LH + 3 * (CH + SY) + GY + LH
         return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
@@ -919,7 +895,7 @@ class GuiLauncherApp:
         canvas = np.full((self.canvas_h, self.canvas_w, 3), self.COLOR_BG, dtype=np.uint8)
 
         s = self.scale_pct / 100.0
-        CW = max(200, int(370 * s))
+        CW = max(130, int(222 * s))
         SX = max(6, int(12 * s))
         X0 = max(8, int(15 * s))
         FW = CW * 2 + SX
@@ -956,7 +932,7 @@ class GuiLauncherApp:
         return canvas
 
     def _render_top_bar(self, canvas: np.ndarray):
-        """渲染顶部全局标题与当前生产工况胶囊 (真矢量自适应排布，去除底层环境芯片)"""
+        """渲染顶部全局标题 (纯净极简，无当前工况胶囊)"""
         s = self.scale_pct / 100.0
         top_h = max(36, int(54 * s))
         cv2.rectangle(canvas, (0, 0), (self.canvas_w, top_h), (17, 20, 26), -1)
@@ -971,49 +947,29 @@ class GuiLauncherApp:
         draw_text(canvas, "芦笋上料自动化", (max(20, int(40 * s)), max(18, int(28 * s))),
                   font_size=max(9, int(12 * s)), color=(150, 170, 185))
 
-        # 当前工况场景胶囊 (紧随标题之后，居中/醒目呈现)
-        act_sc = self.scene_mgr.get_current_scene()
-        capsule_x = max(200, int(330 * s))
-        bw = max(80, int(125 * s))
+        # 右上角退出按钮 (自适应靠右，纯“退出”两字)
+        bw = max(60, int(80 * s))
         bh = max(24, int(34 * s))
         bx = self.canvas_w - bw - max(8, int(15 * s))
         by = max(6, int(10 * s))
 
-        capsule_w = max(int(180 * s), min(int(460 * s), bx - capsule_x - max(12, int(20 * s))))
-        if capsule_w > max(120, int(160 * s)):
-            cap_y1, cap_y2 = max(6, int(10 * s)), max(26, int(44 * s))
-            if act_sc:
-                status_tag = "★ 生产环境" if act_sc.is_published else ("已平差" if act_sc.ba_solved else "沙盒草稿")
-                tag_col = self.COLOR_GOLD if act_sc.is_published else ((0, 210, 160) if act_sc.ba_solved else (135, 165, 195))
-                bg_col = (26, 28, 38) if act_sc.is_published else (20, 26, 34)
-                border_col = (85, 70, 30) if act_sc.is_published else (45, 60, 78)
-                cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), bg_col, -1)
-                cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), border_col, 1)
-                cv2.circle(canvas, (capsule_x + max(8, int(14 * s)), (cap_y1 + cap_y2) // 2), max(2, int(4 * s)), tag_col, -1)
-                sc_title = f"当前工况: 【{act_sc.name}】 ({status_tag})"
-                draw_text(canvas, sc_title, (capsule_x + max(14, int(24 * s)), max(8, int(17 * s))),
-                          font_size=max(10, int(13 * s)), color=tag_col, bold=True)
-            else:
-                cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), (20, 24, 30), -1)
-                cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), (38, 46, 56), 1)
-                cv2.circle(canvas, (capsule_x + max(8, int(14 * s)), (cap_y1 + cap_y2) // 2), max(2, int(4 * s)), (120, 130, 140), -1)
-                draw_text(canvas, "当前工况: 【未选定场景】 (请进入环境场景选择)", (capsule_x + max(14, int(24 * s)), max(8, int(17 * s))),
-                          font_size=max(10, int(13 * s)), color=(140, 150, 160))
-
-        # 右上角 [X] 退出按钮 (自适应靠右)
         is_hover_exit = (bx <= self.mouse_x <= bx + bw and by <= self.mouse_y <= by + bh)
         exit_bg = (48, 22, 24) if is_hover_exit else (32, 20, 22)
         exit_border = (210, 60, 60) if is_hover_exit else (95, 36, 40)
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), exit_bg, -1)
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), exit_border, 2 if is_hover_exit else 1)
-        draw_text(canvas, "[X] 退出 [ESC]", (bx + max(6, int(12 * s)), by + max(4, int(9 * s))),
-                  font_size=max(10, int(13 * s)), color=(220, 170, 170), bold=True)
+
+        exit_font_sz = max(11, int(14 * s))
+        tx = bx + (bw - exit_font_sz * 2) // 2
+        ty = by + (bh - exit_font_sz) // 2 - max(1, int(2 * s))
+        draw_text(canvas, "退出", (tx, ty),
+                  font_size=exit_font_sz, color=(220, 170, 170), bold=True)
 
     def _render_tools_grid(self, canvas: np.ndarray):
         """渲染左侧工具卡片网格 (真矢量自适应缩放，无杂乱左侧竖线)"""
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
-        CW = max(200, int(370 * s))
+        CW = max(130, int(222 * s))
         SX = max(6, int(12 * s))
         X0 = max(8, int(15 * s))
         FW = CW * 2 + SX
@@ -1047,31 +1003,51 @@ class GuiLauncherApp:
             cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), card_bg, -1)
             cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), card_border, border_th)
 
-            # 快捷键徽章
+            # 快捷键徽章与标题布局 (自适应有无副标题)
             badge_w = max(18, int(28 * s))
             badge_h = max(14, int(20 * s))
-            cv2.rectangle(canvas, (cx + max(6, int(12 * s)), cy + max(6, int(10 * s))),
-                          (cx + max(6, int(12 * s)) + badge_w, cy + max(6, int(10 * s)) + badge_h), (16, 20, 26), -1)
-            cv2.rectangle(canvas, (cx + max(6, int(12 * s)), cy + max(6, int(10 * s))),
-                          (cx + max(6, int(12 * s)) + badge_w, cy + max(6, int(10 * s)) + badge_h), (45, 58, 72), 1)
-            draw_text(canvas, tool.shortcut, (cx + max(8, int(16 * s)), cy + max(6, int(12 * s))),
-                      font_size=max(9, int(12 * s)), color=self.COLOR_TEXT_TITLE, bold=True)
-
-            # 标题与副标题
             title_col = self.COLOR_TEXT_TITLE if (is_selected or is_hover) else (205, 215, 225)
-            draw_text(canvas, tool.title, (cx + max(10, int(18 * s)) + badge_w, cy + max(6, int(10 * s))),
-                      font_size=max(10, int(14 * s)), color=title_col, bold=True)
+            has_sub = bool(tool.subtitle and tool.subtitle.strip())
 
-            sub_col = (170, 185, 195) if is_hover else self.COLOR_TEXT_MUTED
-            max_sub = 52 if cw > int(500 * s) else 24
-            draw_text(canvas, tool.subtitle[:max_sub], (cx + max(8, int(14 * s)), cy + max(20, int(36 * s))),
-                      font_size=max(9, int(12 * s)), color=sub_col)
+            if has_sub:
+                badge_y = cy + max(6, int(10 * s))
+                title_y = cy + max(6, int(10 * s))
+                cv2.rectangle(canvas, (cx + max(6, int(12 * s)), badge_y),
+                              (cx + max(6, int(12 * s)) + badge_w, badge_y + badge_h), (16, 20, 26), -1)
+                cv2.rectangle(canvas, (cx + max(6, int(12 * s)), badge_y),
+                              (cx + max(6, int(12 * s)) + badge_w, badge_y + badge_h), (45, 58, 72), 1)
+                draw_text(canvas, tool.shortcut, (cx + max(8, int(16 * s)), badge_y + max(1, int(2 * s))),
+                          font_size=max(9, int(12 * s)), color=self.COLOR_TEXT_TITLE, bold=True)
+
+                draw_text(canvas, tool.title, (cx + max(10, int(18 * s)) + badge_w, title_y),
+                          font_size=max(10, int(14 * s)), color=title_col, bold=True)
+
+                sub_col = (170, 185, 195) if is_hover else self.COLOR_TEXT_MUTED
+                max_sub = 52 if cw > int(500 * s) else 24
+                draw_text(canvas, tool.subtitle[:max_sub], (cx + max(8, int(14 * s)), cy + max(20, int(36 * s))),
+                          font_size=max(9, int(12 * s)), color=sub_col)
+            else:
+                # 纯标题极简模式：徽章与标题垂直居中对齐
+                badge_y = cy + (ch - badge_h) // 2
+                title_font_sz = max(10, int(14 * s))
+                title_y = cy + (ch - title_font_sz) // 2 - max(1, int(2 * s))
+
+                cv2.rectangle(canvas, (cx + max(6, int(12 * s)), badge_y),
+                              (cx + max(6, int(12 * s)) + badge_w, badge_y + badge_h), (16, 20, 26), -1)
+                cv2.rectangle(canvas, (cx + max(6, int(12 * s)), badge_y),
+                              (cx + max(6, int(12 * s)) + badge_w, badge_y + badge_h), (45, 58, 72), 1)
+                draw_text(canvas, tool.shortcut, (cx + max(8, int(16 * s)), badge_y + max(1, int(2 * s))),
+                          font_size=max(9, int(12 * s)), color=self.COLOR_TEXT_TITLE, bold=True)
+
+                draw_text(canvas, tool.title, (cx + max(10, int(18 * s)) + badge_w, title_y),
+                          font_size=title_font_sz, color=title_col, bold=True)
 
             # 运行模式微标 (三态: GUI / CMD / TERM)
             mode_color = {"GUI": (0, 190, 150), "TERM": (120, 210, 130)}.get(
                 tool.mode, (135, 150, 170))     # CMD 灰
-            put_text(canvas, tool.mode, (cx + cw - max(30, int(45 * s)), cy + max(14, int(24 * s))),
-                        cv2.FONT_HERSHEY_SIMPLEX, max(0.24, 0.32 * s), mode_color, 1, cv2.LINE_AA)
+            mode_y = cy + max(14, int(24 * s)) if has_sub else cy + (ch // 2) + max(3, int(4 * s))
+            put_text(canvas, tool.mode, (cx + cw - max(28, int(42 * s)), mode_y),
+                     cv2.FONT_HERSHEY_SIMPLEX, max(0.24, 0.32 * s), mode_color, 1, cv2.LINE_AA)
 
     def _render_inspector_panel(self, canvas: np.ndarray, tool: ToolCardMeta, split_x: int):
         """渲染右侧动态即时说明大屏 (自适应全宽与全高，1:1 矢量清晰无模糊，全文本自适应折行)"""
@@ -1107,7 +1083,7 @@ class GuiLauncherApp:
         avail_bottom_y = py + ph - max(8, int(12 * s))
 
         # 1. 核心概述 (Summary) - 支持自适应折行
-        draw_text(canvas, "【功能定位与现场痛点】", (px + max(8, int(16 * s)), curr_y),
+        draw_text(canvas, "【核心功能】", (px + max(8, int(16 * s)), curr_y),
                   font_size=max(10, int(13 * s)), color=self.COLOR_ACCENT, bold=True)
         curr_y += max(16, int(23 * s))
         curr_y = draw_multiline_text(canvas, tool.summary, (text_x, curr_y),
@@ -1116,7 +1092,7 @@ class GuiLauncherApp:
         curr_y += max(12, int(16 * s))
 
         # 2. 详细特性清单 (Details) - 支持每项条目自适应折行
-        draw_text(canvas, "【工程要点与执行逻辑】", (px + max(8, int(16 * s)), curr_y),
+        draw_text(canvas, "【工程要点】", (px + max(8, int(16 * s)), curr_y),
                   font_size=max(10, int(13 * s)), color=self.COLOR_ACCENT, bold=True)
         curr_y += max(16, int(23 * s))
         bullet_icon_x = px + max(12, int(22 * s))
@@ -1135,7 +1111,7 @@ class GuiLauncherApp:
 
         # 3. 前置依赖与输入 (Inputs)
         if curr_y < avail_bottom_y - max(60, int(90 * s)):
-            draw_text(canvas, "【前置条件与输入依赖】", (px + max(8, int(16 * s)), curr_y),
+            draw_text(canvas, "【输入依赖】", (px + max(8, int(16 * s)), curr_y),
                       font_size=max(10, int(13 * s)), color=(140, 180, 220), bold=True)
             curr_y += max(15, int(21 * s))
             for inp in tool.inputs:
@@ -1150,7 +1126,7 @@ class GuiLauncherApp:
 
         # 4. 输出产物 (Outputs)
         if curr_y < avail_bottom_y - max(50, int(70 * s)):
-            draw_text(canvas, "【输出产物与持久化路径】", (px + max(8, int(16 * s)), curr_y),
+            draw_text(canvas, "【输出产物】", (px + max(8, int(16 * s)), curr_y),
                       font_size=max(10, int(13 * s)), color=(120, 200, 180), bold=True)
             curr_y += max(15, int(21 * s))
             for out in tool.outputs:

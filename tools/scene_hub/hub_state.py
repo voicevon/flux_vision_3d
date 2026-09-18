@@ -172,6 +172,52 @@ class HubState:
         elif self.selected_image_idx >= self.image_strip_offset + 5:
             self.image_strip_offset = self.selected_image_idx - 4
 
+    def delete_selected_image(self) -> bool:
+        """删除当前选中的照片帧（物理安全移除、清理缓存，并自适应指向相邻帧）"""
+        if not self.current_images:
+            self.set_toast("当前场景相册为空，无照片可删除。")
+            return False
+
+        idx = self.selected_image_idx
+        if idx < 0 or idx >= len(self.current_images):
+            return False
+
+        img_path = self.current_images[idx]
+        file_name = os.path.basename(img_path)
+
+        try:
+            if os.path.exists(img_path):
+                os.remove(img_path)
+
+            # 清理缩略图与预览图缓存
+            keys_to_del = [k for k in self.thumbnail_cache if k.startswith(img_path)]
+            for k in keys_to_del:
+                self.thumbnail_cache.pop(k, None)
+            keys_to_del_prev = [k for k in self.preview_cache if k.startswith(img_path)]
+            for k in keys_to_del_prev:
+                self.preview_cache.pop(k, None)
+
+            # 重新载入相册列表
+            self.load_current_scene_images()
+
+            # 自适应定位相邻图片
+            if self.current_images:
+                self.selected_image_idx = min(idx, len(self.current_images) - 1)
+            else:
+                self.selected_image_idx = 0
+            self.image_strip_offset = max(0, min(self.selected_image_idx, len(self.current_images) - 4))
+
+            # 同步更新场景对象的 image_count
+            sc = self.get_selected_scene()
+            if sc:
+                sc.image_count = len(self.current_images)
+
+            self.set_toast(f"已删除照片: {file_name}")
+            return True
+        except Exception as e:
+            self.set_toast(f"删除照片失败: {e}")
+            return False
+
     def get_thumbnail(self, img_path: str, tw: int = 110, th: int = 70) -> np.ndarray | None:
         """获取缩略图 (带 LRU 内存缓存)"""
         if not os.path.exists(img_path):
@@ -278,8 +324,11 @@ class HubState:
         self.set_view_mode(next_mode)
 
     def toggle_expanded_preview(self):
-        """兼容旧按键/点击调用"""
-        self.cycle_view_mode()
+        """切换全宽大图模式与标准看板模式"""
+        if self.view_mode == self.VIEW_EXPANDED:
+            self.set_view_mode(self.VIEW_STANDARD)
+        else:
+            self.set_view_mode(self.VIEW_EXPANDED)
 
     def toggle_help_modal(self):
         """打开或关闭生产系统发布机制说明弹窗 (按 H 键或点击 [? Help] 切换)"""

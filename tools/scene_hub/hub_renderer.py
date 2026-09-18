@@ -20,6 +20,10 @@ from src.utils.text_rendering import draw_text, put_text
 from tools.scene_hub.hub_state import HubState
 
 
+HELP_MODAL_W = 940
+HELP_MODAL_H = 530
+
+
 class HubRenderer:
     """Scene Hub 统一界面渲染器"""
 
@@ -43,6 +47,15 @@ class HubRenderer:
         self._cached_canvas: np.ndarray | None = None
         self._last_cache_key: Any = None
 
+    def hit_test(self, mx: int, my: int, state: HubState) -> Any:
+        """根据逻辑坐标探测当前命中交互元素"""
+        old_x, old_y = state.mouse_x, state.mouse_y
+        try:
+            state.mouse_x, state.mouse_y = mx, my
+            return self._get_interactive_hover_key(state)
+        finally:
+            state.mouse_x, state.mouse_y = old_x, old_y
+
     def _get_interactive_hover_key(self, state: HubState) -> Any:
         """获取当前鼠标悬停的交互元素标识 (若鼠标未落在任何可交互组件上返回 None)"""
         mx, my = state.mouse_x, state.mouse_y
@@ -63,24 +76,17 @@ class HubRenderer:
 
         # 2. 生产说明 Help 弹窗
         if state.is_help_modal_open:
-            mw, mh = 880, 560
+            mw, mh = HELP_MODAL_W, HELP_MODAL_H
             ox = (self.canvas_w - mw) // 2
             oy = (self.canvas_h - mh) // 2
-            if ox + mw - 120 <= mx <= ox + mw - 16 and oy + 11 <= my <= oy + 43:
+            # 按钮尺寸 100x32, 允许 +/-4px 容差热区
+            if (ox + mw - 120) <= mx <= (ox + mw - 12) and (oy + 7) <= my <= (oy + 47):
                 return "help_close"
             return "help_modal"
 
         # 3. 常规看板模式
-        # 顶部 Header 交互
+        # 顶部 Header 交互 (仅保留 [H] 与 [X])
         if 0 <= my <= 50:
-            if 288 <= mx <= 368 and 9 <= my <= 41:
-                return "tab_standard"
-            if 370 <= mx <= 448 and 9 <= my <= 41:
-                return "tab_expanded"
-            if 450 <= mx <= 530 and 9 <= my <= 41:
-                return "tab_dashboard"
-            if 546 <= mx <= 930 and 8 <= my <= 42:
-                return "header_prod"
             if 940 <= mx <= 1070 and 8 <= my <= 42:
                 return "btn_help"
             if 1085 <= mx <= 1265 and 8 <= my <= 42:
@@ -88,20 +94,17 @@ class HubRenderer:
 
         # 左侧面板按钮与卡片
         if 0 <= mx <= 340:
-            div_y1 = 512
-            btn1_y = div_y1 + 32
-            if 10 <= mx <= 165 and btn1_y <= my <= btn1_y + 36:
+            div_y1 = 604
+            btn1_y = div_y1 + 10
+            if 10 <= mx <= 165 and btn1_y <= my <= btn1_y + 40:
                 return "btn_new_scene"
-            if 175 <= mx <= 330 and btn1_y <= my <= btn1_y + 36:
+            if 175 <= mx <= 330 and btn1_y <= my <= btn1_y + 40:
                 return "btn_open_dir"
-            btn2_y = btn1_y + 44
-            if 10 <= mx <= 330 and btn2_y <= my <= btn2_y + 36:
-                return "btn_capture_wizard"
 
-            # 场景卡片
+            # 场景卡片 (扩展至 6 张卡片)
             card_h = 70
             start_y = 90
-            max_cards = 5
+            max_cards = 6
             scroll_start = max(0, state.selected_scene_idx - max_cards + 1)
             visible_scenes = state.scenes[scroll_start: scroll_start + max_cards]
             for i, sc in enumerate(visible_scenes):
@@ -112,23 +115,37 @@ class HubRenderer:
                 if 228 <= mx <= 324 and cy + 36 <= my <= cy + 64:
                     return ("card_pub", real_idx)
 
-        # 右侧相册面板按钮
+        # 右侧相册与视图切换面板按钮
         if state.view_mode == HubState.VIEW_EXPANDED:
             box_x, box_y, box_w = 340, 50, 940
-            if box_x + box_w - 364 <= mx <= box_x + box_w - 280 and box_y + 10 <= my <= box_y + 42:
-                return "exp_prev"
-            if box_x + box_w - 274 <= mx <= box_x + box_w - 190 and box_y + 10 <= my <= box_y + 42:
-                return "exp_next"
-            if box_x + box_w - 184 <= mx <= box_x + box_w - 20 and box_y + 10 <= my <= box_y + 42:
-                return "exp_restore"
+            if box_y + 8 <= my <= box_y + 44:
+                if box_x + box_w - 470 <= mx <= box_x + box_w - 390:
+                    return "exp_prev"
+                if box_x + box_w - 384 <= mx <= box_x + box_w - 304:
+                    return "exp_next"
+                if box_x + box_w - 298 <= mx <= box_x + box_w - 198:
+                    return "album_delete"
+                if box_x + box_w - 192 <= mx <= box_x + box_w - 20:
+                    return "exp_restore"
         elif state.view_mode == HubState.VIEW_STANDARD:
             box_x, box_y, box_w = 800, 50, 480
-            if box_x + box_w - 224 <= mx <= box_x + box_w - 184 and box_y + 8 <= my <= box_y + 40:
-                return "album_prev"
-            if box_x + box_w - 178 <= mx <= box_x + box_w - 138 and box_y + 8 <= my <= box_y + 40:
-                return "album_next"
-            if box_x + box_w - 132 <= mx <= box_x + box_w - 14 and box_y + 8 <= my <= box_y + 40:
-                return "album_expand"
+            if box_y + 6 <= my <= box_y + 40:
+                # 三段式视图切换 Tab 胶囊 (x: 940~1084)
+                if 940 <= mx <= 988:
+                    return "tab_standard"
+                if 988 <= mx <= 1036:
+                    return "tab_expanded"
+                if 1036 <= mx <= 1084:
+                    return "tab_dashboard"
+                # 相册控制按钮组: [<] [>] [F] [Del]
+                if 1092 <= mx <= 1124:
+                    return "album_prev"
+                if 1128 <= mx <= 1160:
+                    return "album_next"
+                if 1164 <= mx <= 1214:
+                    return "album_expand"
+                if 1218 <= mx <= 1270:
+                    return "album_delete"
 
         return None
 
@@ -200,48 +217,11 @@ class HubRenderer:
         cv2.line(canvas, (0, 50), (self.canvas_w, 50), self.COLOR_BORDER, 1)
         mpos = (state.mouse_x, state.mouse_y)
 
-        # 1. 系统标题与状态点 (x: 16~390)
+        # 1. 系统标题与状态点 (x: 16~200)
         cv2.circle(canvas, (22, 25), 6, (0, 255, 180), -1)
         put_text(canvas, "flux_vision_3d", (36, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_CYAN, 2, cv2.LINE_AA)
-        draw_text(canvas, "| 场景管理中枢", (166, 16), font_size=15, color=self.COLOR_WHITE)
 
-        # 2. 三段式视图模式切换 Tab 胶囊组件 (Segmented Tabs, x: 290~530, y: 9~41)
-        cv2.rectangle(canvas, (288, 9), (532, 41), (20, 25, 34), -1)
-        cv2.rectangle(canvas, (288, 9), (532, 41), (45, 55, 72), 1)
-
-        tabs = [
-            (HubState.VIEW_STANDARD, 290, 78, "⊞ 标准"),
-            (HubState.VIEW_EXPANDED, 370, 78, "⤢ 大图"),
-            (HubState.VIEW_DASHBOARD, 450, 80, "▤ 看板"),
-        ]
-
-        for mode_key, tx, tw, ttext in tabs:
-            is_active_tab = (state.view_mode == mode_key)
-            is_hover_tab = (tx <= mpos[0] <= tx + tw and 9 <= mpos[1] <= 41)
-            
-            if is_active_tab:
-                cv2.rectangle(canvas, (tx, 11), (tx + tw, 39), (28, 44, 40), -1)
-                cv2.rectangle(canvas, (tx, 11), (tx + tw, 39), (0, 255, 180), 2)
-                draw_text(canvas, ttext, (tx + 12, 16), font_size=13, color=(0, 255, 200), bold=True)
-            elif is_hover_tab:
-                cv2.rectangle(canvas, (tx, 11), (tx + tw, 39), (34, 40, 52), -1)
-                cv2.rectangle(canvas, (tx, 11), (tx + tw, 39), (0, 200, 240), 1)
-                draw_text(canvas, ttext, (tx + 12, 16), font_size=13, color=(0, 220, 255))
-            else:
-                draw_text(canvas, ttext, (tx + 12, 16), font_size=13, color=(160, 175, 195))
-        # 3. 生产运行场景信息 (x: 546~860, y: 8~42)
-        prod_sc = state.get_production_scene()
-        prod_name = prod_sc.name if prod_sc else "无"
-        prod_id = prod_sc.scene_id if prod_sc else "未设定"
-        prod_x, prod_w = 546, 380
-        is_hover_prod = (prod_x <= mpos[0] <= prod_x + prod_w and 8 <= mpos[1] <= 42)
-        if is_hover_prod:
-            cv2.rectangle(canvas, (prod_x, 8), (prod_x + prod_w, 42), (24, 34, 44), -1)
-            cv2.rectangle(canvas, (prod_x, 8), (prod_x + prod_w, 42), (0, 255, 200), 1)
-        draw_text(canvas, f"生产运行地图: 【{prod_name}】 ({prod_id[:10]})", (prod_x + 10, 16),
-                  font_size=13, color=(0, 255, 180) if is_hover_prod else (0, 240, 140))
-
-        # 4. 右上角功能按钮组
+        # 2. 右上角功能按钮组
         # [H] 业务说明按钮 (x: 940~1070, y: 8~42)
         self._draw_button(canvas, (940, 8, 130, 34), "[H] 生产机制", mpos, is_active=state.is_help_modal_open)
 
@@ -294,7 +274,7 @@ class HubRenderer:
 
         card_h = 70
         start_y = 90
-        max_cards = 5  # 扩展至 5 张卡片
+        max_cards = 6  # 扩展至 6 张卡片，充分利用垂直空间
 
         scroll_start = max(0, state.selected_scene_idx - max_cards + 1)
         visible_scenes = state.scenes[scroll_start: scroll_start + max_cards]
@@ -356,18 +336,13 @@ class HubRenderer:
                 draw_text(canvas, "草稿沙盒", (badge_px + 20, badge_py + 7), font_size=12,
                           color=self.COLOR_DARK_GRAY)
 
-        # ==== 2. 场景通用全局操作区 (单条目操作已全面收敛至鼠标右键菜单) ====
-        div_y1 = 512
+        # ==== 2. 场景通用全局操作区 (单条目操作已收敛至卡片右键与卡片右上角) ====
+        div_y1 = 604
         cv2.line(canvas, (10, div_y1), (330, div_y1), self.COLOR_BORDER, 1)
 
-        draw_text(canvas, "场景通用全局操作 (条目操作请在卡片右键)", (16, div_y1 + 10), font_size=12, color=self.COLOR_GRAY)
-
-        btn1_y = div_y1 + 32
-        self._draw_button(canvas, (10, btn1_y, 155, 36), "[+] 新建工况 [N]", mpos)
-        self._draw_button(canvas, (175, btn1_y, 155, 36), "[V] 场景总目录", mpos)
-
-        btn2_y = btn1_y + 44
-        self._draw_button(canvas, (10, btn2_y, 320, 36), "[C] 启动采图向导工具", mpos, theme_color=(0, 220, 255))
+        btn1_y = div_y1 + 10
+        self._draw_button(canvas, (10, btn1_y, 155, 40), "[+] 新建工况 [N]", mpos)
+        self._draw_button(canvas, (175, btn1_y, 155, 40), "[V] 场景总目录", mpos)
 
     def _render_center_report_panel(self, canvas: np.ndarray, state: HubState, sc):
         """渲染中间栏：场景综合体检报告与几何健康看板 (x: 340~800, y: 50~670)
@@ -387,7 +362,7 @@ class HubRenderer:
         # 场景核心元数据卡片
         meta_y = box_y + 54
         cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 58), (26, 31, 42), -1)
-        cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 58), (0, 180, 220), 1)
+        cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 58), self.COLOR_BORDER, 1)
         draw_text(canvas, f"当前场景: 【{sc.name}】", (box_x + 26, meta_y + 8), font_size=16, color=(0, 240, 220), bold=True)
         draw_text(canvas, f"物理唯一ID: {sc.scene_id}", (box_x + 26, meta_y + 34), font_size=13, color=self.COLOR_GRAY)
 
@@ -427,7 +402,7 @@ class HubRenderer:
         # 底部升级为清爽的【工程质量放行评定面板】
         eval_y = cy + 6
         cv2.rectangle(canvas, (box_x + 16, eval_y), (box_x + box_w - 16, box_y + box_h - 16), (24, 28, 38), -1)
-        cv2.rectangle(canvas, (box_x + 16, eval_y), (box_x + box_w - 16, box_y + box_h - 16), (0, 180, 200), 1)
+        cv2.rectangle(canvas, (box_x + 16, eval_y), (box_x + box_w - 16, box_y + box_h - 16), self.COLOR_BORDER, 1)
 
         draw_text(canvas, "★ 场景质量综合评定与放行指引", (box_x + 26, eval_y + 12), font_size=15, color=(0, 240, 220), bold=True)
 
@@ -454,13 +429,39 @@ class HubRenderer:
         cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), self.COLOR_PANEL, -1)
         mpos = (state.mouse_x, state.mouse_y)
 
-        # 栏目标题
-        draw_text(canvas, f"采样相册 ({len(state.current_images)} 帧)", (box_x + 16, box_y + 14), font_size=17, color=self.COLOR_WHITE, bold=True)
+        # 栏目标题 (x: 814)
+        draw_text(canvas, f"采样相册 ({len(state.current_images)}帧)", (box_x + 14, box_y + 13), font_size=15, color=self.COLOR_WHITE, bold=True)
 
-        # 顶部实体按钮组: [◀] [▶] [⛶ 全宽放大 [F]] (统一科技绿框 + Hover 高亮)
-        self._draw_button(canvas, (box_x + box_w - 224, box_y + 8, 40, 32), "[<]", mpos)
-        self._draw_button(canvas, (box_x + box_w - 178, box_y + 8, 40, 32), "[>]", mpos)
-        self._draw_button(canvas, (box_x + box_w - 132, box_y + 8, 118, 32), "[F] 全宽放大", mpos)
+        # 1. 转移至此的三段式视图切换 Tab 胶囊组件 (x: 940~1084, y: 58~88)
+        tabs_x = box_x + 140
+        cv2.rectangle(canvas, (tabs_x, box_y + 8), (tabs_x + 144, box_y + 38), (20, 25, 34), -1)
+        cv2.rectangle(canvas, (tabs_x, box_y + 8), (tabs_x + 144, box_y + 38), (45, 55, 72), 1)
+
+        tabs = [
+            (HubState.VIEW_STANDARD, tabs_x, 48, "⊞ 标准"),
+            (HubState.VIEW_EXPANDED, tabs_x + 48, 48, "⤢ 大图"),
+            (HubState.VIEW_DASHBOARD, tabs_x + 96, 48, "▤ 看板"),
+        ]
+
+        for mode_key, tx, tw, ttext in tabs:
+            is_active_tab = (state.view_mode == mode_key)
+            is_hover_tab = (tx <= mpos[0] <= tx + tw and box_y + 8 <= mpos[1] <= box_y + 38)
+            if is_active_tab:
+                cv2.rectangle(canvas, (tx + 1, box_y + 9), (tx + tw - 1, box_y + 37), (28, 44, 40), -1)
+                cv2.rectangle(canvas, (tx + 1, box_y + 9), (tx + tw - 1, box_y + 37), (0, 255, 180), 2)
+                draw_text(canvas, ttext, (tx + 5, box_y + 14), font_size=12, color=(0, 255, 200), bold=True)
+            elif is_hover_tab:
+                cv2.rectangle(canvas, (tx + 1, box_y + 9), (tx + tw - 1, box_y + 37), (34, 40, 52), -1)
+                cv2.rectangle(canvas, (tx + 1, box_y + 9), (tx + tw - 1, box_y + 37), (0, 200, 240), 1)
+                draw_text(canvas, ttext, (tx + 5, box_y + 14), font_size=12, color=(0, 220, 255))
+            else:
+                draw_text(canvas, ttext, (tx + 5, box_y + 14), font_size=12, color=(160, 175, 195))
+
+        # 2. 顶部照片操作实体按钮组: [<] [>] [F] 全宽 [Del] 删帧
+        self._draw_button(canvas, (box_x + 292, box_y + 8, 32, 30), "[<]", mpos)
+        self._draw_button(canvas, (box_x + 328, box_y + 8, 32, 30), "[>]", mpos)
+        self._draw_button(canvas, (box_x + 364, box_y + 8, 50, 30), "[F]", mpos)
+        self._draw_button(canvas, (box_x + 418, box_y + 8, 52, 30), "[Del]", mpos, theme_color=(180, 60, 60))
 
         if not state.current_images:
             empty_box_y = box_y + 50
@@ -517,9 +518,6 @@ class HubRenderer:
             canvas[py:py + ph, px:px + pw] = prev
             cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (50, 56, 72), 1)
 
-        draw_text(canvas, "[< / >] 左右键选片  |  滚轮快速切片  |  [F] 放大预览",
-                  (box_x + 60, prev_box_y + prev_box_h - 22), font_size=13, color=self.COLOR_GRAY)
-
     def _render_expanded_photo_preview(self, canvas: np.ndarray, state: HubState, sc):
         """全宽自适应大图视口 (按 F 键展开，横跨中间和右侧，x: 340~1280)"""
         box_x, box_y, box_w, box_h = 340, 50, 940, 620
@@ -539,10 +537,11 @@ class HubRenderer:
         img_title = f"全宽自适应大图预览: {os.path.basename(cur_img)} ({state.selected_image_idx + 1}/{len(state.current_images)})"
         draw_text(canvas, img_title, (box_x + 20, box_y + 14), font_size=17, color=(0, 255, 200), bold=True)
 
-        # 右上角实体按钮组: [◀ 上一张] [下一张 ▶] [F 退出放大]
-        self._draw_button(canvas, (box_x + box_w - 364, box_y + 10, 84, 32), "[<] 上张", mpos)
-        self._draw_button(canvas, (box_x + box_w - 274, box_y + 10, 84, 32), "[>] 下张", mpos)
-        self._draw_button(canvas, (box_x + box_w - 184, box_y + 10, 164, 32), "[F] 退出全宽放大", mpos)
+        # 右上角实体按钮组: [◀ 上张] [下张 ▶] [Del 删帧] [F 退出放大]
+        self._draw_button(canvas, (box_x + box_w - 470, box_y + 10, 80, 32), "[<] 上张", mpos)
+        self._draw_button(canvas, (box_x + box_w - 384, box_y + 10, 80, 32), "[>] 下张", mpos)
+        self._draw_button(canvas, (box_x + box_w - 298, box_y + 10, 100, 32), "[Del] 删帧", mpos, theme_color=(180, 60, 60))
+        self._draw_button(canvas, (box_x + box_w - 192, box_y + 10, 172, 32), "[F] 恢复标准视图", mpos)
 
         if prev is not None:
             ph, pw = prev.shape[:2]
@@ -686,13 +685,9 @@ class HubRenderer:
         now = time.time()
         if state.toast_time > now:
             draw_text(canvas, f"[系统反馈] {state.toast_msg}", (20, 684), font_size=16, color=(0, 255, 200), bold=True)
-        else:
-            if state.is_help_modal_open:
-                draw_text(canvas, "【生产机制解析】[ESC/H] 关闭说明窗  |  选中场景卡片点击或按 [P] 可直接生效到生产系统",
-                          (20, 686), font_size=14, color=self.COLOR_GOLD, bold=True)
-            else:
-                draw_text(canvas, "[↑/↓] 选择场景  [P] 生效生产  [C] 采图向导  [S] 离线平差  [F] 切换视图  [ESC] 退出",
-                          (20, 686), font_size=14, color=(210, 220, 230))
+        elif state.is_help_modal_open:
+            draw_text(canvas, "【生产机制解析】[ESC/H] 关闭说明窗  |  选中场景卡片点击或按 [P] 可直接生效到生产系统",
+                      (20, 686), font_size=14, color=self.COLOR_GOLD, bold=True)
 
         # 2. 右侧 沙盒数据隔离与生产基准胶囊 (x: 930~1265, y: 678~712)
         sc = state.get_selected_scene()
@@ -730,7 +725,7 @@ class HubRenderer:
         cv2.rectangle(overlay, (0, 0), (self.canvas_w, self.canvas_h), (8, 10, 14), -1)
         cv2.addWeighted(overlay, 0.78, canvas, 0.22, 0, canvas)
 
-        modal_w, modal_h = 940, 530
+        modal_w, modal_h = HELP_MODAL_W, HELP_MODAL_H
         mx = (self.canvas_w - modal_w) // 2
         my = (self.canvas_h - modal_h) // 2
         mpos = (state.mouse_x, state.mouse_y)

@@ -136,10 +136,26 @@ class StudioEventMixin:
             self.active_dropdown = None if self.active_dropdown == "FILTER_DROPDOWN" else "FILTER_DROPDOWN"
         elif btn_id == "TOGGLE_SORT_DROPDOWN":
             self.active_dropdown = None if self.active_dropdown == "SORT_DROPDOWN" else "SORT_DROPDOWN"
+        elif btn_id == "TOGGLE_DRAW_XY_PLANE":
+            self.show_xy_plane_on = not self.show_xy_plane_on
+            self.set_toast(f"XY 平面网格{'已开启' if self.show_xy_plane_on else '已关闭'} ({self.get_current_plane_z_label()})")
+        elif btn_id == "TOGGLE_PLANE_Z_DROPDOWN":
+            self.active_dropdown = None if self.active_dropdown == "PLANE_Z_DROPDOWN" else "PLANE_Z_DROPDOWN"
         elif btn_id.startswith("DD_SELECT_"):
             dd_name, selected_val = extra
             if dd_name == "SCENE_DROPDOWN":
                 self.switch_scene(selected_val)
+            elif dd_name == "PLANE_Z_DROPDOWN":
+                if selected_val == "NONE":
+                    self.show_xy_plane_on = False
+                    self.set_toast("XY 平面绘制已关闭")
+                else:
+                    try:
+                        self.plane_z = float(selected_val)
+                    except ValueError:
+                        self.plane_z = 0.0
+                    self.show_xy_plane_on = True
+                    self.set_toast(f"XY 平面已平移至 {self.get_current_plane_z_label()}")
             elif dd_name == "BA_VIEW_DROPDOWN":
                 self.ba_view_mode = selected_val
                 self.view_mode = selected_val

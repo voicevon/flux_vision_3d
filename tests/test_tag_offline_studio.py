@@ -638,6 +638,107 @@ class TestTagOfflineStudio(unittest.TestCase):
         # 3. 标签应明确提示已剔除实测
         self.assertEqual(call_18.get("tag_status_hint"), "[BA理论:实测已剔除]")
 
+    def test_plane_z_options_and_special_points(self):
+        """测试 XY 平面 Z 高度特殊点提取 (含标靶中心高度) 与升降档逻辑"""
+        # 手动注入一些带 Z 坐标的标靶到 tags_map_data
+        self.studio.tags_map_data = {
+            "tags": {
+                "1": {"transform_matrix": [[1,0,0,100], [0,1,0,200], [0,0,1,196.4], [0,0,0,1]]},
+                "2": {"transform_matrix": [[1,0,0,-50], [0,1,0,120], [0,0,1,-150.0], [0,0,0,1]]},
+            }
+        }
+
+        options = self.studio.get_plane_z_options()
+        self.assertTrue(len(options) > 0)
+        # 第一项必须是关闭选项
+        self.assertEqual(options[0], (None, "不绘制 XY 平面"))
+
+        # 检查是否提取到 Tag 1 的特殊高度 196.4 mm (四舍五入为 196)
+        found_tag1 = any(opt[0] is not None and abs(opt[0] - 196.4) < 1.0 and "Tag 1" in opt[1] for opt in options)
+        self.assertTrue(found_tag1, "应动态提取并标注 Tag 1 的中心高度")
+
+        # 检查是否提取到 Tag 2 的特殊高度 -150.0 mm
+        found_tag2 = any(opt[0] is not None and abs(opt[0] - (-150.0)) < 1.0 and "Tag 2" in opt[1] for opt in options)
+        self.assertTrue(found_tag2, "应动态提取并标注 Tag 2 的中心高度")
+
+        # 测试获取当前 Z 轴标签
+        self.studio.plane_z = 196.4
+        lbl = self.studio.get_current_plane_z_label()
+        self.assertIn("Tag 1", lbl)
+
+        self.studio.plane_z = 0.0
+        lbl0 = self.studio.get_current_plane_z_label()
+        self.assertIn("0mm", lbl0)
+
+        # 测试 step_plane_z 升降档
+        initial_z = self.studio.plane_z
+        self.studio.step_plane_z(direction=+1)
+        self.assertGreater(self.studio.plane_z, initial_z, "升档后 plane_z 应该变大")
+
+        next_z = self.studio.plane_z
+        self.studio.step_plane_z(direction=-1)
+        self.assertEqual(self.studio.plane_z, initial_z, "降档后应回到初始 Z")
+
+    def test_xy_plane_events_and_buttons(self):
+        """测试 XY 平面工具栏按钮与下拉菜单事件分发"""
+        # 1. 切换开关
+        self.studio.show_xy_plane_on = False
+        self.studio._handle_button_click("TOGGLE_DRAW_XY_PLANE", None, 0, 0)
+        self.assertTrue(self.studio.show_xy_plane_on)
+        self.assertIn("XY 平面网格已开启", self.studio.toast_msg)
+
+        self.studio._handle_button_click("TOGGLE_DRAW_XY_PLANE", None, 0, 0)
+        self.assertFalse(self.studio.show_xy_plane_on)
+        self.assertIn("XY 平面网格已关闭", self.studio.toast_msg)
+
+        # 2. 下拉菜单展开/收起
+        self.studio.active_dropdown = None
+        self.studio._handle_button_click("TOGGLE_PLANE_Z_DROPDOWN", None, 0, 0)
+        self.assertEqual(self.studio.active_dropdown, "PLANE_Z_DROPDOWN")
+
+        self.studio._handle_button_click("TOGGLE_PLANE_Z_DROPDOWN", None, 0, 0)
+        self.assertIsNone(self.studio.active_dropdown)
+
+        # 3. 从下拉菜单中选择数值
+        self.studio._handle_button_click("DD_SELECT_PLANE_Z_DROPDOWN", ("PLANE_Z_DROPDOWN", "200.0"), 0, 0)
+        self.assertEqual(self.studio.plane_z, 200.0)
+        self.assertTrue(self.studio.show_xy_plane_on)
+        self.assertIsNone(self.studio.active_dropdown)
+
+        # 4. 从下拉菜单中选择 NONE 关闭
+        self.studio._handle_button_click("DD_SELECT_PLANE_Z_DROPDOWN", ("PLANE_Z_DROPDOWN", "NONE"), 0, 0)
+        self.assertFalse(self.studio.show_xy_plane_on)
+        self.assertIn("已关闭", self.studio.toast_msg)
+
+    def test_draw_xy_plane_overlay_rendering(self):
+        """测试视口 XY 平面与特殊点辅助线的透视投影叠加绘制无崩溃且像素渲染有效"""
+        h, w = 720, 1280
+        disp_frame = np.zeros((h, w, 3), dtype=np.uint8)
+
+        # 1. 当 show_xy_plane_on 为 False 时，画布不被修改
+        self.studio.show_xy_plane_on = False
+        self.studio.ui_renderer.draw_xy_plane_overlay(
+            self.studio, disp_frame, rvec=np.array([0.1, 0.2, 0.3]), tvec=np.array([0.0, 0.0, 1000.0])
+        )
+        self.assertEqual(np.count_nonzero(disp_frame), 0)
+
+        # 2. 当无外参 (rvec is None) 时安全跳过
+        self.studio.show_xy_plane_on = True
+        self.studio.ui_renderer.draw_xy_plane_overlay(
+            self.studio, disp_frame, rvec=None, tvec=None
+        )
+        self.assertEqual(np.count_nonzero(disp_frame), 0)
+
+        # 3. 正常外参下开启绘制，检查是否有非零像素生成
+        self.studio.plane_z = 0.0
+        # 构造相机处于略高处俯视世界原点 (Z轴向前向内)
+        rvec = np.array([0.3, 0.0, 0.0], dtype=np.float64)
+        tvec = np.array([0.0, -200.0, 800.0], dtype=np.float64)
+        self.studio.ui_renderer.draw_xy_plane_overlay(
+            self.studio, disp_frame, rvec=rvec, tvec=tvec
+        )
+        self.assertGreater(np.count_nonzero(disp_frame), 100, "XY 平面网格与坐标轴应在画布上产生像素绘制")
+
 
 if __name__ == "__main__":
     unittest.main()

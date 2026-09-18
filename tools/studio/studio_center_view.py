@@ -335,3 +335,109 @@ class StudioCenterViewMixin:
                     mcx, mcy = int(np.mean(pts_i[:, 0])), int(np.mean(pts_i[:, 1]))
                     put_text(disp_frame, f"? Tag #{tid} [漏检预测]", (mcx - 45, mcy),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 2, cv2.LINE_AA)
+
+        # 6. 世界 XY 平面透视网格与 Z 轴特殊点辅助线叠加 (移植自在线跟踪)
+        if getattr(studio, "show_xy_plane_on", False) and success and rvec is not None and tvec is not None:
+            self.draw_xy_plane_overlay(studio, disp_frame, rvec, tvec)
+
+    def draw_xy_plane_overlay(self, studio: Any, canvas: np.ndarray, rvec: np.ndarray, tvec: np.ndarray):
+        """世界 XY 平面透视网格叠加 (移植自在线跟踪):
+        支持两组垂直平行线网格 + 三轴加粗高亮 (X红 / Y绿 / Z蓝) + 向上箭头 + 原点标记 + 特殊标靶等高红线
+        """
+        if not getattr(studio, "show_xy_plane_on", False):
+            return
+        if rvec is None or tvec is None:
+            return
+
+        R, _ = cv2.Rodrigues(rvec)
+        t_flat = np.asarray(tvec, dtype=np.float64).reshape(3)
+        K = studio.engine.camera_matrix
+        h_f, w_f = canvas.shape[:2]
+        ext = getattr(studio, "PLANE_EXTENT_MM", 600)
+        step = getattr(studio, "PLANE_STEP_MM", 100)
+        z0 = float(getattr(studio, "plane_z", 0.0))
+        plane_z_max = getattr(studio, "PLANE_Z_MM", 600)
+
+        COL_GRAY = (90, 95, 105)
+        COL_RED = (60, 60, 245)
+        COL_GREEN = (50, 220, 100)
+        COL_BLUE = (245, 150, 50)  # BGR 格式高亮科技蓝
+        COL_WHITE = (220, 220, 220)
+
+        def _project(p_w):
+            p_cam = R @ np.asarray(p_w, dtype=np.float64).reshape(3) + t_flat
+            if p_cam[2] <= 1e-6:
+                return None
+            uv = K @ p_cam
+            u, v = int(round(uv[0] / uv[2])), int(round(uv[1] / uv[2]))
+            return (u, v) if (0 <= u < w_f and 0 <= v < h_f) else None
+
+        def _seg(p0, p1, color, thick):
+            """长线段沿线采样投影连线 (自动处理出画与近裁剪)"""
+            prev = None
+            for k in range(25):
+                s = k / 24.0
+                p = (p0[0] + (p1[0] - p0[0]) * s,
+                     p0[1] + (p1[1] - p0[1]) * s,
+                     p0[2] + (p1[2] - p0[2]) * s)
+                uv = _project(p)
+                if uv is not None and prev is not None:
+                    cv2.line(canvas, prev, uv, color, thick, cv2.LINE_AA)
+                prev = uv
+
+        # 1. 平行线网格 (绘制高度 z0): 平行于 X 轴与平行于 Y 轴两组
+        for i in range(-ext, ext + 1, step):
+            _seg((-ext, i, z0), (ext, i, z0), COL_GRAY, 1)
+            _seg((i, -ext, z0), (i, ext, z0), COL_GRAY, 1)
+
+        # 2. 坐标轴加粗高亮: X 红 / Y 绿 (随平面高度 z0) / Z 蓝 (0→600mm)
+        _seg((-ext, 0, z0), (ext, 0, z0), COL_RED, 3)
+        _seg((0, -ext, z0), (0, ext, z0), COL_GREEN, 3)
+        _seg((0, 0, 0), (0, 0, plane_z_max), COL_BLUE, 4)
+
+        # 3. Tag 等高辅助红线: 当平面高度与某已知标靶中心 Z 重合且该标靶不在原点时,
+        #    平移一条红色 X 轴穿过该标靶 (如 Z=196 平面过 Tag 1); Tag 0 在原点, 主 X 轴已穿过
+        tags_dict = getattr(studio, "tags_map_data", {}).get("tags", {})
+        if not tags_dict and hasattr(studio, "data_mgr"):
+            tags_dict = studio.data_mgr.tags_map_data.get("tags", {})
+
+        for tid, t_info in (tags_dict or {}).items():
+            mat = t_info.get("transform_matrix")
+            if mat and len(mat) == 4:
+                c_x, c_y, c_z = float(mat[0][3]), float(mat[1][3]), float(mat[2][3])
+                if abs(c_z - z0) < 2.0 and (abs(c_x) > 1.0 or abs(c_y) > 1.0):
+                    _seg((c_x - ext, c_y, z0), (c_x + ext, c_y, z0), COL_RED, 2)
+                    uv = _project((c_x + ext, c_y, z0))
+                    if uv is not None:
+                        put_text(canvas, f"X (Tag {tid})", (uv[0] + 6, uv[1] - 8),
+                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, COL_RED, 2, cv2.LINE_AA)
+
+        # 4. Z 轴高度刻度 (每 100mm) + 顶端箭头
+        for hz in range(100, plane_z_max, 100):
+            tp = _project((0, 0, hz))
+            if tp is not None:
+                cv2.line(canvas, (tp[0] - 5, tp[1]), (tp[0] + 5, tp[1]), COL_BLUE, 2, cv2.LINE_AA)
+                put_text(canvas, str(hz), (tp[0] + 8, tp[1] - 6),
+                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, COL_BLUE, 1, cv2.LINE_AA)
+
+        p_top = _project((0, 0, plane_z_max))
+        p_base = _project((0, 0, 0))
+        if p_top is not None and p_base is not None:
+            d = np.array(p_top, dtype=np.float64) - np.array(p_base, dtype=np.float64)
+            n = float(np.linalg.norm(d))
+            if n > 24:
+                d /= n
+                perp = np.array([-d[1], d[0]])
+                tip = np.array(p_top, dtype=np.float64)
+                wing = 14.0 * d
+                arrow = np.array([tip, tip - wing + 6.0 * perp, tip - wing - 6.0 * perp], dtype=np.int32)
+                cv2.fillPoly(canvas, [arrow], COL_BLUE)
+
+        for label, p, col in (("X", (ext + 50, 0, z0), COL_RED),
+                              ("Y", (0, ext + 50, z0), COL_GREEN),
+                              ("Z", (0, 0, plane_z_max + 50), COL_BLUE),
+                              ("0", (0, 0, 0), COL_WHITE)):
+            uv = _project(p)
+            if uv is not None:
+                put_text(canvas, label, (uv[0] + 6, uv[1] - 8),
+                         cv2.FONT_HERSHEY_SIMPLEX, 0.50, col, 2, cv2.LINE_AA)

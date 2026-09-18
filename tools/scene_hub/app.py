@@ -25,7 +25,7 @@ if PROJECT_ROOT not in sys.path:
 from src.calibration.scene_manager import CalibrationSceneManager
 from src.utils.gui_window_manager import GuiWindowManager
 from tools.scene_hub.hub_state import HubState
-from tools.scene_hub.hub_renderer import HubRenderer
+from tools.scene_hub.hub_renderer import HubRenderer, HELP_MODAL_W, HELP_MODAL_H
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -100,7 +100,7 @@ class SceneHubApp:
                 scale = min(self.win_mgr.canvas_w / 1280.0, self.win_mgr.canvas_h / 720.0)
                 target_w = int(round(1280 * scale))
                 target_h = int(round(720 * scale))
-                interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LANCZOS4
+                interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
                 scaled = cv2.resize(raw_canvas, (target_w, target_h), interpolation=interp)
                 pad_x = (self.win_mgr.canvas_w - target_w) // 2
                 pad_y = (self.win_mgr.canvas_h - target_h) // 2
@@ -179,6 +179,10 @@ class SceneHubApp:
             # [F] 顺次循环切换三模态视图: 标准三栏 -> 全宽大图 -> 纯净健康大屏
             elif key in (ord('f'), ord('F')):
                 self.state.cycle_view_mode()
+
+            # [Del] / [Delete] 删除当前选中的照片帧
+            elif raw_key in (3014656, 65535, 127, 8) or key in (127, 8):
+                self.state.delete_selected_image()
 
             # [R] 重命名当前场景显示名称 (支持中文)
             elif key in (ord('r'), ord('R')):
@@ -314,57 +318,43 @@ class SceneHubApp:
 
         # =================== 3. 生产机制 Help 说明窗下的点击 ===================
         if self.state.is_help_modal_open:
-            modal_w, modal_h = 860, 490
-            mx = (1280 - modal_w) // 2
-            my = (720 - modal_h) // 2
+            mx = (1280 - HELP_MODAL_W) // 2
+            my = (720 - HELP_MODAL_H) // 2
+            bx1 = mx + HELP_MODAL_W - 116
+            by1 = my + 11
+            bx2 = bx1 + 100
+            by2 = by1 + 32
 
-            # 点击右上角 [X] 关闭按钮
-            if (mx + modal_w - 116) <= x <= (mx + modal_w - 16) and (my + 11) <= y <= (my + 43):
+            # 点击右上角 [X] 关闭按钮 (带 6px 宽容防抖热区)
+            if (bx1 - 6) <= x <= (bx2 + 6) and (by1 - 6) <= y <= (by2 + 6):
                 self.state.is_help_modal_open = False
                 self.state.set_toast("已关闭说明窗。")
                 return
 
             # 点击弹窗外部半透明遮罩：关闭
-            if x < mx or x > mx + modal_w or y < my or y > my + modal_h:
+            if x < mx or x > mx + HELP_MODAL_W or y < my or y > my + HELP_MODAL_H:
                 self.state.is_help_modal_open = False
                 self.state.set_toast("已关闭说明窗。")
             return
 
         # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
-        # 4.0 顶部标题栏交互
-        # 4.0.1 三段式视图模式切换 Tab (x: 288~532, y: 9~41)
-        if 9 <= y <= 41:
-            if 288 <= x <= 368:
-                self.state.set_view_mode(HubState.VIEW_STANDARD)
-                return
-            elif 369 <= x <= 448:
-                self.state.set_view_mode(HubState.VIEW_EXPANDED)
-                return
-            elif 449 <= x <= 532:
-                self.state.set_view_mode(HubState.VIEW_DASHBOARD)
-                return
-
-        # 4.0.2 生产运行场景标题区域 (x: 546~930, y: 8~42)
-        if 546 <= x <= 930 and 8 <= y <= 42:
-            self.state.toggle_help_modal()
-            return
-
-        # 4.0.3 [H] 生产机制说明按钮 (x: 940~1070, y: 8~42)
+        # 4.0 顶部标题栏交互 (仅 [H] 与 [X])
+        # 4.0.1 [H] 生产机制说明按钮 (x: 940~1070, y: 8~42)
         if 940 <= x <= 1070 and 8 <= y <= 42:
             self.state.toggle_help_modal()
             return
 
-        # 4.0.4 [X] 退出按钮 (x: 1085~1265, y: 8~42)
+        # 4.0.2 [X] 退出按钮 (x: 1085~1265, y: 8~42)
         if 1085 <= x <= 1265 and 8 <= y <= 42:
             self._running = False
             return
 
-        # 5.1 点击左侧场景列表卡片 (x: 10~330, y: 90~480)
-        if 10 <= x <= 330 and 90 <= y <= 480:
+        # 5.1 点击左侧场景列表卡片 (x: 10~330, y: 90~560, 支持 6 张卡片)
+        if 10 <= x <= 330 and 90 <= y <= 560:
             card_h = 70
             gap = 8
             idx_in_view = (y - 90) // (card_h + gap)
-            max_cards = 5
+            max_cards = 6
             scroll_start = max(0, self.state.selected_scene_idx - max_cards + 1)
             target_idx = scroll_start + idx_in_view
             if 0 <= target_idx < len(self.state.scenes):
@@ -385,55 +375,73 @@ class SceneHubApp:
                 self.state.load_current_scene_images()
             return
 
-        # 5.2 点击左侧通用全局场景管理按钮 (y: 540~630)
-        # 按钮 1: 新建工况 [N] (x: 10~165, y: 544~580)
-        if 10 <= x <= 165 and 544 <= y <= 580:
+        # 5.2 点击左侧通用全局场景管理按钮 (y: 614~654)
+        # 按钮 1: 新建工况 [N] (x: 10~165, y: 614~654)
+        if 10 <= x <= 165 and 614 <= y <= 654:
             self._handle_create_scene()
             return
-        # 按钮 2: 打开场景总库目录 [V] (x: 175~330, y: 544~580)
-        if 175 <= x <= 330 and 544 <= y <= 580:
+        # 按钮 2: 打开场景总库目录 [V] (x: 175~330, y: 614~654)
+        if 175 <= x <= 330 and 614 <= y <= 654:
             self._handle_open_directory()
-            return
-        # 按钮 3: 启动采图向导工具 [C] (x: 10~330, y: 588~624)
-        if 10 <= x <= 330 and 588 <= y <= 624:
-            self._launch_capture_wizard()
             return
 
         # 5.4 全宽大图预览模式下的右上角按钮交互 (x: 340~1280)
         if self.state.expanded_preview_mode:
-            # [◀] 上张按钮 (x: 1280-364 ~ 1280-280, y: 60~92)
-            if (1280 - 364) <= x <= (1280 - 280) and 60 <= y <= 92:
-                self.state.select_image_by_offset(-1)
-                return
-            # [▶] 下张按钮 (x: 1280-274 ~ 1280-190, y: 60~92)
-            if (1280 - 274) <= x <= (1280 - 190) and 60 <= y <= 92:
-                self.state.select_image_by_offset(1)
-                return
-            # [F] 退出全宽放大按钮 (x: 1280-184 ~ 1280-20, y: 60~92)
-            if (1280 - 184) <= x <= (1280 - 20) and 60 <= y <= 92:
-                self.state.toggle_expanded_preview()
-                return
+            # 顶部按钮行 (y: 58~92)
+            if 58 <= y <= 92:
+                # [◀] 上张按钮 (x: 810~890)
+                if 810 <= x <= 890:
+                    self.state.select_image_by_offset(-1)
+                    return
+                # [▶] 下张按钮 (x: 896~976)
+                if 896 <= x <= 976:
+                    self.state.select_image_by_offset(1)
+                    return
+                # [Del] 删帧按钮 (x: 982~1082)
+                if 982 <= x <= 1082:
+                    self.state.delete_selected_image()
+                    return
+                # [F] 退出全宽放大按钮 (x: 1088~1260)
+                if 1088 <= x <= 1260:
+                    self.state.toggle_expanded_preview()
+                    return
 
             # 点击大图画面本身也可以切换回标准看板
-            if 340 <= x <= 1280 and 50 <= y <= 670:
+            if 340 <= x <= 1280 and 96 <= y <= 670:
                 self.state.toggle_expanded_preview()
                 return
 
-        # 5.5 标准三栏看板模式下的右侧相册交互 (x: 800~1280)
+        # 5.5 标准三栏看板模式下的右侧相册控制栏交互 (x: 800~1280, y: 56~90)
         if not self.state.expanded_preview_mode:
-            # 顶部实体按钮组:
-            # [◀] 按钮 (x: 1280 - 224 ~ 1280 - 184, y: 58~90)
-            if (1280 - 224) <= x <= (1280 - 184) and 58 <= y <= 90:
-                self.state.select_image_by_offset(-1)
-                return
-            # [▶] 按钮 (x: 1280 - 178 ~ 1280 - 138, y: 58~90)
-            if (1280 - 178) <= x <= (1280 - 138) and 58 <= y <= 90:
-                self.state.select_image_by_offset(1)
-                return
-            # [F] 全宽放大按钮 (x: 1280 - 132 ~ 1280 - 14, y: 58~90)
-            if (1280 - 132) <= x <= (1280 - 14) and 58 <= y <= 90:
-                self.state.toggle_expanded_preview()
-                return
+            if 56 <= y <= 90:
+                # 5.5.1 三段式视图模式切换 Tab 胶囊 (x: 940~1084)
+                if 940 <= x <= 988:
+                    self.state.set_view_mode(HubState.VIEW_STANDARD)
+                    return
+                elif 989 <= x <= 1036:
+                    self.state.set_view_mode(HubState.VIEW_EXPANDED)
+                    return
+                elif 1037 <= x <= 1084:
+                    self.state.set_view_mode(HubState.VIEW_DASHBOARD)
+                    return
+
+                # 5.5.2 相册控制实体按钮组: [<] [>] [F] [Del]
+                # [◀] 按钮
+                if 1092 <= x <= 1124:
+                    self.state.select_image_by_offset(-1)
+                    return
+                # [▶] 按钮
+                if 1128 <= x <= 1160:
+                    self.state.select_image_by_offset(1)
+                    return
+                # [F] 全宽放大按钮
+                if 1164 <= x <= 1214:
+                    self.state.toggle_expanded_preview()
+                    return
+                # [Del] 删除选中照片
+                if 1218 <= x <= 1270:
+                    self.state.delete_selected_image()
+                    return
 
             # 点击缩略图水平滚动带 (x: 816~1260, y: 96~158)
             if 816 <= x <= 1260 and 96 <= y <= 158:

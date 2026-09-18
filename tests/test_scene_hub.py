@@ -238,20 +238,22 @@ class TestSceneHub(unittest.TestCase):
         self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
 
     def test_three_view_modes_tab_clicks(self):
-        """测试鼠标点击顶部三段式 Tab 胶囊直接切换模式"""
+        """测试鼠标点击转移至右侧相册栏的三段式 Tab 胶囊直接切换模式"""
         from tools.scene_hub import SceneHubApp
         app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
+        app.win_mgr.canvas_w = 1280
+        app.win_mgr.canvas_h = 720
 
-        # 点击 Tab 3: 纯净看板 (x=480, y=25)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 480, 25, 0, None)
+        # 点击 Tab 3: 纯净看板 (x=1060, y=70)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1060, 70, 0, None)
         self.assertEqual(app.state.view_mode, HubState.VIEW_DASHBOARD)
 
-        # 点击 Tab 2: 全宽大图 (x=400, y=25)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 400, 25, 0, None)
+        # 点击 Tab 2: 全宽大图 (x=1010, y=70)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1010, 70, 0, None)
         self.assertEqual(app.state.view_mode, HubState.VIEW_EXPANDED)
 
-        # 点击 Tab 1: 标准三栏 (x=320, y=25)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 320, 25, 0, None)
+        # 在全宽大图模式下，点击右上角退出全宽按钮 (x=1150, y=70) 返回标准三栏
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1150, 70, 0, None)
         self.assertEqual(app.state.view_mode, HubState.VIEW_STANDARD)
 
     def test_context_menu_open_and_actions(self):
@@ -308,6 +310,120 @@ class TestSceneHub(unittest.TestCase):
             self.assertEqual(app3.win_mgr.scale_pct, 120)
             self.assertEqual(app3.win_mgr.canvas_w, 1600)
             self.assertEqual(app3.win_mgr.canvas_h, 900)
+
+    def test_help_modal_hit_test_and_close(self):
+        """验证生产说明弹窗右上角 [X] 关闭按钮在各种坐标（中心、边缘、容差、物理缩放）下的瞬间关闭判定"""
+        from tools.scene_hub.app import SceneHubApp
+        from tools.scene_hub.hub_renderer import HELP_MODAL_W, HELP_MODAL_H
+        clean_cfg = os.path.join(self.test_root, "clean_hub_settings.json")
+        app = SceneHubApp(force_mock=True, settings_file=clean_cfg)
+        app.win_mgr.canvas_w = 1280
+        app.win_mgr.canvas_h = 720
+        state = app.state
+        state.is_help_modal_open = True
+
+        # 计算理论按钮中心与边界
+        mx = (1280 - HELP_MODAL_W) // 2
+        my = (720 - HELP_MODAL_H) // 2
+        bx1 = mx + HELP_MODAL_W - 116
+        by1 = my + 11
+        bx2 = bx1 + 100
+        by2 = by1 + 32
+
+        # 1. 模拟点击关闭按钮中心 (如 x=bx1+50, y=by1+16)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, bx1 + 50, by1 + 16, 0, None)
+        self.assertFalse(state.is_help_modal_open, "点击关闭按钮中心应立即关闭说明窗")
+
+        # 2. 模拟点击关闭按钮最右上角边缘 (如 bx2, by1)
+        state.is_help_modal_open = True
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, bx2, by1, 0, None)
+        self.assertFalse(state.is_help_modal_open, "点击关闭按钮右上角应立即关闭说明窗")
+
+        # 3. 模拟点击关闭按钮最左上角 (bx1, by1)
+        state.is_help_modal_open = True
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, bx1, by1, 0, None)
+        self.assertFalse(state.is_help_modal_open, "点击关闭按钮左上角应立即关闭说明窗")
+
+        # 4. 模拟点击关闭按钮容差外扩热区 (+4px 边缘)
+        state.is_help_modal_open = True
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, bx2 + 4, by1 - 4, 0, None)
+        self.assertFalse(state.is_help_modal_open, "点击关闭按钮容差区域应立即关闭说明窗")
+
+        # 5. 模拟点击弹窗外部半透明遮罩 (如左上角 x=50, y=50)
+        state.is_help_modal_open = True
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 50, 50, 0, None)
+        self.assertFalse(state.is_help_modal_open, "点击弹窗遮罩外部应立即关闭说明窗")
+
+        # 6. 模拟点击弹窗内部内容区 (如工况卡片位置 x=mx+50, y=my+150)，弹窗应保持打开
+        state.is_help_modal_open = True
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, mx + 50, my + 150, 0, None)
+        self.assertTrue(state.is_help_modal_open, "点击弹窗内部卡片不应关闭说明窗")
+
+        # 7. 测试 renderer 的 hit_test 判定
+        hit_action = app.renderer.hit_test(bx1 + 50, by1 + 16, state)
+        self.assertEqual(hit_action, "help_close", "renderer.hit_test 应对齐返回 help_close")
+
+        # 8. 进阶测试：当窗口缩放至 1600x900 时，物理屏幕坐标映射后应同样秒关
+        app.win_mgr.canvas_w = 1600
+        app.win_mgr.canvas_h = 900
+        scale = min(1600 / 1280.0, 900 / 720.0)  # 1.25
+        pad_x = (1600 - int(1280 * scale)) // 2  # 0
+        pad_y = (900 - int(720 * scale)) // 2    # 0
+        phys_btn_x = int(pad_x + (bx1 + 50) * scale)
+        phys_btn_y = int(pad_y + (by1 + 16) * scale)
+        state.is_help_modal_open = True
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, phys_btn_x, phys_btn_y, 0, None)
+        self.assertFalse(state.is_help_modal_open, "1600x900 缩放下点击关闭按钮应同样瞬时关闭")
+
+    def test_image_deletion_and_tabs_relocation(self):
+        """测试照片删除功能与三段式Tab转移后的点击交互"""
+        from tools.scene_hub.app import SceneHubApp
+        clean_cfg = os.path.join(self.test_root, "clean_tabs_settings.json")
+        app = SceneHubApp(force_mock=True, settings_file=clean_cfg)
+        app.win_mgr.canvas_w = 1280
+        app.win_mgr.canvas_h = 720
+        state = app.state
+
+        # 1. 创建两张测试图片放入当前选中场景中
+        sc = state.get_selected_scene()
+        self.assertIsNotNone(sc)
+        img1 = os.path.join(sc.raw_images_dir, "test_view_01.png")
+        img2 = os.path.join(sc.raw_images_dir, "test_view_02.png")
+        dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.imwrite(img1, dummy)
+        cv2.imwrite(img2, dummy)
+        state.load_current_scene_images()
+
+        initial_count = len(state.current_images)
+        self.assertGreaterEqual(initial_count, 2)
+        state.selected_image_idx = 0
+
+        # 2. 测试通过 state.delete_selected_image() 删除首张照片
+        deleted_file = state.current_images[0]
+        ok = state.delete_selected_image()
+        self.assertTrue(ok)
+        self.assertFalse(os.path.exists(deleted_file), "被删除的照片文件应已从磁盘移除")
+        self.assertEqual(len(state.current_images), initial_count - 1)
+        self.assertEqual(sc.image_count, initial_count - 1)
+
+        # 3. 测试通过鼠标点击右上角 [Del] 按钮删除 (x: 1240, y: 70)
+        del_target = state.current_images[0]
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1240, 70, 0, None)
+        self.assertFalse(os.path.exists(del_target), "点击 [Del] 按钮应删除当前照片")
+        self.assertEqual(len(state.current_images), initial_count - 2)
+
+        # 4. 测试点击右侧新位置的 Tab 胶囊切换视图模式
+        # 点击 [▤ 看板] (x: 1060, y: 70)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1060, 70, 0, None)
+        self.assertEqual(state.view_mode, HubState.VIEW_DASHBOARD)
+
+        # 点击 [⊞ 标准] (x: 960, y: 70)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 960, 70, 0, None)
+        self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
+
+        # 点击 [⤢ 大图] (x: 1010, y: 70)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1010, 70, 0, None)
+        self.assertEqual(state.view_mode, HubState.VIEW_EXPANDED)
 
 
 if __name__ == "__main__":

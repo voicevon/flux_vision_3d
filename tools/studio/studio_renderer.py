@@ -185,7 +185,7 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
         bx = 16 + logo_w + 20
 
         # 0. 选择场景下拉框 (首要核心位置)
-        sc_w = 168
+        sc_w = 145
         cur_sc_label = getattr(studio, "current_scene_name", "默认场景")
         is_sc_open = (studio.active_dropdown == "SCENE_DROPDOWN")
         draw_dropdown_button(canvas, (bx, btn_y_top, bx + sc_w, btn_y_bot), f"场景: {cur_sc_label}",
@@ -197,70 +197,98 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
             "active_key": getattr(studio, "current_scene_id", "")
         }
         studio.gui_buttons.append(("TOGGLE_SCENE_DROPDOWN", (bx, btn_y_top, bx + sc_w, btn_y_bot), "SCENE_DROPDOWN"))
-        bx += sc_w + 6
+        bx += sc_w + 5
 
-        # 1. 复位地图 (清空已知平差地图)
-        rst_map_w = 90
-        draw_dashboard_button(canvas, (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "复位地图",
-                              mouse_pos=(mx, my), accent=(70, 60, 210))
-        studio.gui_buttons.append(("RESET_MAP", (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "RESET_MAP"))
-        bx += rst_map_w + 6
+        # 0.5. [绘制XY平面] 透视网格开关与 [Z轴特殊点] 下拉选择 (移植自在线跟踪)
+        xy_on = getattr(studio, "show_xy_plane_on", False)
+        xy_lbl = "√ XY平面" if xy_on else "绘制XY平面"
+        xy_accent = (0, 255, 180) if xy_on else None
+        xy_w = 88
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + xy_w, btn_y_bot), xy_lbl,
+                              mouse_pos=(mx, my), accent=xy_accent)
+        studio.gui_buttons.append(("TOGGLE_DRAW_XY_PLANE", (bx, btn_y_top, bx + xy_w, btn_y_bot), "TOGGLE_DRAW_XY_PLANE"))
+        bx += xy_w + 5
 
-        # 2. 全局全量超精提取 (清空旧角点并从头重提取)
-        ext_w = 115
+        # Z 轴特殊点下拉按钮 (显示当前选定高度或特殊点)
+        z_w = 120
+        cur_z_lbl = studio.get_current_plane_z_label() if hasattr(studio, "get_current_plane_z_label") else "Z轴特殊点"
+        is_z_open = (studio.active_dropdown == "PLANE_Z_DROPDOWN")
+        draw_dropdown_button(canvas, (bx, btn_y_top, bx + z_w, btn_y_bot), cur_z_lbl,
+                             is_open=is_z_open, mouse_pos=(mx, my),
+                             theme_color=(0, 220, 255) if xy_on else (140, 160, 180))
+        plane_opts = [(str(val) if val is not None else "NONE", lbl)
+                      for val, lbl in studio.get_plane_z_options()] if hasattr(studio, "get_plane_z_options") else []
+        active_z_key = str(studio.plane_z) if (xy_on and hasattr(studio, "plane_z")) else "NONE"
+        studio.dropdown_boxes["PLANE_Z_DROPDOWN"] = {
+            "rect": (bx, btn_y_top, bx + z_w, btn_y_bot),
+            "options": plane_opts,
+            "active_key": active_z_key
+        }
+        studio.gui_buttons.append(("TOGGLE_PLANE_Z_DROPDOWN", (bx, btn_y_top, bx + z_w, btn_y_bot), "PLANE_Z_DROPDOWN"))
+        bx += z_w + 5
+
+        # 1. 全局全量超精提取 (清空旧角点并从头重提取)
+        ext_w = 85
         is_ext = getattr(studio, "is_extracting_all", False)
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + ext_w, btn_y_bot),
                               "提取中..." if is_ext else "超精提取",
                               mouse_pos=(mx, my), is_running=is_ext)
         studio.gui_buttons.append(("SUPER_EXTRACT_ALL", (bx, btn_y_top, bx + ext_w, btn_y_bot), "SUPER_EXTRACT_ALL"))
-        bx += ext_w + 6
+        bx += ext_w + 5
 
-        # 3. [B] 全局平差
-        ba_w = 115
+        # 2. [B] 全局平差
+        ba_w = 88
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + ba_w, btn_y_bot),
-                              "平差中..." if studio.is_ba_running else "全局平差 (B)",
+                              "平差中..." if studio.is_ba_running else "全局平差",
                               mouse_pos=(mx, my), is_running=studio.is_ba_running)
         studio.gui_buttons.append(("RUN_BA", (bx, btn_y_top, bx + ba_w, btn_y_bot), "RUN_BA"))
-        bx += ba_w + 6
+        bx += ba_w + 5
 
-        # 4. [A] 智能残差剪枝平差
-        prune_w = 115
+        # 3. [A] 智能残差剪枝平差
+        prune_w = 88
         is_prune = getattr(studio, "is_auto_pruning", False)
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + prune_w, btn_y_bot),
-                              "剪枝中..." if is_prune else "剪枝平差 (A)",
+                              "剪枝中..." if is_prune else "剪枝平差",
                               mouse_pos=(mx, my), is_running=is_prune)
         studio.gui_buttons.append(("RUN_AUTO_PRUNE_BA", (bx, btn_y_top, bx + prune_w, btn_y_bot), "RUN_AUTO_PRUNE_BA"))
-        bx += prune_w + 6
+        bx += prune_w + 5
 
-        # 5. [M] 保存/发布地图
-        s_w = 105
-        draw_dashboard_button(canvas, (bx, btn_y_top, bx + s_w, btn_y_bot), "保存地图 (M)",
+        # 4. [M] 保存/发布地图
+        s_w = 86
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + s_w, btn_y_bot), "保存地图",
                               mouse_pos=(mx, my), accent=(0, 215, 90))
         studio.gui_buttons.append(("SAVE_MAP", (bx, btn_y_top, bx + s_w, btn_y_bot), "SAVE_MAP"))
-        bx += s_w + 6
+        bx += s_w + 5
 
-        # 6. [P] 全程/全量精度体检重算
-        p_w = 105
-        draw_dashboard_button(canvas, (bx, btn_y_top, bx + p_w, btn_y_bot), "全量体检 (P)",
+        # 5. [P] 全程/全量精度体检重算
+        p_w = 86
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + p_w, btn_y_bot), "全量体检",
                               mouse_pos=(mx, my))
         studio.gui_buttons.append(("RECOMPUTE_METRICS", (bx, btn_y_top, bx + p_w, btn_y_bot), "RECOMPUTE_METRICS"))
-        bx += p_w + 6
+        bx += p_w + 5
 
-        # 7. [R] 导出质检报告
-        r_w = 105
-        draw_dashboard_button(canvas, (bx, btn_y_top, bx + r_w, btn_y_bot), "导出报告 (R)",
+        # 6. [R] 导出质检报告
+        r_w = 86
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + r_w, btn_y_bot), "导出报告",
                               mouse_pos=(mx, my))
         studio.gui_buttons.append(("EXPORT_REPORT", (bx, btn_y_top, bx + r_w, btn_y_bot), "EXPORT_REPORT"))
-        bx += r_w + 6
+        bx += r_w + 5
 
-        # 8. 复位保留 (一键恢复所有剔除的观测为有效)
-        rst_keep_w = 90
+        # 7. 复位保留 (一键恢复所有剔除的观测为有效)
+        rst_keep_w = 76
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "复位保留",
                               mouse_pos=(mx, my))
         studio.gui_buttons.append(("RESET_KEEP_ALL", (bx, btn_y_top, bx + rst_keep_w, btn_y_bot), "RESET_KEEP_ALL"))
+        bx += rst_keep_w + 5
+
+        # 8. 复位地图 (清空已知平差地图)
+        rst_map_w = 76
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "复位地图",
+                              mouse_pos=(mx, my), accent=(70, 60, 210))
+        studio.gui_buttons.append(("RESET_MAP", (bx, btn_y_top, bx + rst_map_w, btn_y_bot), "RESET_MAP"))
 
         # 9. 右侧 [Q] 退出工作台 (最右侧退出不动)
-        exit_w = 90
+        exit_w = 85
         exit_x1 = w - exit_w - 14
         draw_dashboard_button(canvas, (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "退出 (Q)",
                               mouse_pos=(mx, my), accent=(70, 60, 210))

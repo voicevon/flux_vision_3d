@@ -19,7 +19,7 @@ class TestGuiLauncher(unittest.TestCase):
     def test_tools_catalog_integrity(self):
         """测试工具目录数据结构完整性与快捷键不重复"""
         catalog = build_tools_catalog()
-        self.assertEqual(len(catalog), 12)
+        self.assertEqual(len(catalog), 11)
 
         seen_keys = set()
         seen_shortcuts = set()
@@ -59,21 +59,21 @@ class TestGuiLauncher(unittest.TestCase):
         self.assertEqual(canvas.shape, (1000, 1280, 3))
 
     def test_hit_test_cards(self):
-        """测试鼠标卡片网格碰撞检测 (基于三分组布局)"""
-        # 第一张卡片 idx=0 (A组左, 顶部并列) 覆盖 (15~385, 86~156)
+        """测试鼠标卡片网格碰撞检测 (基于三分组布局, 60%宽度)"""
+        # 第一张卡片 idx=0 (A组左, 顶部并列) 覆盖 (15~237, 86~156)
         hit_0 = self.app._hit_test_cards(100, 100)
         self.assertEqual(hit_0, 0)
 
-        # 第二张卡片 idx=1 (A组右, 硬件环境) 在 (397, 86)
-        hit_1 = self.app._hit_test_cards(450, 100)
+        # 第二张卡片 idx=1 (A组右, 硬件环境) 在 (249~471, 86)
+        hit_1 = self.app._hit_test_cards(350, 100)
         self.assertEqual(hit_1, 1)
 
         # 第三张卡片 idx=2 (B组左列) 在 (15, 216)
         hit_2 = self.app._hit_test_cards(100, 230)
         self.assertEqual(hit_2, 2)
 
-        # 第四张卡片 idx=3 (B组右列) 在 (397, 216)
-        hit_3 = self.app._hit_test_cards(450, 230)
+        # 第四张卡片 idx=3 (B组右列) 在 (249~471, 216)
+        hit_3 = self.app._hit_test_cards(350, 230)
         self.assertEqual(hit_3, 3)
 
         # 越界区域 (如右侧说明栏 x=900) 应该返回 -1
@@ -110,6 +110,11 @@ class TestGuiLauncher(unittest.TestCase):
         # row=0 按右键 (39) -> 同排右列 (idx=1 硬件环境)
         self.app._handle_keyboard(39)
         self.assertEqual(self.app.selected_tool_idx, 1)
+
+        # 测试 D 组边界 (row=5: idx 9, 10; 按下键不再越界)
+        self.app.selected_tool_idx = 10
+        self.app._handle_keyboard(40)  # 到底下
+        self.assertEqual(self.app.selected_tool_idx, 10)
 
     def test_toast_message(self):
         """测试动态 Toast 提示设置"""

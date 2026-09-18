@@ -85,8 +85,76 @@ class StudioDataManager(StudioDataActionsMixin):
         # 5. 超精重提取引擎 (惰性装载)
         self._super_extractor = None
 
+        # 6. 世界 XY 透视网格与 Z 轴特殊点观察状态 (移植自在线跟踪)
+        self.show_xy_plane_on: bool = False
+        self.plane_z: float = 0.0
+
         # 首次加载全集残差指标
         self.refresh_all_frame_metrics()
+
+    PLANE_EXTENT_MM: int = 600       # XY 平面网格半宽 (mm)
+    PLANE_STEP_MM: int = 100         # XY 平面网格间距 (mm)
+    PLANE_Z_MM: int = 600            # Z 轴绘制最大高度 (mm)
+    PLANE_Z_BASE_CHOICES = (350, 300, 250, 200, 150, 100, 50, 0)
+    PLANE_Z_STATIC_LABELS = {
+        350: "", 300: "", 250: "", 200: "", 150: "", 100: "", 50: "", 0: " (地面)"
+    }
+
+    def get_plane_z_options(self) -> List[Tuple[Optional[float], str]]:
+        """从世界坐标地图动态提取所有已知标靶的中心 Z 坐标作为特殊点，并与基础梯度合并降序排列"""
+        anchor_z_labels = {}
+        if self.tags_map_data and "tags" in self.tags_map_data:
+            for tid, t_info in self.tags_map_data["tags"].items():
+                mat = t_info.get("transform_matrix")
+                if mat and len(mat) == 4:
+                    z_val = float(mat[2][3])
+                    z_key = int(round(z_val))
+                    if z_key in anchor_z_labels:
+                        anchor_z_labels[z_key] += f"/Tag {tid}"
+                    else:
+                        anchor_z_labels[z_key] = f" (Tag {tid})"
+
+        combined_labels = {**self.PLANE_Z_STATIC_LABELS, **anchor_z_labels}
+        all_choices = sorted(set(self.PLANE_Z_BASE_CHOICES) | set(anchor_z_labels.keys()), reverse=True)
+
+        options: List[Tuple[Optional[float], str]] = [
+            (None, "不绘制 XY 平面")
+        ]
+        for z in all_choices:
+            options.append((float(z), f"Z {z} mm" + combined_labels.get(z, "")))
+        return options
+
+    def get_current_plane_z_label(self) -> str:
+        """获取当前选中的 Z 高度或特殊点简要标签 (用于顶栏按钮紧凑呈现)"""
+        z_int = int(round(self.plane_z))
+        options = self.get_plane_z_options()
+        for opt_val, opt_lbl in options:
+            if opt_val is not None and abs(opt_val - self.plane_z) < 1.0:
+                compact_lbl = opt_lbl.replace(" mm", "mm")
+                return f"Z: {compact_lbl[2:]}"  # 如 "Z: 196mm (Tag 1)" 或 "Z: 0mm (地面)"
+        return f"Z: {z_int}mm"
+
+    def step_plane_z(self, direction: int) -> None:
+        """快捷键 [ / ] 升降切换 Z 轴特殊点 (direction: +1 上一档/升高, -1 下一档/降低)"""
+        opts = [opt_val for opt_val, _ in self.get_plane_z_options() if opt_val is not None]
+        if not opts:
+            return
+        cur_idx = 0
+        min_diff = 1e9
+        for i, val in enumerate(opts):
+            diff = abs(val - self.plane_z)
+            if diff < min_diff:
+                min_diff = diff
+                cur_idx = i
+
+        # direction > 0: 升高 -> 对应降序列表中索引减小
+        if direction > 0:
+            new_idx = max(0, cur_idx - 1)
+        else:
+            new_idx = min(len(opts) - 1, cur_idx + 1)
+
+        self.plane_z = opts[new_idx]
+        self.show_xy_plane_on = True
 
     def reload_dataset(self, map_path: str, image_dir: str, manifest_path: str):
         """场景切换时整套重载数据集：路径更新、清单/地图重载、图片扫描与指标重算"""

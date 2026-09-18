@@ -280,6 +280,10 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         self.status_toast = msg
         self.status_toast_time = time.time()
 
+    @property
+    def toast_msg(self) -> str:
+        return self.status_toast
+
     def _load_camera_intrinsics(self) -> Tuple[np.ndarray, np.ndarray]:
         """加载相机内参和畸变参数"""
         if resolve_camera_intrinsics is not None:
@@ -358,6 +362,44 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
     @frame_metrics_cache.setter
     def frame_metrics_cache(self, val: Dict[str, Dict[str, Any]]):
         self.data_mgr.frame_metrics_cache = val
+
+    # XY 平面网格与 Z 高度状态代理
+    @property
+    def show_xy_plane_on(self) -> bool:
+        return self.data_mgr.show_xy_plane_on
+
+    @show_xy_plane_on.setter
+    def show_xy_plane_on(self, val: bool):
+        self.data_mgr.show_xy_plane_on = val
+
+    @property
+    def plane_z(self) -> float:
+        return self.data_mgr.plane_z
+
+    @plane_z.setter
+    def plane_z(self, val: float):
+        self.data_mgr.plane_z = val
+
+    @property
+    def plane_z_step(self) -> float:
+        return self.data_mgr.plane_z_step
+
+    @plane_z_step.setter
+    def plane_z_step(self, val: float):
+        self.data_mgr.plane_z_step = val
+
+    def get_plane_z_options(self) -> List[Tuple[str, str]]:
+        return self.data_mgr.get_plane_z_options()
+
+    def get_current_plane_z_label(self) -> str:
+        return self.data_mgr.get_current_plane_z_label()
+
+    def step_plane_z(self, direction: int = 1):
+        return self.data_mgr.step_plane_z(direction)
+
+    @property
+    def center_viewport(self):
+        return self.ui_renderer.center_viewport
 
     # ================= 视口几何交互属性代理 (透明转发至 viewport) =================
     @property
@@ -764,6 +806,15 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
                     self.set_toast("空间立体地图已保存至当前场景！")
                 elif key in (ord('u'), ord('U')):      # U 键 -> 发布至生产全局地图
                     self.publish_to_production()
+                elif key in (ord('y'), ord('Y')):      # Y 键 -> 开关 XY 平面网格
+                    self.show_xy_plane_on = not self.show_xy_plane_on
+                    self.set_toast(f"XY 平面网格{'已开启' if self.show_xy_plane_on else '已关闭'} ({self.get_current_plane_z_label()})")
+                elif key in (ord('['), 219):           # [ 键 -> XY 平面高度升档
+                    self.step_plane_z(direction=+1)
+                    self.set_toast(f"XY 平面高度升档: {self.get_current_plane_z_label()}")
+                elif key in (ord(']'), 221):           # ] 键 -> XY 平面高度降档
+                    self.step_plane_z(direction=-1)
+                    self.set_toast(f"XY 平面高度降档: {self.get_current_plane_z_label()}")
                 elif key in (8, 127):                  # Backspace 或 Delete (DEL) -> 一键复位地图
                     self.reset_map()
                     self.set_toast("立体地图已复位清空 (备份为 .bak)，恢复为纯观测模式")
