@@ -18,7 +18,6 @@ import sys
 import json
 import time
 import argparse
-import subprocess
 from collections import deque
 from pathlib import Path
 from typing import Dict, Optional
@@ -71,7 +70,7 @@ def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
 
 
 class PresetManager:
-    """预设特征点位管理器，JSON 持久化 (与 flux_loader CLI 共享 ~/.flux_loader/presets.json)"""
+    """预设特征点位管理器，只读加载 (优先 ~/.flux_loader/presets.json, 否则用内置硬编码默认工位)"""
 
     _DEFAULT_PRESETS: Dict[str, Pose] = {
         "机械零位 (Home Pose)":         Pose(x=0.0,    y=600.0, z=80.0, r=90.0),
@@ -96,26 +95,8 @@ class PresetManager:
                 log.warning("读取预设文件失败 (%s)，使用内置默认值。", exc)
         self._presets = dict(self._DEFAULT_PRESETS)
 
-    def save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        raw = {name: {"x": p.x, "y": p.y, "z": p.z, "r": p.r} for name, p in self._presets.items()}
-        with open(self._path, "w", encoding="utf-8") as f:
-            json.dump(raw, f, ensure_ascii=False, indent=2)
-
     def list_presets(self) -> Dict[str, Pose]:
         return dict(self._presets)
-
-    def add(self, name: str, pose: Pose) -> None:
-        self._presets[name] = pose
-        self.save()
-
-    def remove_by_index(self, idx: int) -> bool:
-        keys = list(self._presets.keys())
-        if 0 <= idx < len(keys):
-            del self._presets[keys[idx]]
-            self.save()
-            return True
-        return False
 
 
 class ScaraDebugApp:
@@ -237,24 +218,10 @@ class ScaraDebugApp:
     def do_set_origin(self) -> None:
         if not self._require_conn():
             return
-        raw = prompt_input_text(
-            "G92 设定零点",
-            "输入新坐标 (如 X0 Y600 Z80 R0)\n直接留空 = 机械标准零位 (0, 600, 80, 90):")
+        # G92 设机械零点 (定值, 不再弹框): X0 Y600 Z80 E90 (R 轴 → Marlin E 轴)
         hp = self._config.home_pose
-        if not raw:
-            self.robot.set_coordinate_origin(x=hp.x, y=hp.y, z=hp.z, r=hp.r)
-            self.add_log(f"[G92] 已设为机械标准零位 ({hp.x}, {hp.y}, {hp.z}, {hp.r})。")
-            return
-        x = y = z = r = 0.0
-        for axis, target in (("x", "x"), ("y", "y"), ("z", "z"), ("r", "r")):
-            m = re.search(rf"[{axis}{axis.upper()}]([-+]?\d*\.?\d+)", raw)
-            if m:
-                if axis == "x": x = float(m.group(1))
-                elif axis == "y": y = float(m.group(1))
-                elif axis == "z": z = float(m.group(1))
-                else: r = float(m.group(1))
-        self.robot.set_coordinate_origin(x, y, z, r)
-        self.add_log(f"[G92] 坐标计数已重设为 ({x}, {y}, {z}, {r})。")
+        self.robot.set_coordinate_origin(x=hp.x, y=hp.y, z=hp.z, r=hp.r)
+        self.add_log(f"[G92] 已设为机械零点 ({hp.x}, {hp.y}, {hp.z}, {hp.r})。")
 
     def do_m84(self) -> None:
         if not self._require_conn():
@@ -361,22 +328,6 @@ class ScaraDebugApp:
         self.robot.refresh_state()
         self.add_log(f"[OK] 已精准到达: {name}")
 
-    def do_preset_save(self) -> None:
-        self.robot.refresh_state()
-        p = self.robot.current_pose
-        name = prompt_input_text(
-            "保存预设工位",
-            f"将当前位置 ({p.x:.1f}, {p.y:.1f}, {p.z:.1f}, {p.r:.1f}) 保存为:",
-            initial="新工位")
-        if not name:
-            return
-        self.presets.add(name, Pose(x=p.x, y=p.y, z=p.z, r=p.r))
-        self.add_log(f"[保存] 已存预设 [{name}]。")
-
-    def do_preset_delete(self, idx: int) -> None:
-        if self.presets.remove_by_index(idx):
-            self.add_log("[删除] 已删除该预设工位。")
-
     def do_macro(self) -> None:
         if not self._require_conn():
             return
@@ -471,12 +422,8 @@ class ScaraDebugApp:
             self.do_jog(bid.split(":", 1)[1])
         elif bid.startswith("dd_step:"):
             self.do_step(bid.split(":", 1)[1])
-        elif bid.startswith("preset_del:"):
-            self.do_preset_delete(int(bid.split(":", 1)[1]))
         elif bid.startswith("preset:"):
             self.do_preset_jump(int(bid.split(":", 1)[1]))
-        elif bid == "preset_save":
-            self.do_preset_save()
         elif bid == "macro_minus":
             self.macro_cycles = max(1, self.macro_cycles - 1)
         elif bid == "macro_plus":

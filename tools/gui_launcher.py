@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-3D 视觉综合控制中心 (Suite Dashboard)
+芦笋上料自动化 (Dashboard)
 =================================================
 基于 1280x830 工业科技大屏，统一调度 flux_vision_3d 视觉系统的所有核心应用：
 - 原生 Windows Unicode 窗口标题，杜绝任何乱码
@@ -30,6 +30,7 @@ GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
 from src.calibration.scene_manager import CalibrationSceneManager
 from src.utils.gui_theme import GuiTheme
 from src.utils.gui_window_manager import GuiWindowManager
+from src.utils.terminal_panel import TerminalPanel
 from src.utils.text_rendering import draw_text, get_cached_font, put_text
 from src.utils.logger import get_logger
 from tools.env_utils import check_env_status
@@ -85,7 +86,7 @@ class ToolCardMeta:
                  category: str, is_gui: bool, command: List[str],
                  tag_color: Tuple[int, int, int],
                  summary: str, details: List[str], inputs: List[str],
-                 outputs: List[str], quick_tips: str):
+                 outputs: List[str], quick_tips: str, mode: str = "auto"):
         self.key_id = key_id
         self.shortcut = shortcut
         self.title = title
@@ -99,23 +100,25 @@ class ToolCardMeta:
         self.inputs = inputs
         self.outputs = outputs
         self.quick_tips = quick_tips
+        # 运行模式三态: GUI (独立视窗) / CMD (外部控制台) / TERM (dashboard 内嵌终端)
+        self.mode = ("GUI" if is_gui else "CMD") if mode == "auto" else mode
 
 
 def build_tools_catalog() -> List[ToolCardMeta]:
-    """构建全系统核心工具目录：11 张卡片，三大功能分组 (A场景→B Tag标定→D生产调试)"""
+    """构建全系统核心工具目录：12 张卡片，三大功能分组 (A环境场景→B Tag标定→D生产调试)"""
 
-    COLOR_A = (195, 155, 45)   # A 场景总控  : 琥珀金 (Amber)
+    COLOR_A = (195, 155, 45)   # A 环境场景  : 琥珀金 (Amber)
     COLOR_B = (65,  175, 160)  # B Tag标定   : 精密工业深青 (Teal)
     COLOR_D = (90,  140, 195)  # D 生产调试  : 钢蓝 (Steel Blue)
 
     catalog = [
-        # ===== A — 场景总控 (1张，顶部全宽) =====
+        # ===== A — 环境场景 (2张，顶部并列) =====
         ToolCardMeta(
             key_id="scene_hub",
             shortcut="1",
-            title="工况场景管理中枢 (Scene Hub)",
+            title="场景管理",
             subtitle="★ 顶层数据总控！沙盒画廊/大图巡检/生产发布",
-            category="A — 场景总控",
+            category="A — 环境场景",
             is_gui=True,
             command=[sys.executable, "-m", "tools.scene_hub"],
             tag_color=COLOR_A,
@@ -131,10 +134,30 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             quick_tips="快捷键: [1] 启动 | 中枢内 [⏎] 激活 | [P] 发布生产 | [S] 进Studio",
         ),
 
+        ToolCardMeta(
+            key_id="hardware_config",
+            shortcut="2",
+            title="确定输入输出设备",
+            subtitle="输入: 相机+分辨率 / 输出: 机械臂+串口",
+            category="A — 环境场景",
+            is_gui=True,
+            command=[sys.executable, "tools/hardware_config.py"],
+            tag_color=COLOR_A,
+            summary="【设备选型】确定输入输出设备：输入-默认摄像机与分辨率、输出-机械臂类型 (SCARA/Delta) 与默认串口。",
+            details=[
+                "选择默认摄像机类型 (RealSense / USB 摄像头) 及其默认分辨率",
+                "选择机械臂类型: SCARA (串联) 或 Delta (并联), 并指定默认串口",
+                "配置统一持久化, 各生产工具启动时自动读取, 免去重复选择"
+            ],
+            inputs=["无 (纯配置界面)"],
+            outputs=["设备选型配置文件 (相机选型/分辨率/机械臂类型/默认串口)"],
+            quick_tips="快捷键: [2] 启动 | 下拉选择后自动保存, 下次启动全系统生效",
+        ),
+
         # ===== B — Tag 标定流水线 (4张，2×2) =====
         ToolCardMeta(
             key_id="tag_manager",
-            shortcut="2",
+            shortcut="3",
             title="AprilTag 管理器",
             subtitle="图纸生成 + 白名单管理 (cv2 GUI)",
             category="B — Tag 标定流水线",
@@ -150,13 +173,13 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["系统已安装 reportlab 库 (pip install reportlab)"],
             outputs=["data/apriltags_16h5/ (PNG+PDF) | config.yaml (valid_tag_ids)"],
-                        quick_tips="快捷键: [2] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF，勿选“适应页面”"
+                        quick_tips="快捷键: [3] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF，勿选“适应页面”"
         ),
 
         ToolCardMeta(
             key_id="tag_wizard",
-            shortcut="3",
-            title="多视角采图向导 (Wizard)",
+            shortcut="4",
+            title="采图向导 (Wizard)",
             subtitle="角度雷达交互指引/空格极速连拍/自动归档沙盒",
             category="B — Tag 标定流水线",
             is_gui=True,
@@ -175,7 +198,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
 
         ToolCardMeta(
             key_id="tag_studio",
-            shortcut="4",
+            shortcut="5",
             title="离线标定工作站 (Studio)",
             subtitle="多视角审核/两阶段 BA 平差/智能剪枝/质检闭环",
             category="B — Tag 标定流水线",
@@ -192,12 +215,12 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["当前活动场景 raw_images/", "相机内参 camera_intrinsics.yaml"],
             outputs=["当前场景 tags_map.yaml", "reports/studio_qa_report_*.md 质检报告"],
-            quick_tips="快捷键: [4] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
+            quick_tips="快捷键: [5] 启动 | 工作站内 [⏎] 快速求解 | [P] 智能剪枝 | [E] 超精提取 | [R] 导出报告"
         ),
 
         ToolCardMeta(
             key_id="robot_online_tracker",
-            shortcut="5",
+            shortcut="6",
             title="Robot 在线跟踪",
             subtitle="Tag2 世界坐标实时解算/机械臂联动跟踪/相机位置校准",
             category="B — Tag 标定流水线",
@@ -215,14 +238,14 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense D435 或 USB 摄像头", "当前场景世界坐标地图 tags_map.yaml", "机械臂串口 COM3 (config.yaml robot)"],
             outputs=["屏幕实时世界坐标显示、机械臂末端到位偏差统计"],
-            quick_tips="快捷键: [5] 启动 | 界面内 [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定世界坐标系 | [C] 连接机械臂 | [T] 触发跟踪 | [X] 退出"
+            quick_tips="快捷键: [6] 启动 | 界面内 [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定世界坐标系 | [C] 连接机械臂 | [T] 触发跟踪 | [X] 退出"
         ),
 
         # ===== D — 生产调试 =====
         ToolCardMeta(
             key_id="d435_live",
-            shortcut="6",
-            title="RealSense 深度相机诊断",
+            shortcut="7",
+            title="RealSense 诊断",
             subtitle="硬件检测/深度探针/顶部按钮栏",
             category="D — 生产调试",
             is_gui=True,
@@ -238,13 +261,13 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["Intel RealSense D435 深度相机"],
             outputs=["控制台诊断信息 / data/snapshots/ 快照"],
-            quick_tips="快捷键: [6] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
+            quick_tips="快捷键: [7] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
         ),
 
         # ===== D — 生产调试 (续，SCARA 机械臂调试) =====
         ToolCardMeta(
             key_id="scara_debug",
-            shortcut="7",
+            shortcut="8",
             title="SCARA 机械臂调试 (Flux Loader)",
             subtitle="串口点动/回零设零/夹爪舵机/搬运宏/G-code 透传",
             category="D — 生产调试",
@@ -262,13 +285,13 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["MKS Base V1.6 串口 (如 COM11)", "几何参数 loader_core/config.py"],
             outputs=["串口 G-code 指令下发、机械臂动作执行与通信日志"],
-            quick_tips="快捷键: [7] 启动 | 界面内 W/S/A/D 点动 | [G28] 回零 | [ESC] 退出"
+            quick_tips="快捷键: [8] 启动 | 界面内 W/S/A/D 点动 | [G28] 回零 | [ESC] 退出"
         ),
 
         # ===== D — 生产调试 (续，芦笋抓取) =====
         ToolCardMeta(
             key_id="asparagus_live",
-            shortcut="8",
+            shortcut="9",
             title="芦笋抓取位姿解算 (实时生产)",
             subtitle="硬件相机抓拍解算顶层芦笋/输出 G-code",
             category="D — 生产调试",
@@ -284,7 +307,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense 硬件相机", "config/camera_intrinsics.yaml", "config/tags_map.yaml"],
             outputs=["终端打印机械臂 G-code 指令、JSON 抓取坐标与调试渲染图"],
-            quick_tips="快捷键: [8] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
+            quick_tips="快捷键: [9] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
         ),
 
         # ===== D — 生产调试 (续，系统诊断) =====
@@ -305,8 +328,9 @@ def build_tools_catalog() -> List[ToolCardMeta]:
                 "涵盖数学平差 (BA)、图论连通拓扑、外参盲测体检与 UI 状态机，保障发布质量"
             ],
             inputs=["系统底层环境注册表与 tests/ 全量测试框架"],
-            outputs=["控制台输出清晰的逐项绿勾诊断报告与全工程测试矩阵"],
-            quick_tips="快捷键: [T] 启动环境深度诊断 | 遇到红叉时依提示执行 pip 修复命令"
+            outputs=["嵌入式终端实时输出逐项绿勾诊断报告与全工程测试矩阵"],
+            quick_tips="快捷键: [T] 启动环境深度诊断 (内嵌终端) | 遇到红叉时依提示执行 pip 修复命令",
+            mode="TERM"
         ),
 
         ToolCardMeta(
@@ -322,11 +346,12 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             details=[
                 "安装/更新 requirements.txt 中声明的全部依赖",
                 "自动处理 numpy、opencv、pyrealsense2、pyyaml 等核心包",
-                "离线/网络环境均可运行，失败时控制台会提示缺失源"
+                "离线/网络环境均可运行，失败时终端会提示缺失源"
             ],
             inputs=["requirements.txt 文件"],
             outputs=["pip 安装进度与版本锁定结果"],
-            quick_tips="快捷键: [P] 启动 (控制台) | 首次克隆项目后必执行"
+            quick_tips="快捷键: [P] 启动 (内嵌终端) | 首次克隆项目后必执行",
+            mode="TERM"
         ),
 
         ToolCardMeta(
@@ -392,12 +417,17 @@ class GuiLauncherApp:
         self.is_subtool_running: bool = False
         self.running_tool_meta: Optional[ToolCardMeta] = None
 
+        # 嵌入式终端 (纯输出型工具: 系统环境诊断 / pip 依赖安装)
+        # key_id → TerminalPanel; 启动后右侧大屏切换为终端视图, 进程后台持续运行
+        self.terminals = {}
+        self._term_btn_rects = []      # 每帧由终端视图重建: [(btn_id, rect), ...]
+
         self.mouse_x = -1
         self.mouse_y = -1
         if self.scale_pct != 100 or self.canvas_w != self._base_w or self.canvas_h != self._base_h:
             self.toast_msg = f"已自动恢复偏好设置：放大镜 {self.scale_pct}%，视窗 {self.canvas_w}×{self.canvas_h} (按 Ctrl+0 可随时复位)"
         else:
-            self.toast_msg = "欢迎使用 flux_vision_3d 工业视觉控制中心！按数字键或点击卡片进入工况中枢。"
+            self.toast_msg = "欢迎使用芦笋上料自动化系统！按数字键或点击卡片进入工况中枢。"
         self.toast_time = time.time() + 4.5
 
         # 系统状态缓存
@@ -470,7 +500,7 @@ class GuiLauncherApp:
     def run(self):
         """主事件循环 (GuiWindowManager 单源窗口管理 + 全屏真矢量动态排版重绘)"""
         self.win_mgr.setup_window(self.window_name, mouse_callback=self._on_mouse)
-        self.win_mgr.set_unicode_title("flux_vision_3d | 3D 视觉综合控制中心 (Suite Dashboard)")
+        self.win_mgr.set_unicode_title("芦笋上料自动化 | Dashboard")
 
         # 首次呈现
         self._present_canvas()
@@ -503,7 +533,9 @@ class GuiLauncherApp:
             # 键盘选择与启动分发
             self._handle_keyboard(raw_key)
 
-        # 退出前持久化保存最终视口偏好
+        # 退出前终止内嵌终端子进程并持久化保存最终视口偏好
+        for panel in self.terminals.values():
+            panel.stop_quiet()
         self._save_settings()
         cv2.destroyAllWindows()
 
@@ -522,6 +554,20 @@ class GuiLauncherApp:
         if handled:
             return
 
+        # ── 1.5 嵌入式终端滚轮回看 (普通滚轮 + 终端视图 + 鼠标在右侧大屏内) ──────
+        if event == cv2.EVENT_MOUSEWHEEL and not handled and self._is_terminal_view():
+            s = self.scale_pct / 100.0
+            CW = max(200, int(370 * s))
+            SX = max(6, int(12 * s))
+            X0 = max(8, int(15 * s))
+            split_x = X0 + CW * 2 + SX + max(8, int(15 * s))
+            if x >= split_x:
+                panel = self.terminals.get(self.tools[self.selected_tool_idx].key_id)
+                body = self._terminal_body_rect(split_x)
+                visible = max(1, (body[3] - body[1] - 8) // panel.row_h)
+                panel.scroll(3 if flags > 0 else -3, visible)   # 上滚回看, 触底恢复跟随
+                return
+
         # 检测鼠标悬停在哪个卡片上（根据当前 scale 坐标直接命中检测）
         card_idx = self._hit_test_cards(x, y)
         self.hover_tool_idx = card_idx
@@ -537,6 +583,13 @@ class GuiLauncherApp:
             if bx <= x <= bx + bw and by <= y <= by + bh:
                 self._running = False
                 return
+
+            # 终端视图标题栏按钮 ([停止]/[返回])
+            if self._is_terminal_view():
+                for bid, (bx1, by1, bx2, by2) in self._term_btn_rects:
+                    if bx1 <= x <= bx2 and by1 <= y <= by2:
+                        self._on_terminal_button(bid)
+                        return
 
             # 点击左侧卡片
             if card_idx != -1:
@@ -554,7 +607,7 @@ class GuiLauncherApp:
                 self._launch_tool(self.tools[card_idx])
 
     def _handle_keyboard(self, raw_key: int):
-        """键盘快捷键响应 (3分组: row0 A全宽, rows1-2 B 2×2, rows3-5 D 2×3)"""
+        """键盘快捷键响应 (3分组: row0 A 2张并列, rows1-2 B 2×2, rows3-5 D 2×3)"""
         if self.is_subtool_running:
             return  # 子应用运行期间，主视窗处于安全挂起待命态，屏蔽一切按键操作
 
@@ -569,61 +622,55 @@ class GuiLauncherApp:
             return
 
         # 方向键：将卡片索引映射到 (row, col) 坐标后导航
-        # row 0: idx 0 (A)
-        # row 1-2: idx 1-4 (B 2×2)
-        # row 3-5: idx 5-10 (D 2×3)
+        # row 0: idx 0-1 (A 环境场景 2张并列)
+        # row 1-2: idx 2-5 (B 2×2)
+        # row 3-5: idx 6-11 (D 2×3)
         def idx_to_rc(i: int) -> Tuple[int, int]:
-            if i <= 0:
-                return (0, 0)
-            if 1 <= i <= 4:   # B 区
-                b = i - 1
+            if i <= 1:
+                return (0, i)
+            if 2 <= i <= 5:   # B 区
+                b = i - 2
                 return (b // 2 + 1, b % 2)
-            if 5 <= i <= 10:  # D 区 2×3
-                d = i - 5
+            if 6 <= i <= 11:  # D 区 2×3
+                d = i - 6
                 return (d // 2 + 3, d % 2)
-            return (5, 0)
+            return (5, 1)
 
         def rc_to_idx(r: int, c: int) -> int:
             if r == 0:
-                return 0
+                return min(c, 1)
             if 1 <= r <= 2:   # B 区
                 base_b = (r - 1) * 2
-                return min(1 + base_b + c, 10)
+                return min(2 + base_b + c, 5)
             if 3 <= r <= 5:   # D 区
                 base_d = (r - 3) * 2
-                return min(5 + base_d + c, 10)
-            return 10
+                return min(6 + base_d + c, 11)
+            return 11
 
         row, col = idx_to_rc(self.selected_tool_idx)
 
         if raw_key in (2490368, 65362, 38):    # 上
             if row > 0:
                 row -= 1
-                col = 0 if row == 0 else col
-                if row == 3 and col >= 1:  # C 区只有 col 0
-                    col = 0
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
             return
 
         if raw_key in (2621440, 65364, 40):    # 下
-            if row < 6:
+            if row < 5:
                 row += 1
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
             return
 
         if raw_key in (2424832, 65361, 37):    # 左
-            if row > 0 and col > 0:
-                col = 0
+            col = 0
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
             return
 
         if raw_key in (2555904, 65363, 39):    # 右
-            if row > 0 and col < 1:
-                if row != 3:  # C 区只有 col 0
-                    col = 1
+            col = 1
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
             return
@@ -656,14 +703,15 @@ class GuiLauncherApp:
         key_char = chr(raw_key & 0xFF).lower() if (raw_key & 0xFF) < 128 else ""
 
         shortcut_map = {
-            '1': "scene_hub",            # A
-            '2': "tag_generator",        # B
-            '3': "tag_wizard",           # B
-            '4': "tag_studio",           # B
-            '5': "robot_online_tracker", # B Robot 在线跟踪
-            '6': "d435_live",            # D
-            '7': "scara_debug",          # D SCARA 机械臂调试
-            '8': "asparagus_live",       # D
+            '1': "scene_hub",          # A 场景管理
+            '2': "hardware_config",    # A 确定输入输出设备
+            '3': "tag_manager",        # B
+            '4': "tag_wizard",         # B
+            '5': "tag_studio",         # B
+            '6': "robot_online_tracker", # B Robot 在线跟踪
+            '7': "d435_live",          # D
+            '8': "scara_debug",        # D SCARA 机械臂调试
+            '9': "asparagus_live",     # D
             # 单字母快捷键 (无数字键卡片)
             't': "sys_diagnose_tests",
             'p': "pip_install",
@@ -683,7 +731,7 @@ class GuiLauncherApp:
         """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
         布局 (5行，3分组):
-          row 0   A 场景总控 (全宽, 1张)
+          row 0   A 环境场景 (2张并列)
           rows 1-2  B Tag 标定流水线 (2×2 = 4张)
           rows 3-5  D 生产调试 (2×3 = 6张)
         """
@@ -696,18 +744,17 @@ class GuiLauncherApp:
         GY = max(16, int(40 * s))
         X0 = max(8, int(15 * s))
         Y0 = max(40, int(66 * s))
-        FW = CW * 2 + SX
 
-        if idx == 0:          # A: 顶部全宽
-            return X0, Y0 + LH, FW, CH
+        if idx <= 1:          # A: 顶部两张并列 (环境场景组)
+            return X0 + idx * (CW + SX), Y0 + LH, CW, CH
 
-        if 1 <= idx <= 4:     # B: 2×2 (2行)
-            b = idx - 1
+        if 2 <= idx <= 5:     # B: 2×2 (2行)
+            b = idx - 2
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        if 5 <= idx <= 10:    # D: 生产调试 (2×3 = 6张)
-            d = idx - 5
+        if 6 <= idx <= 11:    # D: 生产调试 (2×3 = 6张)
+            d = idx - 6
             base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
             return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
 
@@ -723,6 +770,10 @@ class GuiLauncherApp:
 
     def _launch_tool(self, tool: ToolCardMeta):
         """执行启动子工具或测试 (支持全屏暗化蒙版与控制权移交挂起浮岛)"""
+        # 纯输出型工具 (系统环境诊断/pip 依赖安装) 走内嵌终端: 右侧大屏切换, GUI 保持可交互
+        if tool.key_id in ("sys_diagnose_tests", "pip_install"):
+            self._launch_in_terminal(tool)
+            return
         self._save_settings()  # 立即落盘记忆当前大小与比例
         self.is_subtool_running = True
         self.running_tool_meta = tool
@@ -735,7 +786,7 @@ class GuiLauncherApp:
         cmd = tool.command
         try:
             if tool.is_gui:
-                res = subprocess.run(cmd)
+                subprocess.run(cmd)
                 self.set_toast(f"【{tool.title}】已安全返回，控制中心已重新就绪。")
             else:
                 if sys.platform == "win32":
@@ -753,6 +804,118 @@ class GuiLauncherApp:
             self.running_tool_meta = None
             self.refresh_system_status()
             self._present_canvas()
+
+    # ========================== 嵌入式终端 (纯输出型工具) ==========================
+
+    def _launch_in_terminal(self, tool: ToolCardMeta):
+        """内嵌终端启动: 右侧大屏切换为终端视图, 子进程后台流式运行 (GUI 保持可交互)"""
+        self._save_settings()
+        idx = self.tools.index(tool)
+        self.selected_tool_idx = idx
+        self.hover_tool_idx = idx
+        panel = self.terminals.get(tool.key_id)
+        if panel is None:
+            panel = TerminalPanel()
+            self.terminals[tool.key_id] = panel
+        if panel.is_running():
+            self.set_toast(f"【{tool.title}】正在运行, 已切换到终端视图")
+            return
+        self.set_toast(f"已在右侧终端启动: 【{tool.title}】")
+        panel.start(tool.command, cwd=PROJECT_ROOT)
+
+    def _is_terminal_view(self) -> bool:
+        """当前选中卡片是否处于内嵌终端视图"""
+        idx = self.selected_tool_idx
+        return 0 <= idx < len(self.tools) and self.tools[idx].key_id in self.terminals
+
+    def _terminal_button_rects(self, split_x: int):
+        """终端标题栏 [停止][返回] 按钮矩形 (渲染与鼠标命中共用, 返回最右为 [返回])"""
+        s = self.scale_pct / 100.0
+        top_h = max(36, int(54 * s))
+        header_h = max(36, int(46 * s))
+        bw, bh = max(56, int(78 * s)), max(22, int(28 * s))
+        y1 = top_h + (header_h - bh) // 2
+        rects, bx2 = [], self.canvas_w - max(8, int(14 * s))
+        for bid in ("TERM_BACK", "TERM_STOP"):   # 从右往左排布
+            bx1 = bx2 - bw
+            rects.append((bid, (bx1, y1, bx2, y1 + bh)))
+            bx2 = bx1 - max(6, int(10 * s))
+        return rects
+
+    def _terminal_body_rect(self, split_x: int):
+        """终端本体区域 (标题栏之下, 状态行之上)"""
+        s = self.scale_pct / 100.0
+        top_h = max(36, int(54 * s))
+        footer_h = max(34, int(50 * s))
+        header_h = max(36, int(46 * s))
+        status_h = max(20, int(24 * s))
+        pad = max(2, int(4 * s))
+        return (split_x + pad, top_h + header_h + pad,
+                self.canvas_w - pad, self.canvas_h - footer_h - status_h)
+
+    def _on_terminal_button(self, btn_id: str):
+        """终端标题栏按钮: [停止] 终止子进程 / [返回] 回系统总览"""
+        idx = self.selected_tool_idx
+        panel = self.terminals.get(self.tools[idx].key_id) if 0 <= idx < len(self.tools) else None
+        if panel is None:
+            return
+        if btn_id == "TERM_STOP":
+            if panel.is_running():
+                panel.stop()
+                self.set_toast("已发送停止信号, 正在终止子进程...")
+            else:
+                self.set_toast("终端当前没有正在运行的子进程")
+        elif btn_id == "TERM_BACK":
+            self.selected_tool_idx = -1
+            self.hover_tool_idx = -1
+
+    def _render_terminal_panel(self, canvas: np.ndarray, tool: ToolCardMeta, split_x: int):
+        """右侧大屏终端视图: 标题栏 (状态灯 + 标题 + 停止/返回按钮) + 终端本体 + 状态行"""
+        s = self.scale_pct / 100.0
+        top_h = max(36, int(54 * s))
+        header_h = max(36, int(46 * s))
+        panel = self.terminals.get(tool.key_id)
+        if panel is None:
+            return
+
+        # 标题栏底色与状态灯 (绿=运行中/已成功, 红=失败/已停止)
+        cv2.rectangle(canvas, (split_x, top_h), (self.canvas_w, top_h + header_h), (17, 20, 26), -1)
+        dot_col = (90, 210, 120) if panel.status_ok() else (80, 80, 240)
+        dot_x = split_x + max(8, int(16 * s))
+        dot_cy = top_h + header_h // 2
+        cv2.circle(canvas, (dot_x, dot_cy), max(3, int(5 * s)), dot_col, -1)
+        draw_text(canvas, f"嵌入式终端 | {tool.title}",
+                  (dot_x + max(8, int(14 * s)), dot_cy - max(7, int(9 * s))),
+                  max(10, int(14 * s)), self.COLOR_TEXT_TITLE, bold=True)
+
+        # [停止] / [返回] 按钮 (悬停高亮, 与卡片按钮风格一致)
+        self._term_btn_rects = []
+        for bid, (bx1, by1, bx2, by2) in self._terminal_button_rects(split_x):
+            is_hover = bx1 <= self.mouse_x <= bx2 and by1 <= self.mouse_y <= by2
+            if bid == "TERM_STOP":
+                enabled = panel.is_running()
+                bg = (48, 22, 24) if (is_hover and enabled) else ((32, 20, 22) if enabled else (24, 26, 30))
+                border = (210, 60, 60) if (is_hover and enabled) else ((95, 36, 40) if enabled else (48, 52, 60))
+                txt = (220, 170, 170) if enabled else (100, 108, 120)
+                label = "停止"
+            else:
+                bg = (48, 56, 72) if is_hover else self.COLOR_CARD_BG
+                border = (0, 180, 220) if is_hover else self.COLOR_BORDER
+                txt = (240, 244, 250) if is_hover else (190, 190, 200)
+                label = "返回"
+            cv2.rectangle(canvas, (bx1, by1), (bx2, by2), bg, -1)
+            cv2.rectangle(canvas, (bx1, by1), (bx2, by2), border, 2 if is_hover else 1)
+            draw_text(canvas, label, (bx1 + (bx2 - bx1) // 2 - 14, by1 + (by2 - by1 - 14) // 2),
+                      max(10, int(13 * s)), txt, bold=True)
+            self._term_btn_rects.append((bid, (bx1, by1, bx2, by2)))
+
+        # 终端本体 + 底部状态行
+        body = self._terminal_body_rect(split_x)
+        panel.draw(canvas, body)
+        cv2.rectangle(canvas, (body[0], body[1]), (body[2], body[3]), self.COLOR_BORDER, 1)
+        draw_text(canvas, panel.status_text,
+                  (body[0] + max(6, int(10 * s)), body[3] + max(3, int(5 * s))),
+                  max(9, int(12 * s)), (150, 170, 185))
 
     # ========================== 核心渲染逻辑 ==========================
 
@@ -778,9 +941,12 @@ class GuiLauncherApp:
         # 3. 左侧工具网格区
         self._render_tools_grid(canvas)
 
-        # 4. 右侧实时说明大屏 (有卡片高亮/选中时渲染 Inspector，否则渲染默认环境与硬件总览大屏)
+        # 4. 右侧实时说明大屏 (终端视图优先: 选中纯输出型工具时切换为嵌入式终端;
+        #    其余有卡片高亮/选中时渲染 Inspector，否则渲染默认环境与硬件总览大屏)
         cur_idx = self.hover_tool_idx if self.hover_tool_idx != -1 else self.selected_tool_idx
-        if 0 <= cur_idx < len(self.tools):
+        if self._is_terminal_view():
+            self._render_terminal_panel(canvas, self.tools[self.selected_tool_idx], split_x)
+        elif 0 <= cur_idx < len(self.tools):
             self._render_inspector_panel(canvas, self.tools[cur_idx], split_x)
         else:
             self._render_default_overview_panel(canvas, split_x)
@@ -807,7 +973,7 @@ class GuiLauncherApp:
         cv2.circle(canvas, (c_x, c_y), max(4, int(8 * s)), self.COLOR_ACCENT, 1)
         draw_text(canvas, "FLUX VISION 3D", (max(20, int(40 * s)), max(5, int(10 * s))),
                   font_size=max(11, int(15 * s)), color=self.COLOR_ACCENT, bold=True)
-        draw_text(canvas, "工业视觉综合控制中心", (max(20, int(40 * s)), max(18, int(28 * s))),
+        draw_text(canvas, "芦笋上料自动化", (max(20, int(40 * s)), max(18, int(28 * s))),
                   font_size=max(9, int(12 * s)), color=(150, 170, 185))
 
         # 当前活动生产场景胶囊 (紧随标题之后，居中/醒目呈现)
@@ -836,7 +1002,7 @@ class GuiLauncherApp:
                 cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), (20, 24, 30), -1)
                 cv2.rectangle(canvas, (capsule_x, cap_y1), (capsule_x + capsule_w, cap_y2), (38, 46, 56), 1)
                 cv2.circle(canvas, (capsule_x + max(8, int(14 * s)), (cap_y1 + cap_y2) // 2), max(2, int(4 * s)), (120, 130, 140), -1)
-                draw_text(canvas, "当前工况: 【未选定场景】 (请进入场景总控选择)", (capsule_x + max(14, int(24 * s)), max(8, int(17 * s))),
+                draw_text(canvas, "当前工况: 【未选定场景】 (请进入环境场景选择)", (capsule_x + max(14, int(24 * s)), max(8, int(17 * s))),
                           font_size=max(10, int(13 * s)), color=(140, 150, 160))
 
         # 右上角 [X] 退出按钮 (自适应靠右)
@@ -859,9 +1025,9 @@ class GuiLauncherApp:
 
         HEADER_TEXT = (192, 206, 222)
         group_headers = [
-            (self._get_card_rect(0)[1] - LH,  FW, "A  场景总控",                        (195, 155,  45)),
-            (self._get_card_rect(1)[1] - LH,  FW, "B  Tag 标定流水线 (AprilTag)",        ( 65, 175, 160)),
-            (self._get_card_rect(5)[1] - LH,  FW, "D  生产调试 (感知/抓取/诊断)",        ( 90, 140, 195)),
+            (self._get_card_rect(0)[1] - LH,  FW, "A  环境场景",                        (195, 155,  45)),
+            (self._get_card_rect(2)[1] - LH,  FW, "B  Tag 标定流水线 (AprilTag)",        ( 65, 175, 160)),
+            (self._get_card_rect(6)[1] - LH,  FW, "D  生产调试 (感知/抓取/诊断)",        ( 90, 140, 195)),
         ]
         for hy, hw, label, accent in group_headers:
             cv2.rectangle(canvas, (X0, hy), (X0 + hw, hy + LH - max(1, int(2 * s))), (18, 22, 30), -1)
@@ -906,10 +1072,10 @@ class GuiLauncherApp:
             draw_text(canvas, tool.subtitle[:max_sub], (cx + max(8, int(14 * s)), cy + max(20, int(36 * s))),
                       font_size=max(9, int(12 * s)), color=sub_col)
 
-            # 运行模式微标
-            mode_text = "GUI" if tool.is_gui else "CMD"
-            mode_color = (0, 190, 150) if tool.is_gui else (135, 150, 170)
-            put_text(canvas, mode_text, (cx + cw - max(30, int(45 * s)), cy + max(14, int(24 * s))),
+            # 运行模式微标 (三态: GUI / CMD / TERM)
+            mode_color = {"GUI": (0, 190, 150), "TERM": (120, 210, 130)}.get(
+                tool.mode, (135, 150, 170))     # CMD 灰
+            put_text(canvas, tool.mode, (cx + cw - max(30, int(45 * s)), cy + max(14, int(24 * s))),
                         cv2.FONT_HERSHEY_SIMPLEX, max(0.24, 0.32 * s), mode_color, 1, cv2.LINE_AA)
 
     def _render_inspector_panel(self, canvas: np.ndarray, tool: ToolCardMeta, split_x: int):
@@ -935,7 +1101,8 @@ class GuiLauncherApp:
 
         draw_text(canvas, tool.title, (px + max(36, int(62 * s)), py + max(4, int(10 * s))),
                   font_size=max(12, int(18 * s)), color=self.COLOR_TEXT_TITLE, bold=True)
-        mode_str = "原生 GUI 视窗" if tool.is_gui else "控制台"
+        mode_str = {"TERM": "内嵌终端"}.get(tool.mode,
+                                            "原生 GUI 视窗" if tool.is_gui else "控制台")
         draw_text(canvas, f"{tool.category}  |  {mode_str}",
                   (px + max(36, int(62 * s)), py + max(20, int(34 * s))), font_size=max(9, int(12 * s)), color=self.COLOR_TEXT_SUB)
 
@@ -1128,7 +1295,7 @@ class GuiLauncherApp:
                                          font_size=max(9, int(12 * s)), color=(190, 205, 220), line_spacing=max(2, int(4 * s)))
         else:
             cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (120, 130, 140), -1)
-            curr_y = draw_multiline_text(canvas, "活动工况场景: 未选定场景 (请点击 [1] 场景总控中心新建或切换)",
+            curr_y = draw_multiline_text(canvas, "活动工况场景: 未选定场景 (请点击 [1] 场景管理新建或切换)",
                                          (bullet_text_x, curr_y), max_width=bullet_w,
                                          font_size=max(9, int(12 * s)), color=(150, 160, 170), line_spacing=max(2, int(4 * s)))
         curr_y += max(12, int(16 * s))
@@ -1229,7 +1396,7 @@ class GuiLauncherApp:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="3D 视觉综合控制中心 (Suite Dashboard)")
+    parser = argparse.ArgumentParser(description="芦笋上料自动化 (Dashboard)")
     parser.parse_args()
 
     app = GuiLauncherApp()

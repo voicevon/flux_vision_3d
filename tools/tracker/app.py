@@ -6,18 +6,23 @@ Robot 在线跟踪 (Robot Online Tracker) — FR-12
 Dashboard 第 5 张卡片「Robot 在线跟踪」的主工具：
   - GUI 先行启动 (不自动开相机)：顶部工具栏选相机类型 (RealSense D435 / USB 摄像头) →
     分辨率 → [开启] 乒乓开关 (布局与风格借鉴 d435_viewer 深度相机诊断工具)；
-  - [识别] 一键单帧闭环 (与 Offline Studio 单帧流程一致)：开相机 → 拍一张 → 关相机 →
+  - [一次性建立世界坐标系] 一键单帧闭环 (与 Offline Studio 单帧流程一致)：开相机 → 拍一张 → 关相机 →
     识别视野内已知 Tag (蓝色实测棱柱) → 单帧 PnP 确定世界坐标系零点 →
     地图白名单全部 Tag 以绿色理论棱柱叠加在静态照片上；
   - 真实相机实时取流，基于世界坐标地图 (FR-9.6, 地图世界系=机械臂坐标系) 实时检测标靶；
   - 用视野内非目标标靶的世界角点 PnP 解算相机世界系位姿，进而解出目标 Tag (默认 2 号) 的世界坐标实时显示；
-  - 按 [T] 经机械臂串口 (FR-7.1) 以"抬起→平移→下探"安全路径驱动末端跟踪目标 Tag 世界坐标；
+  - 勾选 [√连续跟踪] 开启连续跟踪：经机械臂串口 (FR-7.1) 以"抬起→平移→下探"安全路径
+    驱动末端自动跟随目标最新世界坐标；
   - 到位后 M114 回读末端实际坐标，与视觉解算世界坐标同屏对比偏差 (FR-12.4 相机位置校准)。
 
 工具栏 (双排, 组间空白分隔):
-  第一排: [相机类型 ▼] [分辨率 ▼] [开启/关闭] | [串口 ▼] [连接机械臂] [M84] [G92] ... [退出 X]
-  第二排: [识别] [确定世界坐标系] [XY平面 ▼] [显示已知Tag] [识别 Tag 2] [跟踪 Tag N]
-快捷键: [S] 一键识别  [P] XY平面下拉  [L] 确定/解除世界坐标系  [A] 显示已知Tag  [R] 识别Tag2  [C] 连接/断开机械臂  [T] 触发跟踪  [X]/[ESC] 退出
+  第一排: [相机类型 ▼] [分辨率 ▼] [开启/关闭] | [串口 ▼] [连接机械臂] [M84+G92] [Park] ... [退出 X]
+  第二排 (第一组居左, 第二组跟踪居右):
+    第一组: [一次性建立世界坐标系] [确定世界坐标系] | [XY平面 ▼] [√显示已知Tag] | [识别目标·单次] [√连续识别]
+    第二组: [跟踪目标·单次] [√连续跟踪]
+快捷键: [S] 一次性建立世界坐标系  [P] XY平面下拉  [L] 确定/解除世界坐标系  [A] 显示已知Tag  [R] 连续识别  [C] 连接/断开机械臂  [T] 勾选/取消连续跟踪  [X]/[ESC] 退出
+
+机械臂消息面板: [跟踪目标·单次]/[M84]/[G92]/[Park] 按钮下方, 逐条显示 指令 G-code → 回读/偏差 (调试用)。
 """
 
 import os
@@ -45,9 +50,11 @@ from src.calibration.offline_engine import OfflineVerificationEngine
 from src.control.robot_serial import RobotSerial
 from src.utils.gui_window_manager import GuiWindowManager
 from tools.tracker.camera_controller import CameraController
+from tools.scara_debug.loader_core.config import LoaderConfig
 from tools.tracker.common import (
     COLOR_ACCENT, COLOR_TEXT_SUB, COL_CYAN, COL_YELLOW,
-    TOOLBAR_H, draw_text, list_serial_ports)
+    TOOLBAR_H, fmt_point, list_serial_ports)
+from src.utils.text_rendering import draw_text
 from tools.tracker.renderer import TrackerRenderer
 from src.utils.logger import get_logger
 
@@ -77,6 +84,11 @@ class RobotOnlineTracker:
     PLANE_Z_BASE_CHOICES = (350, 300, 250, 200, 150, 100, 50, 0)  # 基础平面高度档 (mm, 锚点高度从地图动态注入)
     PLANE_Z_STATIC_LABELS = {0: " (地面)"}  # 静态高度标注 (锚点标注按地图动态生成)
     HP_TARGET_SIDE_PX = 240   # 高精度模式: ROI 放大后目标 Tag 边长 (px)
+    TRACK_RETRIGGER_MM = 3.0  # 持续跟踪: 目标位移超过该阈值才重新发起移动 (mm)
+    TRACK_MIN_INTERVAL_S = 1.0  # 持续跟踪: 两次移动任务的最小间隔 (s)
+    TRACK_FEEDRATE = 3000        # 跟踪水平平移进给率 (mm/min, F 参数)
+    PARK_FEEDRATE = 5000         # Park 回放料位水平平移进给率 (mm/min, 高速)
+    TRACK_LOG_MAX = 8         # 机械臂消息面板保留条数 (逐条显示 G-code 与回读, 调试用)
 
     def __init__(self, map_path=None, target_tag_id=2, port=None, baudrate=0):
         self.target_tag_id = int(target_tag_id)
@@ -132,13 +144,19 @@ class RobotOnlineTracker:
 
         # 6. 跟踪运行状态
         self.measured = None        # 目标 Tag 世界坐标实测 (EMA 平滑)
+        self.measured_time = 0.0    # 最近一次目标成功解算的时刻 (单次识别结果判定)
         self.rmse = None            # 世界位姿 PnP 重投影 RMSE (px)
         self.support_ids = []       # 支撑世界位姿解算的标靶 ID
         self.tracking = False       # 跟踪任务执行中
         self.track_stage = ""
         self.track_thread = None
+        self.track_armed = False    # [√连续跟踪] 勾选框: 勾选=末端自动跟随目标最新位置
+        self.recog_once_requested = False  # [识别目标·单次] 请求标志 (主循环解算一帧后消费)
         self.last_dev = None        # 最近一次到位偏差 (dx, dy, dz)
+        self._last_track_done = 0.0     # 上次跟踪任务完成时刻 (连续跟踪节流)
+        self._last_track_target = None  # 上次跟踪目标点 (目标位移 < 阈值不重复触发)
         self.robot_pos = None       # 最近一次 M114 末端坐标
+        self.track_log = []         # 机械臂消息面板 [(time_str, msg, kind), ...] kind: info/cmd/ok/err
         self.toast = "选择相机类型与分辨率后点击 [开启]"
         self.toast_err = False
         self.toast_time = time.time()
@@ -340,6 +358,7 @@ class RobotOnlineTracker:
         if target_world is not None:
             p = target_world
             self.measured = p if self.measured is None else 0.5 * self.measured + 0.5 * p
+            self.measured_time = time.time()
         return det
 
     def _solve_per_frame(self, det):
@@ -609,6 +628,7 @@ class RobotOnlineTracker:
         if self.robot.is_connected:
             self.robot.close()
             self.robot_pos = None
+            self.add_track_log("机械臂串口已断开")
             self.set_toast("机械臂串口已断开")
         else:
             if not self.robot.port:
@@ -619,11 +639,16 @@ class RobotOnlineTracker:
             threading.Thread(target=self._robot_connect_worker, daemon=True).start()
 
     def _robot_connect_worker(self):
-        """机械臂拨号线程: 串口握手在后台执行, UI 保持刷新"""
+        """机械臂拨号线程: 串口握手在后台执行, UI 保持刷新
+        连接成功后自动串行执行 M84 + G92 设零流程 (省去用户手动按 [M84+G92])"""
         try:
             self.robot.connect()
-            self.set_toast(f"机械臂已连接: {self.robot.port}")
+            self.add_track_log(f"机械臂已连接: {self.robot.port} @ {self.robot.baudrate}")
+            self.set_toast(f"机械臂已连接: {self.robot.port} | 自动设零中...")
+            # 连接成功后自动 M84 + G92 设零 (无需用户再按按钮)
+            self._m84_g92_worker()
         except Exception as e:
+            self.add_track_log(f"连接失败: {e}", "err")
             self.set_toast(f"连接失败: {e}", True)
         finally:
             self.robot_connecting = False
@@ -650,8 +675,8 @@ class RobotOnlineTracker:
         self._save_viewer_state()
         self.set_toast(f"机械臂串口已选择: {port_key}, 点击 [连接机械臂] 拨号")
 
-    def _send_robot_cmd(self, cmd: str, desc: str):
-        """发送机械臂即时指令 (M84/G92): 后台线程执行, 避免串口应答阻塞 UI"""
+    def _send_m84_g92(self):
+        """[M84+G92] 合并按钮: 后台线程先发 M84 释放电机, 再发 G92 设零点"""
         if self.robot_connecting:
             self.set_toast("正在连接中, 请稍候", True)
             return
@@ -664,62 +689,176 @@ class RobotOnlineTracker:
             self.set_toast("机械臂未连接, 请先连接", True)
             return
         self.robot_cmd_busy = True
-        threading.Thread(target=self._robot_cmd_worker, args=(cmd, desc), daemon=True).start()
+        threading.Thread(target=self._m84_g92_worker, daemon=True).start()
 
-    def _robot_cmd_worker(self, cmd: str, desc: str):
-        """即时指令线程: 发送 G-code 并回读坐标刷新面板"""
+    def _m84_g92_worker(self):
+        """M84+G92 顺序执行线程: M84 释放电机 → G92 对齐机械零位绝对坐标 → M114 回读
+        (全程逐条写入机械臂消息面板)"""
         try:
-            ok = self.robot.send_gcode(cmd, timeout=3.0)
-            if not ok:
-                self.set_toast(f"{desc} 发送失败 (无 ok 应答), 详见终端日志", True)
+            self.add_track_log("发送: M84", "cmd")
+            if not self.robot.send_gcode("M84", timeout=3.0):
+                self.add_track_log("M84 发送失败 (无 ok 应答)", "err")
+                self.set_toast("M84 发送失败 (无 ok 应答), 详见终端日志", True)
+                return
+            # 机械零位的绝对坐标 (单一来源 LoaderConfig.home_pose = X0 Y600 Z80, R=90°→E 轴);
+            # 声明"当前位置=机械零位绝对坐标", 绝非把当前位当 (0,0,0)
+            hp = LoaderConfig().home_pose
+            g92_cmd = f"G92 X{hp.x:.2f} Y{hp.y:.2f} Z{hp.z:.2f} E{hp.r:.2f}"
+            self.add_track_log(f"发送: {g92_cmd}", "cmd")
+            if not self.robot.send_gcode(g92_cmd, timeout=3.0):
+                self.add_track_log("G92 发送失败 (无 ok 应答)", "err")
+                self.set_toast("G92 发送失败 (无 ok 应答), 详见终端日志", True)
                 return
             pos = self.robot.get_position()
             if pos is not None:
                 self.robot_pos = pos
-                self.set_toast(f"{desc} 完成 | 末端 {pos[0]:.1f} {pos[1]:.1f} {pos[2]:.1f}")
+                self.add_track_log(f"M84+G92 完成 | 回读: {fmt_point(pos)}", "ok")
+                self.set_toast(f"M84+G92 完成 | 末端 {pos[0]:.1f} {pos[1]:.1f} {pos[2]:.1f}")
             else:
-                self.set_toast(f"{desc} 已发送")
+                self.add_track_log("M84+G92 已发送 (M114 无回读)")
+                self.set_toast("M84+G92 已发送")
         finally:
             self.robot_cmd_busy = False
 
-    def trigger_tracking(self):
-        """触发一次"抬起→平移→下探"跟踪任务 (后台线程执行)"""
+    def _park_robot(self):
+        """[Park] 按钮: 机械臂回到放料位 (X-250 Y350 Z80, R=90°→E 轴)"""
+        if self.robot_connecting:
+            self.set_toast("正在连接中, 请稍候", True)
+            return
         if self.tracking:
-            self.set_toast("跟踪任务执行中, 请稍候")
+            self.set_toast("跟踪任务执行中, 禁止发送指令", True)
+            return
+        if self.robot_cmd_busy:
+            return
+        if not self.robot.is_connected:
+            self.set_toast("机械臂未连接, 请先连接", True)
+            return
+        self.robot_cmd_busy = True
+        threading.Thread(target=self._park_worker, daemon=True).start()
+
+    def _park_worker(self):
+        """Park 执行线程: G1 直线插补到放料位 (X-250 Y350 Z80 E90, F5000 高速) → M114 回读确认
+        (放料位 Z=80 为安全高度, 可直接平移, 无需三段式抬起→下探;
+         用 G1 而非 G0 以严格遵循项目"水平对位 G0 + 精准插补 G1"双轨规范, 让 F5000 进给率真正生效)"""
+        try:
+            # 放料位绝对坐标 (基于机械零位 (0, 600, 80, 90) 的世界坐标系)
+            cmd = f"G1 X-250.00 Y350.00 Z80.00 E90.00 F{self.PARK_FEEDRATE}"
+            self.add_track_log(f"发送: {cmd}", "cmd")
+            if not self.robot.send_gcode(cmd, timeout=30.0, wait_done=True):
+                self.add_track_log("Park 移动失败 (无 ok 应答)", "err")
+                self.set_toast("Park 移动失败, 详见终端日志", True)
+                return
+            pos = self.robot.get_position()
+            if pos is not None:
+                self.robot_pos = pos
+                self.add_track_log(f"Park 完成 | 回读: {fmt_point(pos)}", "ok")
+                self.set_toast(f"Park 完成 | 末端 {pos[0]:.1f} {pos[1]:.1f} {pos[2]:.1f}")
+            else:
+                self.add_track_log("Park 已发送 (M114 无回读)")
+                self.set_toast("Park 已发送")
+        finally:
+            self.robot_cmd_busy = False
+
+    def trigger_recog_target_once(self):
+        """[识别目标·单次]: 实时流中解算一帧目标世界坐标, 结果经 Toast 显示"""
+        if self.recognizing or self.sampling:
+            self.set_toast("世界坐标系流程执行中, 请稍候", True)
+            return
+        if not self.camera.pipeline_running:
+            self.set_toast("请先开启相机 (标定世界坐标系请用 [一次性建立世界坐标系])", True)
+            return
+        self.recog_once_requested = True   # 下一帧解算后由主循环消费并 Toast 结果
+
+    def trigger_tracking(self):
+        """[跟踪目标·单次]: 触发一次"抬起→平移→下探"到位任务 (后台线程执行)"""
+        if self.tracking:
+            self.set_toast("跟踪任务执行中, 请稍候", True)
             return
         if not self.robot.is_connected:
             self.set_toast("机械臂未连接, 请先连接", True)
             return
         if self.measured is None:
-            self.set_toast("尚无有效的目标世界坐标解算结果", True)
+            self.set_toast("尚无有效的目标解算结果, 请先识别目标", True)
             return
         target = self.measured.copy()
+        self._last_track_target = target
+        self.tracking = True
+        self.track_thread = threading.Thread(
+            target=self._track_worker, args=(target,), daemon=True)
+        self.track_thread.start()
+
+    def toggle_track_armed(self):
+        """[√连续跟踪] 勾选框切换: 勾选=末端自动跟随目标最新位置 (实时流中调度)"""
+        if self.track_armed:
+            self.track_armed = False
+            self.set_toast("连续跟踪已关闭 (当前移动到位后停止)")
+            return
+        if not self.robot.is_connected:
+            self.set_toast("机械臂未连接, 请先连接后再勾选跟踪", True)
+            return
+        self.track_armed = True
+        self.set_toast("连续跟踪已开启: 末端将自动跟随目标最新位置 (位移>3mm 触发)")
+
+    def _maybe_continuous_track(self):
+        """连续跟踪调度: 勾选状态下每帧检查, 空闲且目标位移超阈值时发起一次三段式移动"""
+        if not self.track_armed or self.tracking or not self.robot.is_connected:
+            return
+        if self.measured is None:
+            return
+        target = self.measured.copy()
+        if self._last_track_target is not None and \
+                np.linalg.norm(target - self._last_track_target) < self.TRACK_RETRIGGER_MM:
+            return
+        if time.time() - self._last_track_done < self.TRACK_MIN_INTERVAL_S:
+            return
+        self._last_track_target = target
         self.tracking = True
         self.track_thread = threading.Thread(
             target=self._track_worker, args=(target,), daemon=True)
         self.track_thread.start()
 
     def _track_worker(self, target):
-        """跟踪线程: 三段式安全移动 -> M114 回读 -> 偏差计算"""
+        """跟踪线程: 单条 G1 水平平移 (Z=80 固定, E=90 固定, 仅跟踪 X/Y) -> M114 回读 -> 偏差计算
+        (Z 轴不再参与三段式抬起→下探; 直接平移到目标 X/Y, Z 锁死安全高度 80mm, R 轴锁死 90°)"""
         try:
-            self.track_stage = "移动中: 抬起 → 平移 → 下探"
-            ok = self.robot.move_to(target[0], target[1], target[2])
-            if not ok:
+            # 跟踪目标位姿: X/Y 来自视觉解算, Z 固定 80 (安全高度), E 固定 90 (R 轴)
+            target_pose = (target[0], target[1], 80.0)
+            self.add_track_log(
+                f"目标 ← 视觉: X{target[0]:.1f} Y{target[1]:.1f} "
+                f"(Z=80 固定, E=90 固定)")
+            self.track_stage = "移动中: 水平平移 (Z=80, E=90 锁定)"
+            cmd = (f"G1 X{target[0]:.2f} Y{target[1]:.2f} "
+                   f"Z80.00 E90.00 F{self.TRACK_FEEDRATE}")
+            self.add_track_log(f"发送: {cmd}", "cmd")
+            if not self.robot.send_gcode(cmd, timeout=30.0, wait_done=True):
+                self.add_track_log("移动失败 (无 ok 应答)", "err")
                 self.set_toast("机械臂移动失败, 详见终端日志", True)
                 return
             pos = self.robot.get_position()
             self.robot_pos = pos
             if pos is not None:
-                dev = np.array(pos, dtype=np.float64) - target
+                dev = np.array(pos, dtype=np.float64) - np.array(target_pose, dtype=np.float64)
                 self.last_dev = dev
+                self.add_track_log(f"回读: {fmt_point(pos)}", "ok")
+                self.add_track_log(
+                    f"偏差: {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f}"
+                    f" (总 {np.linalg.norm(dev):.2f} mm)", "ok")
                 self.set_toast(
                     f"到位完成 | 偏差 {dev[0]:+.1f} {dev[1]:+.1f} {dev[2]:+.1f} mm"
                     f" | 总 {np.linalg.norm(dev):.2f} mm")
             else:
+                self.add_track_log("移动完成, M114 回读失败", "err")
                 self.set_toast("移动完成, 但 M114 回读失败")
         finally:
             self.track_stage = ""
             self.tracking = False
+            self._last_track_done = time.time()
+
+    def add_track_log(self, msg: str, kind: str = "info"):
+        """跟踪消息面板追加一条消息 (时间戳 + 内容), 超出上限淘汰最旧条目"""
+        self.track_log.append((time.strftime("%H:%M:%S"), msg, kind))
+        if len(self.track_log) > self.TRACK_LOG_MAX:
+            del self.track_log[:len(self.track_log) - self.TRACK_LOG_MAX]
 
     def set_toast(self, msg: str, is_err: bool = False):
         self.toast = msg
@@ -767,8 +906,8 @@ class RobotOnlineTracker:
             self.recog_tag2_on = not self.recog_tag2_on
             if not self.recog_tag2_on:
                 self.support_ids = []
-            self.set_toast(f"识别 Tag {self.target_tag_id} 已开启" if self.recog_tag2_on
-                           else f"识别 Tag {self.target_tag_id} 已关闭 (纯预览)")
+            self.set_toast("连续识别已开启 (逐帧解算目标世界坐标)" if self.recog_tag2_on
+                           else "连续识别已关闭 (纯预览)")
         elif btn_id == "TOGGLE_LOCK":
             self.toggle_world_lock()
         elif btn_id == "TOGGLE_PLANE_DD":
@@ -786,6 +925,10 @@ class RobotOnlineTracker:
             self._save_viewer_state()
         elif btn_id == "TRIGGER_RECOG":
             self.trigger_recognize()
+        elif btn_id == "TRIGGER_RECOG_TARGET":
+            self.trigger_recog_target_once()
+        elif btn_id == "TRIGGER_TRACK_ONCE":
+            self.trigger_tracking()
         elif btn_id == "TOGGLE_ROBOT":
             self.toggle_robot()
         elif btn_id == "TOGGLE_PORT_DD":
@@ -795,12 +938,12 @@ class RobotOnlineTracker:
         elif btn_id.startswith("DD_PORT_"):
             self.active_dropdown = None
             self.select_port(payload)
-        elif btn_id == "ROBOT_M84":
-            self._send_robot_cmd("M84", "M84 释放电机")
-        elif btn_id == "ROBOT_G92":
-            self._send_robot_cmd("G92 X0 Y0 Z0", "G92 设当前位置为零点")
-        elif btn_id == "TRIGGER_TRACK":
-            self.trigger_tracking()
+        elif btn_id == "ROBOT_M84_G92":
+            self._send_m84_g92()
+        elif btn_id == "ROBOT_PARK":
+            self._park_robot()
+        elif btn_id == "TOGGLE_TRACK":
+            self.toggle_track_armed()
         elif btn_id == "QUIT":
             self._quit_requested = True
 
@@ -819,15 +962,20 @@ class RobotOnlineTracker:
         self.win_mgr.set_unicode_title("Robot 在线跟踪 | flux_vision_3d")
         print("\n" + "=" * 68)
         print(" Robot 在线跟踪 (GUI 已启动, 相机未开启)")
-        print("   顶部工具栏 (双排, 组间空白分隔): 第一排 相机类型→分辨率→[开启] ‖ [串口▼]→[连接机械臂]→[M84]→[G92]")
-        print("                      第二排 [识别]→[确定世界坐标系]→[XY平面▼]→[显示已知Tag]→[识别 Tag 2]→[跟踪 Tag N]")
-        print("   [识别] 一键单帧闭环: 开相机→拍一张→关相机→识别Tag(蓝棱柱)→确定世界坐标系→地图白名单绿棱柱")
+        print("   顶部工具栏 (双排, 组间空白分隔): 第一排 相机类型→分辨率→[开启] ‖ [串口▼]→[连接机械臂]→[M84+G92]→[Park]")
+        print("   第二排 (第一组居左 | 第二组跟踪居右):")
+        print("     第一组 [一次性建立世界坐标系][确定世界坐标系] | [XY平面▼][√显示已知Tag] | [识别目标·单次][√连续识别]")
+        print("     第二组 [跟踪目标·单次][√连续跟踪]")
+        print("   [一次性建立世界坐标系] 一键单帧闭环: 开相机→拍一张→关相机→识别Tag(蓝棱柱)→确定世界坐标系→地图白名单绿棱柱")
+        print("   [识别目标·单次] 实时流中解算一帧目标世界坐标 (Toast 显示) | [√连续识别] 勾选=逐帧解算")
+        print("   [跟踪目标·单次] 单条 G1 水平平移 (Z=80/E=90 锁定, 仅跟踪 X/Y, F3000) 到位+M114 偏差回读 | [√连续跟踪] 勾选=自动跟随")
+        print("   机械臂消息面板: 跟踪/M84/G92 按钮下方, 逐条显示 指令 G-code→回读/偏差")
         print("   开启相机后为纯预览; [确定世界坐标系] 一键执行: 采样30帧→滤波→求解零点→锁定")
         plane_desc = " ".join(f"Z {z}{self.plane_z_labels.get(z, '').strip()}"
                               for z in self.plane_z_choices)
         print("   [XY平面▼]: 不绘制 / " + plane_desc + " mm 透视网格+三轴, Tag 等高平面附加红色 X 轴")
-        print("   机械臂: [串口▼] 枚举并选择串口 → [连接机械臂] 拨号 | [M84] 释放电机 | [G92] 当前位置设为零点")
-        print("   快捷键: [S] 一键识别 | [P] XY平面下拉 | [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定/解除世界坐标系 | [C] 连接机械臂 | [T] 跟踪 | [X] 退出")
+        print("   机械臂: [串口▼] 枚举并选择串口 → [连接机械臂] 拨号后自动 M84+G92 设零 | [Park] G1 直线插补回到放料位 X-250 Y350 Z80 R90° (F5000 高速)")
+        print("   快捷键: [S] 一次性建立世界坐标系 | [P] XY平面下拉 | [A] 显示已知Tag | [R] 连续识别 | [L] 确定/解除世界坐标系 | [C] 连接机械臂 | [T] 勾选/取消连续跟踪 | [X] 退出")
         print("   窗口: 拖拽边框自由缩放 (自动记忆) | Ctrl+滚轮/Ctrl+加减 矢量缩放 | Ctrl+0 复位")
         print("=" * 68 + "\n")
 
@@ -841,12 +989,28 @@ class RobotOnlineTracker:
                         draw_text(canvas, "取流中...", (cw // 2 - 60, ch // 2), 22, COL_YELLOW, True)
                     else:
                         # 实时叠加直接画在原始帧上 (帧坐标), 再与工具栏拼合, 保证与画面内容对齐
-                        if self.recog_tag2_on or self.show_anchors_on or self.show_xy_plane_on:
+                        # (连续识别/连续跟踪/单次识别请求时也需解算, 保证目标实测坐标最新)
+                        if (self.recog_tag2_on or self.show_anchors_on
+                                or self.show_xy_plane_on or self.track_armed
+                                or self.recog_once_requested):
+                            t_prev = self.measured_time
                             det = self.solve_frame(frame)
-                            if det is not None:
+                            if det is not None and (self.recog_tag2_on or self.show_anchors_on
+                                                    or self.show_xy_plane_on):
                                 self.renderer.draw_overlay(frame, det)
                                 self.renderer.draw_xy_plane_overlay(frame, det)
                                 self.renderer.draw_anchor_overlay(frame, det)
+                            if self.recog_once_requested:
+                                self.recog_once_requested = False
+                                if self.measured_time > t_prev:
+                                    m = self.measured
+                                    self.add_track_log(f"识别目标: {fmt_point(m)}")
+                                    self.set_toast(f"单次识别目标: {m[0]:+.1f} {m[1]:+.1f} "
+                                                   f"{m[2]:+.1f} mm")
+                                else:
+                                    self.add_track_log("识别目标失败: 未入镜或世界系不可用", "err")
+                                    self.set_toast("单次识别失败: 目标未入镜或世界系不可用", True)
+                        self._maybe_continuous_track()
                         canvas = self.renderer.compose_canvas(frame)
                         self.renderer.draw_info_panel(canvas, y_off=TOOLBAR_H)
                 elif self.static_frame is not None:
@@ -895,7 +1059,7 @@ class RobotOnlineTracker:
                 elif k == "c":
                     self.toggle_robot()
                 elif k == "t":
-                    self.trigger_tracking()
+                    self.toggle_track_armed()
         finally:
             self.robot.close()
             self._toggle_camera(force_off=True)

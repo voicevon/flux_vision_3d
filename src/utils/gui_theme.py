@@ -41,8 +41,19 @@ _DARK = {
     "BTN":          (28, 34, 44),      # 按钮底色
     "BTN_BORDER":   (52, 64, 80),      # 按钮描边
     "BTN_HOVER":    (40, 52, 66),      # 按钮悬停
+    "BTN_DISABLED_BG":     (24, 29, 37),    # 按钮禁用底色 (仍是按钮外观, 不是黑洞)
+    "BTN_DISABLED_BORDER": (36, 44, 56),    # 按钮禁用描边
+    "BTN_TEXT":        (205, 215, 225),     # 按钮常态文字
+    "BTN_TEXT_HOVER":  (240, 240, 240),     # 按钮悬停文字 (提亮白)
+    "TEXT_DISABLED":   (115, 130, 145),     # 禁用文字
     "WHITE":        (240, 240, 240),   # 高亮白
     "GRAY":         (165, 165, 170),   # 中性灰
+}
+
+# 按钮 hover 行为参数 (与主题颜色无关, 全局统一; 各 GUI renderer 必须引用, 不得自行硬编码)
+BTN_BEHAVIOR = {
+    "HOVER_BOLD": True,    # hover 时文字加粗
+    "HOVER_SCALE": 1.0,    # hover 时字号倍数 (1.0 = 不放大; 放大会导致文本溢出按钮, 慎用)
 }
 
 # 亮色主题 (白底深字，强调色加深保证对比度；值为初始标定，可在本文件统一微调)
@@ -65,6 +76,11 @@ _LIGHT = {
     "BTN":          (248, 250, 252),
     "BTN_BORDER":   (185, 194, 206),
     "BTN_HOVER":    (232, 238, 244),
+    "BTN_DISABLED_BG":     (238, 241, 245),   # 按钮禁用底色
+    "BTN_DISABLED_BORDER": (210, 216, 224),   # 按钮禁用描边
+    "BTN_TEXT":        (60, 68, 80),          # 按钮常态文字
+    "BTN_TEXT_HOVER":  (20, 24, 30),          # 按钮悬停文字 (加深)
+    "TEXT_DISABLED":   (170, 178, 190),       # 禁用文字
     "WHITE":        (255, 255, 255),
     "GRAY":         (120, 126, 136),
 }
@@ -76,6 +92,7 @@ class GuiTheme:
     """主题访问入口：apply() 后以类属性直接取色 (GuiTheme.BG / GuiTheme.ACCENT ...)"""
 
     ACTIVE = _ACTIVE
+    BTN_BEHAVIOR = BTN_BEHAVIOR   # 按钮 hover 行为参数 (与颜色无关, 同一单源)
 
     @classmethod
     def apply(cls, name: str = "dark"):

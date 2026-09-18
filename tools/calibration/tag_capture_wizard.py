@@ -4,16 +4,19 @@
 AprilTag 多视角交互式采图向导 (Tag Capture Wizard)
 ===================================================
 用途：
-  1. 实时预览 RealSense D435 彩色画面，毫秒级检测并高亮 AprilTag 16h5；
-  2. 实时监测画面中的标靶数量与共视条件（>= 2 个 Tag 为有效建图视角）；
-  3. 提示 Tag 0（SCARA 基座原点）的捕获状态；
-  4. 按 [空格] 键一键拍摄保存无标注的高清原始帧至 data/tag_calibration_images/；
-  5. 提供拍照快门白闪视觉反馈与采样计数，采图完毕后可直接衔接空间建图；
-  6. 支持 --mock 模式，无物理相机时亦可进行交互演示。
+  1. GUI 先行启动 (不自动开相机)：顶部工具栏选相机类型 (RealSense D435 / USB 摄像头) →
+     分辨率 → [开启] 乒乓开关 (布局与 Robot 在线跟踪第一排左半部分同款)，点击 [开启] 后进入预览；
+  2. 实时预览画面，毫秒级检测并高亮 AprilTag 16h5；
+  3. 实时监测画面中的标靶数量与共视条件（>= 2 个 Tag 为有效建图视角）；
+  4. 提示 Tag 0（SCARA 基座原点）的捕获状态；
+  5. 按 [空格] 键一键拍摄保存无标注的高清原始帧至 data/tag_calibration_images/；
+  6. 提供拍照快门白闪视觉反馈与采样计数，采图完毕后可直接衔接空间建图；
+  7. 支持 --mock 模式，无物理相机时亦可进行交互演示 ([开启] 后切入仿真流)。
 """
 
 import os
 import sys
+import json
 import glob
 import time
 import argparse
@@ -42,10 +45,15 @@ from src.calibration.tag_detector import TagDetector
 from src.calibration.camera_service import CameraService
 from src.calibration.prism_renderer import draw_prism, COLORS_MAPPING
 from src.utils.config_guard import load_raw_config
-from src.utils.text_rendering import measure_text, put_text
+from src.utils.text_rendering import measure_text, put_text, draw_text
 from src.utils.logger import get_logger
+from src.utils.gui_window_manager import GuiWindowManager
+from tools.calibration.wizard_renderer import (
+    WizardRenderer, COLOR_ACCENT, COLOR_TEXT_SUB, COL_YELLOW)
 
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
+APP_ID = "tag_capture_wizard"
 
 try:
     from tools.window_helper import force_window_focus
@@ -70,9 +78,30 @@ class TagCaptureWizard:
         # 硬件与运行时状态 (必须先声明，严禁在后续被覆盖为 None)
         self.is_running = False
         self.flash_timer = 0.0
-        self.actual_stream_desc = "1080P Full HD"
+        self.actual_stream_desc = "相机未开启"
         # 统一取流服务: 硬件启停/帧读取/Mock 仿真全部委托 CameraService
         self._cam_srv = CameraService()
+
+        # GUI 状态: 启动只加载界面不开相机, 用户选择相机/分辨率后点击 [开启] 才进入预览
+        self.win_mgr = GuiWindowManager(app_id=APP_ID)
+        self.renderer = WizardRenderer(self)
+        self.active_dropdown = None        # None / CAMERA_TYPE_DROPDOWN / RES_DROPDOWN
+        self.pipeline_running = False
+        self.camera_type = "realsense"
+        self.camera_options = [
+            ("realsense", "RealSense D435"),
+            ("usb",       "USB 普通摄像头"),
+        ]
+        self.resolution = "1920x1080"      # 延续现状 1080P 优先 (高像素提升小标靶识别率)
+        self.resolution_options = [
+            ("1920x1080", "1920 × 1080  (推荐)"),
+            ("1280x720",  "1280 × 720"),
+            ("848x480",   "848 × 480"),
+            ("640x480",   "640 × 480"),
+        ]
+        _w, _h = self.resolution.split("x")
+        self.frame_w, self.frame_h = int(_w), int(_h)
+        self._load_viewer_state()
 
         # 默认反差与环境光配置 (优先读取 config.yaml)
         self.contrast_boost = 1.8
@@ -126,12 +155,9 @@ class TagCaptureWizard:
         existing = glob.glob(os.path.join(self.output_dir, "view_*.png"))
         self.image_count = len(existing)
 
-        # 最终启动物理相机流 (唯一启动入口; 无 SDK/无设备时服务内部优雅切 Mock)
-        if not self.mock_mode:
-            self._init_realsense()
-        else:
-            self._cam_srv.enter_mock()
-            log.info("处于仿真模式 (--mock)，将使用模拟视觉流。")
+        # GUI 先行: 此处不启动相机流; --mock 仅作为 [开启] 时的仿真取流后端
+        if self.mock_mode:
+            log.info("处于仿真模式 (--mock)，点击 [开启] 后将使用模拟视觉流。")
 
     def load_config(self):
         """读取 config.yaml 中的反差与光线配置 (统一走 config_guard)"""
@@ -189,26 +215,118 @@ class TagCaptureWizard:
             enable_auto_stretch=self.enable_auto_stretch
         )
 
-    def _init_realsense(self):
-        """启动 RealSense 彩色流 (委托统一 CameraService)：
-        1080P 超清优先 (8fps 高像素模式提升小标靶识别率)，逐级回退 720P/640x480，
-        全部失败时服务内部优雅切入 Mock 仿真模式。"""
-        self._cam_srv.start_realsense(
-            1920, 1080, fps=8,
-            fallbacks=((1280, 720, 15), (640, 480, 30)),
-            mock_fallback=True)
-        self.mock_mode = self._cam_srv.is_mock
-        self.color_sensor = self._cam_srv.color_sensor
-        if not self.mock_mode:
-            self.actual_stream_desc = self._cam_srv.stream_desc
+    # ------------------------------ 相机开关 (GUI 先行, 借鉴 Robot 在线跟踪) ------------------------------
+    def _load_viewer_state(self):
+        """从 config/gui_settings.json 恢复上次退出时的下拉选择 (相机类型/分辨率)"""
+        try:
+            if not os.path.exists(GUI_SETTINGS_FILE):
+                return
+            with open(GUI_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                root = json.load(f)
+            state = (root.get(APP_ID) or {}).get("viewer_state") or {}
+            if state.get("camera_type") in ("realsense", "usb"):
+                self.camera_type = state["camera_type"]
+            if any(k == state.get("resolution") for k, _ in self.resolution_options):
+                self.resolution = state["resolution"]
+                _w, _h = self.resolution.split("x")
+                self.frame_w, self.frame_h = int(_w), int(_h)
+        except Exception as e:
+            log.warning(f"恢复采图向导状态失败，使用默认配置: {e}")
 
-    def get_frame(self, frame_idx: int) -> np.ndarray:
-        """获取当前视频帧 (BGR): 硬件帧优先, 瞬时失败回退最近有效帧, Mock 生成仿真帧"""
-        if not self.mock_mode:
-            frame = self._cam_srv.read_frame(timeout_ms=2500)
-            if frame is not None:
-                return frame
-        return self._cam_srv.make_mock_frame(frame_idx)
+    def _save_viewer_state(self):
+        """保存下拉选择 (相机类型/分辨率) 到 config/gui_settings.json"""
+        try:
+            root = {}
+            if os.path.exists(GUI_SETTINGS_FILE):
+                try:
+                    with open(GUI_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                        root = json.load(f)
+                    if not isinstance(root, dict):
+                        root = {}
+                except Exception:
+                    root = {}
+            node = root.setdefault(APP_ID, {})
+            node["viewer_state"] = {
+                "camera_type": self.camera_type,
+                "resolution": self.resolution,
+            }
+            node["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            os.makedirs(os.path.dirname(GUI_SETTINGS_FILE), exist_ok=True)
+            with open(GUI_SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(root, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            log.warning(f"保存采图向导状态失败: {e}")
+
+    def _select_camera_type(self, cam_key):
+        """切换相机类型：如果取流已运行则先停再切换"""
+        if cam_key == self.camera_type:
+            return
+        if self.pipeline_running:
+            self._stop_camera()
+        self.camera_type = cam_key
+        self._save_viewer_state()
+        log.info(f"相机类型已切换为: {dict(self.camera_options).get(cam_key, cam_key)}")
+
+    def _change_resolution(self, res_key):
+        """切换分辨率：运行中则先停再按新分辨率重启"""
+        if res_key == self.resolution:
+            return
+        was_running = self.pipeline_running
+        if was_running:
+            self._stop_camera()
+        self.resolution = res_key
+        _w, _h = res_key.split("x")
+        self.frame_w, self.frame_h = int(_w), int(_h)
+        self._save_viewer_state()
+        if was_running:
+            self._start_camera()
+        log.info(f"分辨率已切换: {res_key}")
+
+    def _toggle_camera(self):
+        """开启或关闭相机取流 (乒乓)"""
+        if self.pipeline_running:
+            self._stop_camera()
+            self.set_toast("相机已关闭")
+            log.info("相机已关闭")
+        else:
+            self._start_camera()
+
+    def _start_camera(self):
+        """按当前类型/分辨率启动取流; 失败 Toast 报错且不静默降级 Mock (现场采图不能误采仿真帧)"""
+        w, h = self.frame_w, self.frame_h
+        try:
+            if self.mock_mode:
+                self._cam_srv.enter_mock()
+            elif self.camera_type == "realsense":
+                # 8fps 高像素模式提升小标靶识别率 (延续原 1080P@8fps 现状), 同档内回退 8fps
+                self._cam_srv.start_realsense(
+                    w, h, fps=8 if w > 1280 else 15,
+                    fallbacks=((w, h, 8),),
+                    mock_fallback=False)
+            else:
+                self._cam_srv.start_usb(w, h)
+        except Exception as e:
+            log.warning(f"相机开启失败: {e}")
+            self.set_toast(f"相机开启失败: {e}")
+            return
+        self.pipeline_running = True
+        self.color_sensor = self._cam_srv.color_sensor
+        self.actual_stream_desc = self._cam_srv.stream_desc
+        cam_desc = dict(self.camera_options).get(self.camera_type, self.camera_type)
+        self.set_toast(f"相机已开启: {cam_desc} @ {self.resolution}")
+        log.info(f"[OK] 相机已开启: {self.camera_type} @ {self.resolution} ({self.actual_stream_desc})")
+
+    def _stop_camera(self):
+        """幂等关闭取流"""
+        self._cam_srv.stop()
+        self.pipeline_running = False
+        self.color_sensor = None
+
+    def get_frame(self, frame_idx: int):
+        """获取当前视频帧 (BGR): 仅取流运行时读取 (Mock 帧由服务内部生成); 未开启返回 None"""
+        if self.pipeline_running:
+            return self._cam_srv.read_frame(timeout_ms=2500)
+        return None
 
     def save_image(self, raw_frame: np.ndarray, annotated_frame: np.ndarray = None) -> str:
         """
@@ -424,32 +542,162 @@ class TagCaptureWizard:
                    half_w=15.0, height=80.0, colors=COLORS_MAPPING,
                    alpha=0.42, draw_axes=True, axis_len=25.0)
 
+    # ------------------------------ 鼠标交互 ------------------------------
+    def _on_mouse(self, event, x, y, flags, param):
+        # 画布按窗口尺寸真矢量重绘, imshow 1:1 呈现, 窗口坐标即画布坐标 (零偏移)
+        if event == cv2.EVENT_MOUSEMOVE:
+            self.renderer.on_mouse_move(x, y)
+        elif event == cv2.EVENT_LBUTTONDOWN:
+            hit = self.renderer.hit_test(x, y)
+            if hit is not None:
+                self._handle_action(*hit)
+                return
+            # 点击空白处收起下拉
+            if self.active_dropdown is not None:
+                self.active_dropdown = None
+
+    def _handle_action(self, btn_id, payload):
+        """工具栏按钮动作分发 (与 Robot 在线跟踪同名同义)"""
+        if btn_id == "TOGGLE_CAM_DD":
+            self.active_dropdown = None if self.active_dropdown == "CAMERA_TYPE_DROPDOWN" \
+                else "CAMERA_TYPE_DROPDOWN"
+        elif btn_id == "TOGGLE_RES_DD":
+            self.active_dropdown = None if self.active_dropdown == "RES_DROPDOWN" \
+                else "RES_DROPDOWN"
+        elif btn_id.startswith("DD_CAM_"):
+            self.active_dropdown = None
+            self._select_camera_type(payload)
+        elif btn_id.startswith("DD_RES_"):
+            self.active_dropdown = None
+            self._change_resolution(payload)
+        elif btn_id == "TOGGLE_CAMERA":
+            self.active_dropdown = None
+            self._toggle_camera()
+        elif btn_id == "QUIT":
+            self.is_running = False
+
+    def _annotate_stream_frame(self, raw_frame, fps_display):
+        """对取流帧执行 Tag 检测叠加 (多边形/标牌/状态条/控制提示/快门白闪), 返回展示帧"""
+        disp_frame = raw_frame.copy()
+
+        # 超高灵敏度融合检测 AprilTag
+        found_tags = self.detect_tags_robust(raw_frame) or {}
+
+        detected_tags = list(found_tags.keys())
+        has_origin_tag = 0 in found_tags
+
+        for tag_id, corner_arr in found_tags.items():
+            pts = corner_arr.reshape((4, 2)).astype(int)
+            # Tag 0 采用高亮金黄 (0, 215, 255)，普通已知标靶采用鲜明绿色 (0, 255, 0)
+            is_origin = (tag_id == 0)
+            tag_color = (0, 215, 255) if is_origin else (0, 255, 0)
+
+            # 绘制 2D 轻量高反差多边形双层边框 (外黑内亮，不吃 CPU)
+            cv2.polylines(disp_frame, [pts], isClosed=True, color=(10, 10, 10), thickness=4)
+            cv2.polylines(disp_frame, [pts], isClosed=True, color=tag_color, thickness=2)
+
+            # 绘制角点序号微圆点 (0:红, 1:绿, 2:蓝, 3:黄，清晰辨识方向)
+            dot_colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
+            for pt_idx, pt in enumerate(pts):
+                cv2.circle(disp_frame, tuple(pt), 4, dot_colors[pt_idx], -1)
+
+            # 计算机械标靶单元方格像素尺寸 (AprilTag 16h5 为 6x6 网格)
+            l01 = np.linalg.norm(pts[1] - pts[0])
+            l12 = np.linalg.norm(pts[2] - pts[1])
+            l23 = np.linalg.norm(pts[3] - pts[2])
+            l30 = np.linalg.norm(pts[0] - pts[3])
+            cell_w = int(round((l01 + l23) / 12.0))
+            cell_h = int(round((l30 + l12) / 12.0))
+
+            # 绘制极速轻量标牌
+            cx = int(np.mean(pts[:, 0]))
+            min_y = int(np.min(pts[:, 1]))
+            tag_text = f"Tag {tag_id}" + (" [ORIGIN 原点]" if is_origin else "")
+            cell_text = f"Cell: {cell_w}x{cell_h}px"
+
+            badge_w = 140 if is_origin else 115
+            badge_x = max(10, min(disp_frame.shape[1] - badge_w - 10, cx - badge_w // 2))
+            badge_y = max(42, min_y - 12)
+            cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + badge_w, badge_y + 8), (20, 20, 20), -1)
+            cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + badge_w, badge_y + 8), tag_color, 1)
+            put_text(disp_frame, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+            put_text(disp_frame, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
+
+            # 仅在用户显式开启时才做 3D 棱柱投影 (默认关闭，释放全部算力供 8fps 流畅取景)
+            if self.show_3d_axes:
+                self.render_tag_3d_axes(disp_frame, corner_arr, tag_id)
+
+        num_tags = len(detected_tags)
+        is_covisible = num_tags >= 2
+
+        # 顶部状态条渲染 (半透明黑底)
+        overlay = disp_frame.copy()
+        cv2.rectangle(overlay, (0, 0), (disp_frame.shape[1], 65), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.8, disp_frame, 0.2, 0, disp_frame)
+
+        # 状态文字 (展示已检出全部 ID 列表)
+        status_color = (0, 255, 0) if is_covisible else (0, 165, 255)
+        tag_list_str = str(sorted(detected_tags)) if detected_tags else "None"
+        status_text = f"Tags [{num_tags}]: {tag_list_str} " + ("[CO-VISIBILITY OK]" if is_covisible else "[NEED >= 2]")
+        if has_origin_tag:
+            status_text += " | [Tag 0 ORIGIN OK]"
+
+        put_text(disp_frame, status_text, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
+
+        # 第二行显示相机模式、实时FPS与白名单模式
+        if not self.valid_tag_ids:
+            wl_str = " | Whitelist: ALL [Exploring]"
+            wl_color = (0, 255, 255)
+        else:
+            wl_str = f" | Whitelist: {len(self.valid_tag_ids)} IDs"
+            wl_color = (190, 190, 190)
+
+        info_text = f"FPS: {fps_display:.1f} | Stream: {self.actual_stream_desc} | Contrast: x{self.contrast_boost:.1f}{wl_str}"
+        put_text(disp_frame, info_text, (15, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, wl_color, 1)
+
+        # 右侧计数与保存提示
+        tip_text = f"Saved: {self.image_count} frames | [Space]: Save"
+        (rw, _), _ = measure_text(tip_text, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+        put_text(disp_frame, tip_text, (disp_frame.shape[1] - rw - 15, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
+
+        # 底部控制提示条 (半透明)
+        h_img, w_img = disp_frame.shape[:2]
+        cv2.rectangle(disp_frame, (0, h_img - 35), (w_img, h_img), (15, 15, 15), -1)
+        ctrl_tip = "[Space]: Pic | [Tab]: Preset | [[ / ]]: Exp | [E]: AutoExp | [I/K]: Contrast | [A]: 3D | [W]: WhiteList | [Q]: Exit"
+        put_text(disp_frame, ctrl_tip, (15, h_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1)
+
+        # 快门白闪反馈
+        if time.time() - self.flash_timer < 0.12:
+            disp_frame = cv2.addWeighted(disp_frame, 0.4, np.full_like(disp_frame, 255), 0.6, 0)
+        return disp_frame
+
     def run(self):
-        """运行交互式采图主循环"""
+        """运行交互式采图主循环 (GUI 先行: 启动只加载界面, 相机等用户点击 [开启])"""
         self.is_running = True
-        window_name = "AprilTag Multi-View Capture Wizard (Space: Capture | Q: Exit)"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 1280, 720)
+        win_key = "tag_capture_wizard"  # 窗口 key 纯 ASCII (namedWindow ANSI API)
+        self.win_mgr.setup_window(win_key, mouse_callback=self._on_mouse)
+        self.win_mgr.set_unicode_title("AprilTag 采图向导 | flux_vision_3d")
 
         print("\n" + "=" * 70)
-        print("          AprilTag 多视角交互式采图向导启动")
+        print("          AprilTag 多视角交互式采图向导启动 (GUI 已启动, 相机未开启)")
         print("=" * 70)
-        print(f" [画面流规格] : {self.actual_stream_desc}")
-        print(f" [检测模式]   : {self.active_preset_name} (对比度x{self.contrast_boost:.1f}, CLAHE={self.clahe_clip_limit:.1f})")
+        print(" 顶部工具栏 (与 Robot 在线跟踪同款): [相机类型 ▼] [分辨率 ▼] [开启/关闭] ... [退出 X]")
         print(f" [存储目录]   : {self.output_dir}")
         print(f" [已存图像]   : {self.image_count} 张")
-        print(" [快捷键指南] :")
+        print(" [快捷键指南] (开启相机后生效):")
         print("   - [Space] (空格键) : 拍摄并保存当前视角高清原图；")
         print("   - [Tab]            : 循环切换 3 种反差预设 (标准 / 超强低反差 / 抗过曝)；")
         print("   - [W]              : 一键切换【白名单过滤】/【全量探索模式 (放行所有Tag 0~29)】；")
         print("   - [I] / [K]        : 实时增减对比度拉伸 (I 增加 / K 减少)；")
         print("   - [S]              : 将当前微调参数持久化写入 config.yaml；")
         print("   - [C]              : 清空当前采图目录；")
-        print("   - [Q] 或 [ESC]     : 退出向导。")
+        print("   - [X] / [Q] / [ESC] : 退出向导。")
+        print(" 窗口: 拖拽边框自由缩放 (自动记忆) | Ctrl+滚轮/Ctrl+加减 矢量缩放 | Ctrl+0 复位")
         print("=" * 70 + "\n")
 
         preset_index = 1 if self.contrast_boost > 1.3 else 0
         frame_idx = 0
+        frames_shown = 0
         fps_display = 0.0
         fps_calc_time = time.time()
         fps_frames = 0
@@ -457,139 +705,70 @@ class TagCaptureWizard:
 
         try:
             while self.is_running:
-                t_frame_start = time.time()
-                raw_frame = self.get_frame(frame_idx)
-                frame_idx += 1
-                disp_frame = raw_frame.copy()
+                raw_frame = None
+                disp_frame = None
+                if self.pipeline_running:
+                    raw_frame = self.get_frame(frame_idx)
+                    frame_idx += 1
 
-                # 超高灵敏度融合检测 AprilTag
-                found_tags = self.detect_tags_robust(raw_frame) or {}
-
-                detected_tags = list(found_tags.keys())
-                has_origin_tag = 0 in found_tags
-
-                for tag_id, corner_arr in found_tags.items():
-                    pts = corner_arr.reshape((4, 2)).astype(int)
-                    # Tag 0 采用高亮金黄 (0, 215, 255)，普通已知标靶采用鲜明绿色 (0, 255, 0)
-                    is_origin = (tag_id == 0)
-                    tag_color = (0, 215, 255) if is_origin else (0, 255, 0)
-
-                    # 绘制 2D 轻量高反差多边形双层边框 (外黑内亮，不吃 CPU)
-                    cv2.polylines(disp_frame, [pts], isClosed=True, color=(10, 10, 10), thickness=4)
-                    cv2.polylines(disp_frame, [pts], isClosed=True, color=tag_color, thickness=2)
-
-                    # 绘制角点序号微圆点 (0:红, 1:绿, 2:蓝, 3:黄，清晰辨识方向)
-                    dot_colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
-                    for pt_idx, pt in enumerate(pts):
-                        cv2.circle(disp_frame, tuple(pt), 4, dot_colors[pt_idx], -1)
-
-                    # 计算机械标靶单元方格像素尺寸 (AprilTag 16h5 为 6x6 网格)
-                    l01 = np.linalg.norm(pts[1] - pts[0])
-                    l12 = np.linalg.norm(pts[2] - pts[1])
-                    l23 = np.linalg.norm(pts[3] - pts[2])
-                    l30 = np.linalg.norm(pts[0] - pts[3])
-                    cell_w = int(round((l01 + l23) / 12.0))
-                    cell_h = int(round((l30 + l12) / 12.0))
-
-                    # 绘制极速轻量标牌
-                    cx = int(np.mean(pts[:, 0]))
-                    min_y = int(np.min(pts[:, 1]))
-                    tag_text = f"Tag {tag_id}" + (" [ORIGIN 原点]" if is_origin else "")
-                    cell_text = f"Cell: {cell_w}x{cell_h}px"
-                    
-                    badge_w = 140 if is_origin else 115
-                    badge_x = max(10, min(disp_frame.shape[1] - badge_w - 10, cx - badge_w // 2))
-                    badge_y = max(42, min_y - 12)
-                    cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + badge_w, badge_y + 8), (20, 20, 20), -1)
-                    cv2.rectangle(disp_frame, (badge_x - 6, badge_y - 30), (badge_x + badge_w, badge_y + 8), tag_color, 1)
-                    put_text(disp_frame, tag_text, (badge_x, badge_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-                    put_text(disp_frame, cell_text, (badge_x, badge_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
-
-                    # 仅在用户显式开启时才做 3D 棱柱投影 (默认关闭，释放全部算力供 8fps 流畅取景)
-                    if self.show_3d_axes:
-                        self.render_tag_3d_axes(disp_frame, corner_arr, tag_id)
-
-                num_tags = len(detected_tags)
-                is_covisible = num_tags >= 2
-
-                # 顶部状态条渲染 (半透明黑底)
-                overlay = disp_frame.copy()
-                cv2.rectangle(overlay, (0, 0), (disp_frame.shape[1], 65), (20, 20, 20), -1)
-                cv2.addWeighted(overlay, 0.8, disp_frame, 0.2, 0, disp_frame)
-
-                # 状态文字 (展示已检出全部 ID 列表)
-                status_color = (0, 255, 0) if is_covisible else (0, 165, 255)
-                tag_list_str = str(sorted(detected_tags)) if detected_tags else "None"
-                status_text = f"Tags [{num_tags}]: {tag_list_str} " + ("[CO-VISIBILITY OK]" if is_covisible else "[NEED >= 2]")
-                if has_origin_tag:
-                    status_text += " | [Tag 0 ORIGIN OK]"
-
-                put_text(disp_frame, status_text, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
-
-                # 第二行显示相机模式、实时FPS与白名单模式
-                if not self.valid_tag_ids:
-                    wl_str = " | Whitelist: ALL [Exploring]"
-                    wl_color = (0, 255, 255)
+                if raw_frame is not None:
+                    disp_frame = self._annotate_stream_frame(raw_frame, fps_display)
+                    fps_frames += 1
+                    now = time.time()
+                    if now - fps_calc_time >= 0.5:
+                        fps_display = fps_frames / (now - fps_calc_time)
+                        fps_calc_time = now
+                        fps_frames = 0
+                    canvas = self.renderer.compose_canvas(disp_frame)
+                elif self.pipeline_running:
+                    # 取流已启动但帧未就绪
+                    canvas = self.renderer.make_canvas()
+                    cw, ch = self.win_mgr.canvas_w, self.win_mgr.canvas_h
+                    draw_text(canvas, "取流中...", (cw // 2 - 60, ch // 2), 22, COL_YELLOW, True)
                 else:
-                    wl_str = f" | Whitelist: {len(self.valid_tag_ids)} IDs"
-                    wl_color = (190, 190, 190)
+                    # 相机未开启: 窗口尺寸占位画布 (开启前后工具栏位置严格一致)
+                    canvas = self.renderer.make_canvas()
+                    cw, ch = self.win_mgr.canvas_w, self.win_mgr.canvas_h
+                    draw_text(canvas, "相机未开启",
+                              (cw // 2 - 120, ch // 2 - 50), 32, COLOR_ACCENT, True)
+                    draw_text(canvas, "请先选择相机类型和分辨率，然后点击 [开启] 按钮",
+                              (cw // 2 - 250, ch // 2 + 10), 18, COLOR_TEXT_SUB)
 
-                fps_frames += 1
-                now = time.time()
-                if now - fps_calc_time >= 0.5:
-                    fps_display = fps_frames / (now - fps_calc_time)
-                    fps_calc_time = now
-                    fps_frames = 0
+                self.renderer.draw_toolbar(canvas)
+                self.renderer.draw_toast(canvas)
+                cv2.imshow(win_key, canvas)
+                frames_shown += 1
+                if frames_shown <= 3 and force_window_focus:
+                    force_window_focus(win_key)
 
-                info_text = f"FPS: {fps_display:.1f} | Stream: {self.actual_stream_desc} | Contrast: x{self.contrast_boost:.1f}{wl_str}"
-                put_text(disp_frame, info_text, (15, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, wl_color, 1)
-
-                # 右侧计数与保存提示
-                tip_text = f"Saved: {self.image_count} frames | [Space]: Save"
-                (rw, _), _ = measure_text(tip_text, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
-                put_text(disp_frame, tip_text, (disp_frame.shape[1] - rw - 15, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
-
-                # 底部控制提示条 (半透明)
-                h_img, w_img = disp_frame.shape[:2]
-                cv2.rectangle(disp_frame, (0, h_img - 35), (w_img, h_img), (15, 15, 15), -1)
-                ctrl_tip = "[Space]: Pic | [Tab]: Preset | [[ / ]]: Exp | [E]: AutoExp | [I/K]: Contrast | [A]: 3D | [W]: WhiteList | [Q]: Exit"
-                put_text(disp_frame, ctrl_tip, (15, h_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1)
-
-                # Toast 临时通知提示
-                if time.time() - self.status_toast_time < 2.5 and self.status_toast:
-                    (tw, _), _ = measure_text(self.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
-                    toast_x = (w_img - tw) // 2
-                    cv2.rectangle(disp_frame, (toast_x - 12, h_img - 80), (toast_x + tw + 12, h_img - 45), (0, 120, 0), -1)
-                    put_text(disp_frame, self.status_toast, (toast_x, h_img - 57), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-
-                # 快门白闪反馈
-                if time.time() - self.flash_timer < 0.12:
-                    disp_frame = cv2.addWeighted(disp_frame, 0.4, np.full_like(disp_frame, 255), 0.6, 0)
-
-                cv2.imshow(window_name, disp_frame)
-                if frame_idx <= 3 and force_window_focus:
-                    force_window_focus(window_name)
-
-                key = cv2.waitKey(10) & 0xFF
-
-                if key in (ord('q'), ord('Q'), 27):  # Q or ESC
+                key = cv2.waitKeyEx(30)
+                poll = self.win_mgr.poll_events(key)
+                if poll.should_quit:
                     log.info(f"\n采图向导结束。当前数据集共计 {self.image_count} 帧。")
                     break
-                elif key == 32:  # Space
-                    self.save_image(raw_frame, disp_frame)
-                elif key == 9:   # Tab (切换反差预设)
+                if key == -1:
+                    continue
+                k = chr(key & 0xFF).lower() if (key & 0xFF) < 128 else ""
+
+                if k in ("q", "x"):  # Q / X 退出 (ESC 由 poll_events 处理)
+                    log.info(f"\n采图向导结束。当前数据集共计 {self.image_count} 帧。")
+                    break
+                elif k == " ":  # Space 拍摄 (需相机已开启)
+                    if raw_frame is not None:
+                        self.save_image(raw_frame, disp_frame)
+                elif k == "\t":  # Tab (切换反差预设)
                     preset_index = (preset_index + 1) % 3
                     self.apply_preset(preset_index)
-                elif key == ord('['):  # 压暗曝光
+                elif k == "[":  # 压暗曝光
                     self.adjust_hardware_exposure(-50.0)
-                elif key == ord(']'):  # 提亮曝光
+                elif k == "]":  # 提亮曝光
                     self.adjust_hardware_exposure(50.0)
-                elif key in (ord('e'), ord('E')):  # 切换自动曝光
+                elif k == "e":  # 切换自动曝光
                     self.toggle_auto_exposure()
-                elif key in (ord('a'), ord('A')):  # 切换 3D 棱柱显示
+                elif k == "a":  # 切换 3D 棱柱显示
                     self.show_3d_axes = not self.show_3d_axes
                     self.set_toast(f"3D 棱柱空间轴: {'开启' if self.show_3d_axes else '关闭 (极速2D)'}")
-                elif key in (ord('w'), ord('W')):  # 一键切换白名单探索模式 / 限制模式
+                elif k == "w":  # 一键切换白名单探索模式 / 限制模式
                     if self.valid_tag_ids:
                         cached_valid_ids = list(self.valid_tag_ids)
                         self.valid_tag_ids = []
@@ -600,17 +779,17 @@ class TagCaptureWizard:
                             self.set_toast(f"已恢复【白名单过滤模式】：仅放行 {self.valid_tag_ids}")
                         else:
                             self.set_toast("当前未配置固定白名单，仍处于全量探索模式")
-                elif key in (ord('i'), ord('I'), ord('+'), ord('=')):  # 增大对比度增益 (I 键超便捷)
+                elif k in ("i", "+", "="):  # 增大对比度增益 (I 键超便捷)
                     self.contrast_boost = min(3.5, self.contrast_boost + 0.2)
                     self.rebuild_detector()
                     self.set_toast(f"对比度增益已调至: x{self.contrast_boost:.1f} [按 I 增大 / K 减小]")
-                elif key in (ord('k'), ord('K'), ord('-'), ord('_')):  # 降低对比度增益 (K 键超便捷)
+                elif k in ("k", "-", "_"):  # 降低对比度增益 (K 键超便捷)
                     self.contrast_boost = max(0.6, self.contrast_boost - 0.2)
                     self.rebuild_detector()
                     self.set_toast(f"对比度增益已调至: x{self.contrast_boost:.1f} [按 I 增大 / K 减小]")
-                elif key in (ord('s'), ord('S')):  # 保存参数至 config.yaml
+                elif k == "s":  # 保存参数至 config.yaml
                     self.save_config()
-                elif key in (ord('c'), ord('C')):  # Clear
+                elif k == "c":  # Clear
                     print("\n[?] 是否确认清空当前采图目录所有原图与图示化文件？按 [Y] 确认，其他键取消: ", end="", flush=True)
                     cv2.waitKey(0)  # 让出短暂交互
                     confirm = input() if sys.stdin.isatty() else "n"
@@ -625,8 +804,9 @@ class TagCaptureWizard:
                         log.info("[OK] 原图与图示化文件目录已全部清空。")
 
         finally:
-            self._cam_srv.stop()
+            self._stop_camera()
             cv2.destroyAllWindows()
+            log.info(f"[OK] 采图向导已退出 (当前数据集共计 {self.image_count} 帧)")
 
 
 def main():

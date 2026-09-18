@@ -108,8 +108,8 @@ robot:
   drop_x_mm: 220.0
   drop_y_mm: 0.0
   drop_z_mm: 50.0
-  feedrate_travel: 4000
-  feedrate_grip: 1500
+  feedrate_travel: 500
+  feedrate_grip: 500
 dealer:
   ble_name: FLUX_DEALER
   target_char_uuid: 0000ff01-0000-1000-8000-00805f9b34fb

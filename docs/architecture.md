@@ -116,7 +116,8 @@ graph TD
 
 | 工具 | 文件路径 | 定位与核心功能 |
 | :--- | :--- | :--- |
-| **综合控制中心 Dashboard** | `tools/gui_launcher.py` | 1280x830 工业大屏，卡片式统一调度全部核心应用与测试入口 |
+| **综合控制中心 Dashboard** | `tools/gui_launcher.py` | 1280x1000 工业大屏，卡片式统一调度全部核心应用与测试入口；含 12 张卡片三模式 (GUI/CMD/TERM)，右侧大屏可切换为内嵌终端视图 |
+| **硬件环境配置** | `tools/hardware_config.py` | 输入 (相机类型/分辨率) 与输出 (机械臂类型/默认串口) 设备选型，配置写入 `config/hardware_env.json` 全系统自动读取 |
 | **控制终端 CLI** | `tools/cli_menu.py` | 统一命令行入口，集成应用启动、标定二级专区与测试执行 |
 | **实时相机主视窗** | `tools/d435_viewer.py` | 双流实时预览、鼠标 3D 探测、动态色谱拉伸、G-code 打印 |
 | **单帧抓取解算** | `tools/find_top_asparagus.py` | 载入单帧或最新快照，输出标准抓取位姿与 JSON 报表 |
@@ -127,7 +128,8 @@ graph TD
 | :--- | :--- | :--- |
 | **工况与场景管理中枢** | `tools/scene_hub/app.py` | 采样场景与批次分组管理、三模态视图、黄金闭环 SOP (新建场景→采图→一键生效生产) |
 | **离线标定综合工作站** | `tools/studio/app.py` | 帧序列资产管理、交互审核画板、迭代剪枝 BA 平差、离线精度体检 |
-| **Robot 在线跟踪** | `tools/tracker/app.py` | Tag 世界坐标实时解算、机械臂"抬起→平移→下探"联动跟踪、M114 到位偏差对比 (相机位置校准) |
+| **Robot 在线跟踪** | `tools/tracker/app.py` | Tag 世界坐标实时解算、机械臂"抬起→平移→下探"联动跟踪、M114 到位偏差对比 (相机位置校准)；真矢量模式 1:1 imshow 消除鼠标坐标漂移 |
+| **SCARA 机械臂调试** | `tools/scara_debug/app.py` | MKS Base V1.6 (Marlin) 调试终端：串口点动、回零设零、夹爪舵机、搬运宏、G-code 透传 |
 
 ### 3.3 标定与平差工具链 (`tools/calibration/`)
 
@@ -138,13 +140,36 @@ graph TD
 | **交互采图向导** | `tools/calibration/tag_capture_wizard.py` | 实时视频流 + 双路互补检测 + 空格一键连拍多视角相片 |
 | **离线超精重提取引擎** | `tools/calibration/tag_super_extractor.py` | 16 级致密阈值网格 + CLAHE + 2x 超分 + CONTOUR 轮廓拟合，输出高质量观测清单 |
 | **采图清单质检画板** | `tools/calibration/tag_manifest_reviewer.py` | 轻量级原生 GUI 画板，鼠标点击保留/剔除，连通性实时状态 |
-| **空间平差建图求解器** | `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD 清洗、Quiver 图与体检报告 |
+| **空间平差建图求解器** | `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD 清洗、Quiver 图与体检报告；`solve_single_tag_pnp` 支持 `expected_z_cam` 法向先验参数防 180° 翻转 |
 | **病因深度切片诊断** | `tools/calibration/diagnose_tag_frame.py` | 单帧漏检/残差异常病因分析（反差/面积/梯度/倾角） |
 | **接触式手眼标定向导** | `tools/calibration/hand_eye_calibration.py` | SCARA 经典接触式物理点对标定 (极端无 Tag 备用) |
 
 ---
 
-## 4. 测试验证体系 (Test Suite)
+## 4. GUI 基础设施层 (`src/utils/`)
+
+Dashboard、Tracker、Scene Hub 等 GUI 应用共享以下基础设施，统一从单源获取主题、视口与终端能力：
+
+| 模块 | 文件路径 | 定位与核心功能 |
+| :--- | :--- | :--- |
+| **GuiTheme** | `src/utils/gui_theme.py` | 暗/亮调色板单源入口 (BG/CARD/TEXT/ACCENT/GOLD 等)，6 个 GUI 全部用别名引用；主题切换仅需改此一处 |
+| **GuiWindowManager** | `src/utils/gui_window_manager.py` | 统一窗口/缩放/视口/Ctrl 状态管理，支持多应用隔离的 `settings_file`；消除各 GUI 中重复的 resize/zoom 逻辑 |
+| **TerminalPanel** | `src/utils/terminal_panel.py` | Dashboard 内嵌终端面板：ANSI 颜色解析、进度条更新、事件驱动渲染；右侧大屏切换为终端视图后承载系统诊断与 pip 安装输出 |
+| **TextRendering** | `src/utils/text_rendering.py` | PIL+msyh 掩膜缓存的中文绘制统一通道 (`put_text`/`draw_text`/`fit_font_size`)，禁用 `cv2.putText` 的 Hershey ASCII 字模 |
+| **Logger** | `src/utils/logger.py` | 标准化日志入口 `get_logger(__name__)`；诊断/状态输出统一走 Logger，菜单 UI/表格/stdout 数据保留 print |
+
+### 4.1 SCARA 机械臂坐标系硬约束
+
+| 约束 | 取值 / 说明 |
+| :--- | :--- |
+| **机械零位绝对坐标** | `(X0, Y600, Z80, R90°)` (毫米+度)，与 SCARA 物理装配刚性绑定 |
+| **Marlin 轴映射** | SCARA R 轴 (旋转) 在 Marlin 固件中映射至 E 轴；G92 命令需写 `G92 X0.00 Y600.00 Z80.00 E90.00`，禁用 `G92 X0 Y0 Z0` |
+| **零点设置流程** | M84 (释放电机) → G92 (设零) → M114 (回读确认) 三步串行 |
+| **世界坐标系锚点** | Tag 0 = `(0, 0, 405)mm`、Tag 1 = `(0, 520, 196)mm` 作为绝对参考，BA 平差后引入 anchor scale factor (锚点尺度因子) 同步 marker 尺寸模型：`real_marker_size = nominal_size × anchor_scale` |
+
+---
+
+## 5. 测试验证体系 (Test Suite)
 
 共 17 个测试套件，按模块分组：
 
@@ -163,11 +188,12 @@ graph TD
 | | `tests/test_scene_hub.py`、`tests/test_scene_manager.py` | Scene Hub 渲染状态机与场景管理器 |
 | | `tests/test_tag_offline_studio.py` | Offline Studio 工作站 |
 | | `tests/test_viewport_manager.py`、`tests/test_verification_reporter.py` | 视口管理与精度体检报告生成 |
+| | `tests/test_hardware_config.py`、`tests/test_terminal_panel.py` | 硬件环境配置应用与 Dashboard 内嵌终端面板 |
 | **手眼标定** | `tests/test_hand_eye_calibration.py` | Horn/Kabsch SVD 配准精度与 500+mm 危险深度拦截 |
 
 ---
 
-## 5. 配置文件规格 (`config.yaml`)
+## 6. 配置文件规格 (`config.yaml`)
 
 | 配置段 | 内容说明 | 核心参数示例 |
 | :--- | :--- | :--- |
@@ -180,7 +206,7 @@ graph TD
 
 ---
 
-## 6. 数据流概览
+## 7. 数据流概览
 
 ```mermaid
 sequenceDiagram

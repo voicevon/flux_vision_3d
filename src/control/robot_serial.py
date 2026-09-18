@@ -75,15 +75,34 @@ class RobotSerial:
         self.send_gcode("G90")  # 绝对坐标模式
         return True
 
-    def close(self):
-        """关闭串口连接"""
-        with self._lock:
-            if self.ser is not None:
+    def close(self, timeout: float = 2.0):
+        """关闭串口连接 (锁获取限时, 杜绝 UI 卡死):
+        后台运动任务可能长时间持有 _lock (G1+M400 最长约 2 分钟/段), 无限等待会冻结调用方线程。
+        超时未取得锁则强制标记断开 (ser=None), 后续所有操作立即快速失败, 保证界面始终可退出。
+        """
+        acquired = self._lock.acquire(timeout=timeout)
+        try:
+            ser = self.ser
+            self.ser = None
+            if acquired and ser is not None:
                 try:
-                    self.ser.close()
+                    ser.close()
                 except Exception:
                     pass
-                self.ser = None
+        finally:
+            if acquired:
+                self._lock.release()
+
+    def _mark_dead(self):
+        """串口致命异常 (设备拔出/拒绝访问/句柄失效): 立即标记断开, 防止僵尸连接反复报错。
+        调用方必须已持有 _lock (或处于异常收尾路径), 本方法不再获取锁。"""
+        try:
+            if self.ser is not None:
+                self.ser.close()
+        except Exception:
+            pass
+        self.ser = None
+        log.error("[RobotSerial] 串口发生致命 I/O 异常, 已强制断开 (请重新连接)")
 
     def send_gcode(self, cmd: str, expect_ok: bool = True,
                    timeout: float = 2.0, wait_done: bool = False) -> bool:
@@ -120,6 +139,7 @@ class RobotSerial:
             return False
         except Exception as e:
             log.error(f"[RobotSerial] 串口异常: {e}")
+            self._mark_dead()   # 端口级 I/O 异常 (拒绝访问/拔出): 标记断开, 避免僵尸连接
             return False
 
     def get_position(self):
@@ -143,14 +163,18 @@ class RobotSerial:
                         break
             except Exception as e:
                 log.warning(f"[RobotSerial] M114 读取失败: {e}")
+                self._mark_dead()   # 端口级 I/O 异常: 标记断开, 避免僵尸连接
         return None
 
     def move_to(self, x: float, y: float, z: float,
-                feed: int = 0, safe_lift_mm: float = 0.0) -> bool:
+                feed: int = 0, safe_lift_mm: float = 0.0,
+                step_cb=None, stage_pause_s: float = 0.0) -> bool:
         """
         三段式安全移动: 抬起 -> 平移 -> 下探, 每段 M400 等待到位
         :param feed: XY 平移进给 (mm/min), 0 则用 config feedrate_travel
         :param safe_lift_mm: 抬起相对高度 (mm), 0 则用 config safe_z_mm
+        :param step_cb: 可选回调 step_cb(cmd), 每段 G-code 发送前上报 (GUI 调试面板用)
+        :param stage_pause_s: 段间停顿秒数 (抬起→平移、平移→下探之间各停一次, 调试观察用)
         """
         cur = self.get_position()
         if cur is None:
@@ -163,7 +187,14 @@ class RobotSerial:
             (f"G1 X{x:.2f} Y{y:.2f} F{travel_feed}", 60.0),             # 平移
             (f"G1 Z{z:.2f} F{self.feedrate_grip}", 60.0),               # 下探
         ]
-        for cmd, tmo in steps:
+        for i, (cmd, tmo) in enumerate(steps):
+            if step_cb is not None:
+                try:
+                    step_cb(cmd)
+                except Exception:
+                    pass
             if not self.send_gcode(cmd, timeout=tmo, wait_done=True):
                 return False
+            if stage_pause_s > 0 and i < len(steps) - 1:
+                time.sleep(stage_pause_s)
         return True

@@ -4,6 +4,42 @@
 
 ---
 
+## [2026-09-18] - GUI 基础设施统一化与 Dashboard 内嵌终端体系
+
+### 1. GUI 基础设施三件套抽取
+- **`GuiTheme`** (`src/utils/gui_theme.py`)：暗/亮调色板单源入口，6 个 GUI (含 `gui_launcher` 与 `tracker`) 全部改为别名引用，主题切换仅需改一处；
+- **`GuiWindowManager`** (`src/utils/gui_window_manager.py`)：统一窗口/缩放/视口/Ctrl 状态管理，删除 `gui_launcher.py` 中 ~40 行重复 resize/zoom 逻辑；修复 `save_settings` 误覆盖 `viewer_state` 的隐藏 bug；同步清理 6 处 dead code；
+- **`TerminalPanel`** (`src/utils/terminal_panel.py`)：Dashboard 内嵌终端面板，支持 ANSI 颜色解析、进度条更新与事件驱动渲染。
+
+### 2. Dashboard 卡片体系重构
+- **删除**「[H] SCARA 示教标定 (接触式)」卡片，方向键导航与组标题渲染同步调整；
+- **新增**第 2 张卡片「确定输入输出设备」(`tools/hardware_config.py`)：相机类型/分辨率、机械臂类型 (SCARA/Delta)、默认串口实时枚举，配置写入 `config/hardware_env.json`，下次启动全系统自动生效；
+- **重命名**：主标题由「工业视觉综合控制中心」改为「芦笋上料自动化」，窗口标题与欢迎 Toast 同步；「卡片」→「工况场景管理」、第 6 项简化为「RealSense 诊断」；
+- **三模式定义**：`GUI` (青绿, 独立视窗) / `CMD` (灰, 外部控制台弹窗) / `TERM` (绿, 内嵌终端)；`ToolCardMeta.mode` 参数显式指定 (默认由 `is_gui` 自动派生)；「系统环境深度诊断」「安装/更新项目依赖」两张卡片切到 `TERM` 模式，右侧大屏切换为终端视图。
+
+### 3. Robot 在线跟踪 (Tracker) 真矢量模式与交互重构
+- **真矢量模式**：canvas 按窗口物理尺寸重绘 + 1:1 `imshow`，彻底消除因 `WINDOW_NORMAL` 拉伸导致的鼠标坐标漂移；
+- **工具栏分组**：左组 (坐标系标定 + 显示选项)，右组 (识别目标 + 跟踪)，间距 22 → 110 → 220px；「识别」按钮移至第二行；「开启」按钮默认绿色改为标准配色；
+- **按钮 hover 高亮**：连接机械臂 / M84 / G92 / 退出 四按钮增加背景提亮 + 青色边框 hover 效果，与下拉按钮风格统一；
+- **下拉选项持久化**：相机类型 / 分辨率 / XY 平面 / 串口 持久化到 `config/gui_settings.json`，下次启动自动恢复；
+- **单/连续模式**：识别目标与跟踪目标的单/连续模式逻辑实现，含防重入、相机状态提示与调度器逻辑。
+
+### 4. SCARA 机械零点 G92 命令修复 (关键 Bug)
+- **病因**：原 `app.py` 中 M84 + G92 复合按钮发送 `G92 X0 Y0 Z0`，将机械零点设到传送带原点，与 SCARA 实际机械零位绝对坐标 `(X0, Y600, Z80, R90°)` 不符，导致后续运动基准错乱；
+- **修复**：G92 命令串改为 `G92 X0.00 Y600.00 Z80.00 E90.00` (Marlin 固件中 R 轴映射至 E 轴)，坐标值统一取自 `LoaderConfig().home_pose`；消息面板按"发送 M84 → 发送 G92 → M114 回读确认"顺序展示。
+
+### 5. 文档同步修正
+- `README.md` 顶级 `[G]` Dashboard 描述尺寸由 1280x720 更正为 1280x1000 (与 `gui_launcher.py` 基准视口一致)；
+- `docs/architecture.md` 补录 `GuiTheme` / `GuiWindowManager` / `TerminalPanel` 三项 GUI 基础设施、Dashboard 尺寸更正、SCARA 机械零位绝对坐标 `(X0, Y600, Z80, R90°)` 与 Marlin R→E 轴映射硬约束；
+- `docs/requirements.md` 修正 AprilTag 边长 (40mm → 50mm，与代码 `tag_localizer.py` 默认值一致)、新增 FR-13 (硬件环境配置) 与 FR-14 (Dashboard 内嵌终端)；
+- `docs/apriltag_calibration.md` 补录 `expected_z_cam` 法向先验参数与 180° 翻转消除机制；
+- `docs/calibration_scene_hub_guide.md` 补录 anchor scale factor (锚点尺度因子) 硬约束。
+
+### 6. 验证状态
+- ruff check 全绿；单元测试由 105 项扩展至 112 项全部通过；新增 `tests/test_hardware_config.py` 与 `tests/test_terminal_panel.py`；本次改动尚未提交。
+
+---
+
 ## [2026-09-17] - tools/ 顶层应用化重构与单靶 PnP 平面二义性根治
 
 ### 1. tools/ 目录顶层应用化重构

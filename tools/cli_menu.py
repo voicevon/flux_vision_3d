@@ -57,8 +57,8 @@ def print_main_banner(status):
     print(f" 环境状态: Python {C_GREEN}{sys.version.split()[0]}{C_RESET} | OpenCV: {cv_str} | NumPy: {np_str} | D435驱动: {rs_str}")
     print(f" 本地数据: snapshots 快照 ({snap_str}) | 建图采图 ({status['calib_image_count']} 帧)")
     print(f"{C_CYAN}-------------------------------------------------------------------------------{C_RESET}")
-    print(f"{C_BOLD} [ 视觉控制中枢与顶级入口 (Suite Dashboard) ]{C_RESET}")
-    print(f"   {C_CYAN}{C_BOLD}[G]{C_RESET} {C_GREEN}{C_BOLD}启动 3D 视觉综合控制中心 (Suite Dashboard)  ★ 推荐！1280x720 工业科技大屏{C_RESET}")
+    print(f"{C_BOLD} [ 视觉控制中枢与顶级入口 (Dashboard) ]{C_RESET}")
+    print(f"   {C_CYAN}{C_BOLD}[G]{C_RESET} {C_GREEN}{C_BOLD}启动 芦笋上料自动化 (Dashboard)  ★ 推荐！1280x720 工业科技大屏{C_RESET}")
     print(f"   {C_GREEN}{C_BOLD}[2]{C_RESET} {C_CYAN}{C_BOLD}工况与场景综合管理中枢 (Scene Hub)      ★ 核心一级入口！(工况切换/沙盒体检/生产发布){C_RESET}")
     print("")
     print(f"{C_BOLD} [ 核心生产与工况管理 (Core & Workspace) ]{C_RESET}")
@@ -507,8 +507,8 @@ def run_offline_studio(status=None):
 
 
 def run_gui_launcher():
-    """启动 3D 视觉综合控制中心 (Suite Dashboard)"""
-    print(f"\n{C_CYAN}[控制中心]{C_RESET} 正在启动 3D 视觉综合控制中心 (Suite Dashboard)...")
+    """启动芦笋上料自动化 (Dashboard)"""
+    print(f"\n{C_CYAN}[控制中心]{C_RESET} 正在启动 芦笋上料自动化 (Dashboard)...")
     cmd = [sys.executable, "tools/gui_launcher.py"]
     try:
         res = subprocess.run(cmd)

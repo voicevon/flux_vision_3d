@@ -1,7 +1,7 @@
 """
 GUI 控制中心自动化单元测试 (tests/test_gui_launcher.py)
 =====================================================
-验证 Suite Dashboard 控制中心的卡片目录、状态采集、碰撞测试与渲染稳定性
+验证 Dashboard 控制中心的卡片目录、状态采集、碰撞测试与渲染稳定性
 """
 
 import unittest
@@ -19,12 +19,12 @@ class TestGuiLauncher(unittest.TestCase):
     def test_tools_catalog_integrity(self):
         """测试工具目录数据结构完整性与快捷键不重复"""
         catalog = build_tools_catalog()
-        self.assertEqual(len(catalog), 11)
+        self.assertEqual(len(catalog), 12)
 
         seen_keys = set()
         seen_shortcuts = set()
         valid_categories = {
-            "A — 场景总控",
+            "A — 环境场景",
             "B — Tag 标定流水线",
             "D — 生产调试"
         }
@@ -59,49 +59,57 @@ class TestGuiLauncher(unittest.TestCase):
         self.assertEqual(canvas.shape, (1000, 1280, 3))
 
     def test_hit_test_cards(self):
-        """测试鼠标卡片网格碰撞检测 (基于五分组布局)"""
-        # 第一张卡片 idx=0 (顶部全宽) 覆盖 (15~767, 86~156)
+        """测试鼠标卡片网格碰撞检测 (基于三分组布局)"""
+        # 第一张卡片 idx=0 (A组左, 顶部并列) 覆盖 (15~385, 86~156)
         hit_0 = self.app._hit_test_cards(100, 100)
         self.assertEqual(hit_0, 0)
 
-        # 第二张卡片 idx=1 (B分组左列) 在 (15, 216)
-        hit_1 = self.app._hit_test_cards(100, 230)
+        # 第二张卡片 idx=1 (A组右, 硬件环境) 在 (397, 86)
+        hit_1 = self.app._hit_test_cards(450, 100)
         self.assertEqual(hit_1, 1)
 
-        # 第三张卡片 idx=2 (B分组右列) 在 (397, 216)
-        hit_2 = self.app._hit_test_cards(450, 230)
+        # 第三张卡片 idx=2 (B组左列) 在 (15, 216)
+        hit_2 = self.app._hit_test_cards(100, 230)
         self.assertEqual(hit_2, 2)
+
+        # 第四张卡片 idx=3 (B组右列) 在 (397, 216)
+        hit_3 = self.app._hit_test_cards(450, 230)
+        self.assertEqual(hit_3, 3)
 
         # 越界区域 (如右侧说明栏 x=900) 应该返回 -1
         hit_none = self.app._hit_test_cards(900, 300)
         self.assertEqual(hit_none, -1)
 
     def test_keyboard_navigation(self):
-        """测试键盘方向键导航与选择变更 (五分组布局)"""
+        """测试键盘方向键导航与选择变更 (三分组布局)"""
         self.app.selected_tool_idx = 0
-        # 从 row=0 (idx=0) 按下键 (40) -> row=1, col=0 (idx=1)
+        # 从 row=0 (idx=0) 按下键 (40) -> row=1, col=0 (idx=2)
         self.app._handle_keyboard(40)
-        self.assertEqual(self.app.selected_tool_idx, 1)
-
-        # 从 row=1, col=0 按右键 (39) -> row=1, col=1 (idx=2)
-        self.app._handle_keyboard(39)
         self.assertEqual(self.app.selected_tool_idx, 2)
 
-        # 从 row=1, col=1 按下键 (40) -> row=2, col=1 (idx=4)
-        self.app._handle_keyboard(40)
-        self.assertEqual(self.app.selected_tool_idx, 4)
-
-        # 从 row=2, col=1 按左键 (37) -> row=2, col=0 (idx=3)
-        self.app._handle_keyboard(37)
+        # 从 row=1, col=0 按右键 (39) -> row=1, col=1 (idx=3)
+        self.app._handle_keyboard(39)
         self.assertEqual(self.app.selected_tool_idx, 3)
 
-        # 从 row=2, col=0 按上键 (38) -> row=1, col=0 (idx=1)
+        # 从 row=1, col=1 按下键 (40) -> row=2, col=1 (idx=5)
+        self.app._handle_keyboard(40)
+        self.assertEqual(self.app.selected_tool_idx, 5)
+
+        # 从 row=2, col=1 按左键 (37) -> row=2, col=0 (idx=4)
+        self.app._handle_keyboard(37)
+        self.assertEqual(self.app.selected_tool_idx, 4)
+
+        # 从 row=2, col=0 按上键 (38) -> row=1, col=0 (idx=2)
         self.app._handle_keyboard(38)
-        self.assertEqual(self.app.selected_tool_idx, 1)
+        self.assertEqual(self.app.selected_tool_idx, 2)
 
         # 从 row=1, col=0 按上键 (38) -> row=0 (idx=0)
         self.app._handle_keyboard(38)
         self.assertEqual(self.app.selected_tool_idx, 0)
+
+        # row=0 按右键 (39) -> 同排右列 (idx=1 硬件环境)
+        self.app._handle_keyboard(39)
+        self.assertEqual(self.app.selected_tool_idx, 1)
 
     def test_toast_message(self):
         """测试动态 Toast 提示设置"""

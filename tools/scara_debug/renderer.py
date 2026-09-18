@@ -27,6 +27,7 @@ COL_BG = GuiTheme.BG
 COL_PANEL = GuiTheme.CARD_BG
 COL_PANEL_HOVER = GuiTheme.CARD_HOVER
 COL_BORDER = GuiTheme.BORDER
+COL_BORDER_HOVER = GuiTheme.BORDER_HOVER
 COL_ACCENT = GuiTheme.ACCENT
 COL_TEXT = GuiTheme.TEXT
 COL_SUB = GuiTheme.TEXT_SUB
@@ -34,10 +35,16 @@ COL_MUTED = GuiTheme.TEXT_MUTED
 COL_BTN = GuiTheme.BTN
 COL_BTN_BORDER = GuiTheme.BTN_BORDER
 COL_BTN_HOVER = GuiTheme.BTN_HOVER
+COL_BTN_DISABLED_BG = GuiTheme.BTN_DISABLED_BG
+COL_BTN_DISABLED_BORDER = GuiTheme.BTN_DISABLED_BORDER
+COL_BTN_TEXT = GuiTheme.BTN_TEXT
+COL_BTN_TEXT_HOVER = GuiTheme.BTN_TEXT_HOVER
+COL_TEXT_DISABLED = GuiTheme.TEXT_DISABLED
 COL_OK = GuiTheme.OK
 COL_WARN = GuiTheme.WARN
 COL_ERR = GuiTheme.ERR
 COL_GOLD = GuiTheme.GOLD
+COL_WHITE = GuiTheme.WHITE
 
 Btn = Tuple[str, int, int, int, int]  # (btn_id, x, y, w, h)
 
@@ -93,20 +100,33 @@ class ScaraDebugRenderer:
 
     def _button(self, canvas, bid: str, label: str, x, y, w, h,
                 enabled: bool = True, accent=None, hoverable: bool = True) -> None:
-        """绘制单个按钮并登记命中区"""
+        """绘制单个按钮并登记命中区
+        样式全部取自 GuiTheme 单源 (BTN_* / BORDER_HOVER / BTN_BEHAVIOR):
+          - hover 一律背景提亮 (BTN_HOVER) + 统一悬停描边 (BORDER_HOVER) + 悬停文字 (BTN_TEXT_HOVER)
+          - accent 仅用于文字语义着色 (绿=确认/橙=警示/红=退出), 不影响边框
+          - 禁用态用 BTN_DISABLED_* (保持按钮外观), hover 仍有背景提亮反馈
+        """
         self._buttons.append((bid, x, y, w, h))
         hovered = hoverable and (x <= self.mouse_x <= x + w and y <= self.mouse_y <= y + h)
-        bg = COL_BTN_HOVER if hovered else COL_BTN
-        border = (accent or COL_BTN_BORDER) if hovered else COL_BTN_BORDER
         if not enabled:
-            bg, border = (20, 23, 28), (32, 38, 46)
+            bg, border = COL_BTN_DISABLED_BG, COL_BTN_DISABLED_BORDER
+        else:
+            bg = COL_BTN_HOVER if hovered else COL_BTN
+            border = COL_BORDER_HOVER if hovered else COL_BTN_BORDER
         cv2.rectangle(canvas, (x, y), (x + w, y + h), bg, -1)
         cv2.rectangle(canvas, (x, y), (x + w, y + h), border, 1)
-        tcol = COL_MUTED if not enabled else ((accent or COL_TEXT) if hovered else (205, 215, 225))
-        # 文本居中
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        draw_text(canvas, label, (x + 8, y + (h - 16) // 2 + 2), font_size=13, color=tcol,
-                  bold=hovered)
+        if not enabled:
+            tcol, bold = COL_TEXT_DISABLED, False
+        elif hovered:
+            tcol, bold = COL_BTN_TEXT_HOVER, GuiTheme.BTN_BEHAVIOR["HOVER_BOLD"]
+        elif accent:
+            tcol, bold = accent, False
+        else:
+            tcol, bold = COL_BTN_TEXT, False
+        # 文本居中 (字号倍数同样取自主题 BTN_BEHAVIOR)
+        font_size = int(13 * GuiTheme.BTN_BEHAVIOR["HOVER_SCALE"]) if hovered else 13
+        draw_text(canvas, label, (x + 8, y + (h - 16) // 2 + 2), font_size=font_size, color=tcol,
+                  bold=bold)
 
     # ------------------------------------------------------------------
     # 顶栏: 标题 / 串口下拉框 + 连接切换 / M84 / G28 / G92 / 退出
@@ -144,7 +164,7 @@ class ScaraDebugRenderer:
         # G28 回零 / G92 设零
         self._button(canvas, "home", "[G28 回零]", 902, 8, 100, 30,
                      enabled=conn, accent=COL_ACCENT)
-        self._button(canvas, "g92", "[G92 设零]", 1010, 8, 92, 30, enabled=conn)
+        self._button(canvas, "g92", "[G92 机械零点]", 1010, 8, 92, 30, enabled=conn)
 
         # 退出按钮
         self._button(canvas, "quit", "[X] 退出", 1110, 8, 158, 30, accent=COL_ERR)
@@ -193,59 +213,71 @@ class ScaraDebugRenderer:
     # 中列: 步长 / 点动 / Z 快捷 / 夹爪
     # ------------------------------------------------------------------
     def _render_mid_column(self, canvas, app):
-        x, w = 420, 396
+        x, w = 420, 238  # 中列宽度缩至原 60% (396 * 0.6 ≈ 238)
         conn = app.robot.is_connected()
 
-        # 1. 步长档位 (下拉框)
-        cy = self._panel(canvas, x, 58, w, 70, "步长档位 (Jog Step)")
-        step_label = f"步长: {app.jog.step_linear_mm:g}mm / {app.jog.step_rot_deg:g}°"
+        # 1. 步长档位 (标题与下拉框同一行: 左标题右下拉, 面板压扁为一行)
+        py, ph = 58, 48
+        cv2.rectangle(canvas, (x, py), (x + w, py + ph), COL_PANEL, -1)
+        cv2.rectangle(canvas, (x, py), (x + w, py + ph), COL_BORDER, 1)
+        cv2.rectangle(canvas, (x, py), (x + 4, py + ph), COL_ACCENT, -1)
+        draw_text(canvas, "步长档位", (x + 12, py + 15), font_size=13,
+                  color=(192, 206, 222), bold=True)
+        step_label = f"{app.jog.step_linear_mm:g}mm/{app.jog.step_rot_deg:g}°"
         self._button(canvas, "dd_open:step", f"{step_label} {'▲' if app.dd_step_open else '▼'}",
-                     x + 10, cy, w - 20, 30)
+                     x + 92, py + 9, w - 102, 30)
 
-        # 2. 笛卡尔点动十字盘 (X± 左右 / Y± 上下 / Z 竖条右侧 Z+上 Z-下)
-        cy = self._panel(canvas, x, 140, w, 210, "笛卡尔点动十字盘 (Cartesian Jog)")
-        bw, bh = 80, 38
-        c0, c2, cz = x + 10, x + 228, x + 316
-        cx, cw = x + 90, 136  # 中央坐标格 (加宽, 深蓝高亮)
-        c_mid = cx + (cw - bw) // 2  # Y± 按钮在中央格上方居中
+        # 2. 笛卡尔点动十字盘 (按用户手绘布局: 4 列 3 行)
+        #    第一行: R- | Y+ | R+ | Z+    第二行: X- | (空) | X+ | 指定Z    第三行: (空) | Y- | (空) | Z-
+        cy = self._panel(canvas, x, 118, w, 164, "笛卡尔点动十字盘 (Cartesian Jog)")
+        bw, bh = 46, 38
+        z_bw = 66                              # Z 列按钮略宽 (容纳"指定Z")
+        c1 = x + 10                            # 第 1 列 (R- / X-)
+        c2 = x + 60                            # 第 2 列 (Y±)
+        c3 = x + 110                           # 第 3 列 (R+ / X+)
+        c4 = x + 160                           # 第 4 列 (Z 列: Z+/指定Z/Z-)
         r1, r2, r3 = cy, cy + 42, cy + 84
-        self._button(canvas, "jog:w", "Y+ (W)", c_mid, r1, bw, bh, enabled=conn, accent=COL_ACCENT)
-        self._button(canvas, "jog:u", "Z+ (U)", cz, r1, 70, bh, enabled=conn)
-        self._button(canvas, "jog:a", "X- (A)", c0, r2, bw, bh, enabled=conn)
-        # 中央格: 实时坐标向量 [X, Y, Z], R°
-        p = app.robot.current_pose
-        coord_text = f"[{p.x:.1f},{p.y:.1f},{p.z:.1f}],{p.r:.1f}°"
-        cv2.rectangle(canvas, (cx, r2), (cx + cw, r2 + bh), (30, 55, 85), -1)
-        cv2.rectangle(canvas, (cx, r2), (cx + cw, r2 + bh), (90, 160, 220), 1)
-        draw_text(canvas, coord_text, (cx + 3, r2 + 13), font_size=9, color=(150, 210, 255), bold=True)
-        self._button(canvas, "jog:d", "X+ (D)", c2, r2, bw, bh, enabled=conn, accent=COL_ACCENT)
-        self._button(canvas, "jog:j", "Z- (J)", cz, r2, 70, bh, enabled=conn)
-        self._button(canvas, "jog:s", "Y- (S)", c_mid, r3, bw, bh, enabled=conn, accent=COL_ACCENT)
-        # R 轴旋转
-        ry = cy + 130
-        self._button(canvas, "jog:q", "R+ 旋+ (Q)", c0, ry, 136, 34, enabled=conn)
-        self._button(canvas, "jog:e", "R- 旋- (E)", x + 154, ry, 136, 34, enabled=conn)
+        # 第一行: R- | Y+ | R+ | Z+
+        self._button(canvas, "jog:e", "R-", c1, r1, bw, bh, enabled=conn)
+        self._button(canvas, "jog:w", "Y+", c2, r1, bw, bh, enabled=conn, accent=COL_ACCENT)
+        self._button(canvas, "jog:q", "R+", c3, r1, bw, bh, enabled=conn)
+        self._button(canvas, "jog:u", "Z+", c4, r1, z_bw, bh, enabled=conn)
+        # 第二行: X- | (空) | X+ | 指定 Z
+        self._button(canvas, "jog:a", "X-", c1, r2, bw, bh, enabled=conn)
+        # 中央留白: 坐标信息已移至左列坐标面板, 避免重复
+        self._button(canvas, "jog:d", "X+", c3, r2, bw, bh, enabled=conn, accent=COL_ACCENT)
+        z_label = "指定Z ▲" if app.dd_z_open else "指定Z ▼"
+        self._button(canvas, "dd_open:z", z_label, c4, r2, z_bw, bh, enabled=conn)
+        # 第三行: (空) | Y- | (空) | Z-
+        self._button(canvas, "jog:s", "Y-", c2, r3, bw, bh, enabled=conn, accent=COL_ACCENT)
+        self._button(canvas, "jog:j", "Z-", c4, r3, z_bw, bh, enabled=conn)
 
-        # 3. 关节角点动
-        cy = self._panel(canvas, x, 362, w, 114, "关节角独立点动 (Joint Jog)")
-        self._button(canvas, "jog:o", "O: 大臂θ+", x + 10, cy, 180, 36, enabled=conn)
-        self._button(canvas, "jog:l", "L: 大臂θ-", x + 202, cy, 180, 36, enabled=conn)
-        self._button(canvas, "jog:i", "I: 小臂ψ+", x + 10, cy + 42, 180, 36, enabled=conn)
-        self._button(canvas, "jog:k", "K: 小臂ψ-", x + 202, cy + 42, 180, 36, enabled=conn)
+        # 3. 关节角点动 (大臂左侧上下排列 / 小臂右侧上下排列)
+        cy = self._panel(canvas, x, 294, w, 114, "关节角独立点动 (Joint Jog)")
+        # 左列: 大臂+ (上) / 大臂- (下)
+        self._button(canvas, "jog:o", "大臂θ+", x + 10, cy, 106, 36, enabled=conn)
+        self._button(canvas, "jog:l", "大臂θ-", x + 10, cy + 42, 106, 36, enabled=conn)
+        # 右列: 小臂+ (上) / 小臂- (下)
+        self._button(canvas, "jog:i", "小臂ψ+", x + 122, cy, 106, 36, enabled=conn)
+        self._button(canvas, "jog:k", "小臂ψ-", x + 122, cy + 42, 106, 36, enabled=conn)
 
-        # 4. Z 轴快捷 + 夹爪
-        cy = self._panel(canvas, x, 488, w, 162, "Z 轴快捷与夹爪舵机 (End-Effector)")
-        self._button(canvas, "z_up", "Z升至 100", x + 10, cy, 118, 30, enabled=conn)
-        self._button(canvas, "z_down", "Z降至 20", x + 134, cy, 118, 30, enabled=conn)
-        z_label = "指定 Z ▲" if app.dd_z_open else "指定 Z ▼"
-        self._button(canvas, "dd_open:z", z_label, x + 258, cy, 118, 30, enabled=conn)
-        gy = cy + 40
-        self._button(canvas, "grip_close", "双夹爪闭合", x + 10, gy, 118, 30, enabled=conn, accent=COL_WARN)
-        self._button(canvas, "grip_open", "双夹爪打开", x + 134, gy, 118, 30, enabled=conn, accent=COL_OK)
-        self._button(canvas, "grip1_close", "夹1闭", x + 258, gy, 57, 30, enabled=conn)
-        self._button(canvas, "grip1_open", "夹1开", x + 319, gy, 57, 30, enabled=conn)
-        self._button(canvas, "grip2_close", "夹2闭", x + 258, gy + 36, 57, 30, enabled=conn)
-        self._button(canvas, "grip2_open", "夹2开", x + 319, gy + 36, 57, 30, enabled=conn)
+        # 4. 夹爪舵机 (按用户手绘布局: 2 行 3 列 — 第一行 全开/夹1开/夹2开, 第二行 全闭/夹1闭/夹2闭)
+        cy = self._panel(canvas, x, 420, w, 108, "夹爪舵机 (Gripper Servo)")
+        btn_w = 68  # 每行 3 个按钮, 宽度 (238-20-14)/3 = 68
+        gap_x = 7
+        col2 = x + 10 + btn_w + gap_x   # 第 2 列
+        col3 = x + 10 + (btn_w + gap_x) * 2  # 第 3 列
+        # 第一行: 全开 | 夹1开 | 夹2开
+        self._button(canvas, "grip_open", "全开", x + 10, cy, btn_w, 30,
+                     enabled=conn, accent=COL_OK)
+        self._button(canvas, "grip1_open", "夹1开", col2, cy, btn_w, 30, enabled=conn)
+        self._button(canvas, "grip2_open", "夹2开", col3, cy, btn_w, 30, enabled=conn)
+        # 第二行: 全闭 | 夹1闭 | 夹2闭
+        gy2 = cy + 36
+        self._button(canvas, "grip_close", "全闭", x + 10, gy2, btn_w, 30,
+                     enabled=conn, accent=COL_WARN)
+        self._button(canvas, "grip1_close", "夹1闭", col2, gy2, btn_w, 30, enabled=conn)
+        self._button(canvas, "grip2_close", "夹2闭", col3, gy2, btn_w, 30, enabled=conn)
 
     # ------------------------------------------------------------------
     # 右列: 直达 / 工位 / 宏 / 透传
@@ -259,22 +291,18 @@ class ScaraDebugRenderer:
         self._button(canvas, "goto", "输入目标坐标 (如 X100 Y300 Z50 R0)...",
                      x + 10, cy, w - 20, 30, enabled=conn, accent=COL_GOLD)
 
-        # 2. 工位跳转
+        # 2. 工位跳转 (预设为硬编码默认工位, 只读跳转, 无删/存按钮)
         presets = app.presets.list_presets()
         n_show = min(len(presets), 5)
-        cy = self._panel(canvas, x, 140, w, 76 + n_show * 34, "预设工位跳转 (Workstations)")
+        cy = self._panel(canvas, x, 140, w, 44 + n_show * 34, "预设工位跳转 (Workstations)")
         keys = list(presets.keys())
         for i, name in enumerate(keys[:5]):
             pose = presets[name]
             label = f"{name[:12]} ({pose.x:.0f},{pose.y:.0f},{pose.z:.0f},{pose.r:.0f})"
-            self._button(canvas, f"preset:{i}", label, x + 10, cy + i * 34, w - 96, 30, enabled=conn)
-            self._button(canvas, f"preset_del:{i}", "删", x + w - 78, cy + i * 34, 28, 30,
-                         enabled=True, accent=COL_ERR, hoverable=True)
-        by = cy + n_show * 34 + 4
-        self._button(canvas, "preset_save", "[存当前位置为预设]", x + 10, by, 200, 28)
+            self._button(canvas, f"preset:{i}", label, x + 10, cy + i * 34, w - 20, 30, enabled=conn)
 
-        # 3. 搬运宏
-        macro_top = 140 + 76 + n_show * 34 + 40
+        # 3. 搬运宏 (预设面板高度已减 32: 76→44, 宏面板同步上移)
+        macro_top = 140 + 44 + n_show * 34 + 40
         cy = self._panel(canvas, x, macro_top, w, 100, "芦笋搬运节拍宏 (Pick & Place)")
         self._button(canvas, "macro_minus", "-", x + 10, cy, 36, 32, enabled=conn)
         draw_text(canvas, f"x{app.macro_cycles}", (x + 56, cy + 6), font_size=18,
@@ -311,25 +339,28 @@ class ScaraDebugRenderer:
                 cy += 24
 
         if app.dd_step_open:
-            px, pw = 430, 376
-            py, ph = 96, 3 * 32 + 8
+            # 浮层覆盖步长档位下拉按钮 (第 1 个面板右侧按钮: x+92=512, y=67~97), 宽 136
+            px, pw = 512, 136
+            py, ph = 99, 3 * 32 + 8
             cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (24, 30, 38), -1)
             cv2.rectangle(canvas, (px, py), (px + pw, py + ph), COL_ACCENT, 1)
             cy = py + 4
             for key, lin, rot in (("1", 1, 1), ("2", 10, 5), ("3", 50, 15)):
                 active = (app.jog.step_linear_mm == float(lin))
                 mark = "✓ " if active else "  "
-                self._button(canvas, f"dd_step:{key}", f"{mark}[{key}]  {lin}mm / {rot}°",
+                self._button(canvas, f"dd_step:{key}", f"{mark}[{key}] {lin}mm/{rot}°",
                              px + 4, cy, pw - 8, 28, accent=COL_ACCENT if active else None)
                 cy += 32
 
         if app.dd_z_open:
-            px, pw = 678, 118
+            # 浮层从笛卡尔十字盘 c4 列 r2 的"指定Z"按钮下方展开
+            # 按钮位置: c4=x+160=580, r2=cy+42=192, 宽 66 高 38 (按钮底部 = 230)
+            px, pw = 580, 66  # 与按钮同宽
             n = 11
             ph = n * 24 + 8
-            py = 514 - ph  # 自按钮底部向上展开
-            cv2.rectangle(canvas, (px, py), (px + pw, 514), (24, 30, 38), -1)
-            cv2.rectangle(canvas, (px, py), (px + pw, 514), COL_ACCENT, 1)
+            py = 232  # 从按钮底部 (230) 下方开始向下展开
+            cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (24, 30, 38), -1)
+            cv2.rectangle(canvas, (px, py), (px + pw, py + ph), COL_ACCENT, 1)
             cur_z = round(app.robot.current_pose.z / 10.0) * 10
             cy = py + 4
             for zv in range(0, 101, 10):

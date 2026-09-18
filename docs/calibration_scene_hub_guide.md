@@ -152,3 +152,30 @@ flowchart LR
   - 非 ASCII 中文文本绘制基于 Bounding Box 进行轻量微切片贴图，内存操作量从 2.7MB 降低至 10KB。
 - **Unicode / 中文路径安全兼容**：
   - 底层基于 `cv2.imdecode` 与 `cv2.imencode` 封装 `imread_unicode` 与 `imwrite_unicode`，杜绝 Windows 平台中文路径黑屏与加载失败。
+
+## 6. 世界坐标系锚点与 anchor scale factor (锚点尺度因子)
+
+为消除单一 Tag 边长 (50mm) 测量误差 (~0.5mm 即引入 1% 尺度漂移) 对全局空间精度的影响，Scene Hub 在【生效到生产】阶段引入绝对坐标系锚定与尺度因子同步机制：
+
+### 6.1 绝对锚点定义 (与 `config.yaml` `calibration.world_anchor` 同源)
+
+| 锚点 | 标靶 ID | 绝对坐标 (机械臂坐标系, mm) | 角色 |
+| :---: | :---: | :---: | :--- |
+| 原点锚点 | Tag 0 | $(0, 0, 405)$ | 平移原点 + $Z$ 轴方向参照 |
+| 对齐锚点 | Tag 1 | $(0, 520, 196)$ | $X$ 轴方向参照 + 尺度基线 |
+
+### 6.2 anchor scale factor 解算流程
+
+1. **BA 平差阶段保持像素为单位**：避免在优化中混淆像素与物理量纲；
+2. **平差收敛后引入绝对坐标**：计算 Tag 0 与 Tag 1 在 BA 解算地图中的标称距离 $D_{nominal}$，与绝对坐标物理距离 $D_{real} = \sqrt{0^2 + 520^2 + (405-196)^2} \approx 560.5\text{mm}$ 比对；
+3. **尺度锁定**：$\text{anchor\_scale} = D_{real} / D_{nominal}$，作为全局等比缩放因子；
+4. **marker 尺寸模型同步**：`real_marker_size = nominal_marker_size × anchor_scale` ( nominal = 50mm )，所有 Tag 位姿统一表达在以 Tag 0 为原点、Tag 0→Tag 1 为 $X$ 轴、Tag 0 法向为 $Z$ 轴的世界坐标系下。
+
+### 6.3 与生产生效的衔接
+
+`[P] 生效生产` 按钮触发时，原子写入 `config/tags_map.yaml` 的地图同时包含：
+- 全部 Tag 的世界坐标系位姿 (已乘 anchor_scale)；
+- `anchor_scale` 字段 (供下游 `tag_localizer.py` 在线解算时复用)；
+- `world_anchor` 元信息 (origin/align tag id + 绝对 XYZ)。
+
+下游生产程序 (芦笋抓取、Robot 在线跟踪) 读取地图时，统一基于该世界坐标系解算目标位姿，与机械臂绝对坐标 `(X0, Y600, Z80, R90°)` 直接对齐。

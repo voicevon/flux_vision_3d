@@ -184,7 +184,7 @@ flowchart TD
 
 | 序号 / 键位 | 模块工具 | 核心功能与工程要点 |
 | :---: | :--- | :--- |
-| **顶级 `[G]`** | **3D 视觉综合控制中心 (Suite Dashboard)**<br>`gui_launcher.py` | **1280x720 工业科技总控大屏**：常驻硬件探针、卡片网格、右侧动态即时说明大屏 (Live Inspector)，统一调度全系统生产、标定与测试任务 |
+| **顶级 `[G]`** | **芦笋上料自动化 (Dashboard)**<br>`gui_launcher.py` | **1280x1000 工业科技总控大屏**：常驻硬件探针、卡片网格、右侧动态即时说明大屏 (Live Inspector)，统一调度全系统生产、标定与测试任务 |
 | **顶级 `[2]` / `[H]`** | **工况与场景管理中枢 (Scene Hub)**<br>`tools/scene_hub/` | **1280x720 场景与数据总控台**：场景工作空间/数据容器管理、健康体检大屏、相册大图巡检；直接执行 `python -m tools.scene_hub` 即可启动 |
 | **`[2]`** | **多视角交互采图向导**<br>`tag_capture_wizard.py` | 专职采图工具：交互式指导相机移动至不同高度与俯仰角，按空格连拍，样本自动存入当前场景沙盒 |
 | **`[S]`** | **离线标定工作站 (Studio)**<br>`tools/studio/app.py` | **一站式离线解算工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
@@ -321,7 +321,7 @@ flux_vision_3d/
 │       └── config_guard.py        #      原子配置读写保护与备份保障
 │
 ├── tools/                         # 🔧 运维与顶级应用程序
-│   ├── gui_launcher.py            #    ★【顶级控制中心】3D 视觉综合控制大屏 (Suite Dashboard 首选入口)
+│   ├── gui_launcher.py            #    ★【顶级控制中心】芦笋上料自动化大屏 (Dashboard 首选入口)
 │   ├── cli_menu.py                #    交互式统一控制终端总入口 (支持 --cli 与无图形回退)
 │   ├── scene_hub/                 #    ★【工况中枢自包含包】(通过 python -m tools.scene_hub 直接启动)
 │   │   ├── __main__.py            #      模块直接执行入口

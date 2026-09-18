@@ -5,14 +5,17 @@
 import numpy as np
 
 from src.utils.gui_theme import GuiTheme
-from src.utils.text_rendering import draw_text
 
 # ============================ 视觉样式常量 (BGR, 统一取自 GuiTheme 主题单源) ============================
 COLOR_BG = GuiTheme.BG           # 工具栏 / 占位背景
 COLOR_CARD_BG = GuiTheme.CARD_BG  # 按钮常态底色
 COLOR_CARD_SEL = GuiTheme.CARD_SEL  # 乒乓开关激活底色
 COLOR_BORDER = GuiTheme.BORDER   # 常态描边
+COLOR_BORDER_HOVER = GuiTheme.BORDER_HOVER  # 悬停描边 (主题统一)
 COLOR_BORDER_SEL = GuiTheme.BORDER_SEL  # 激活描边
+COLOR_BTN_HOVER = GuiTheme.BTN_HOVER  # 悬停底色 (主题统一)
+COLOR_BTN_TEXT_HOVER = GuiTheme.BTN_TEXT_HOVER  # 按钮悬停文字 (主题统一)
+COLOR_TEXT_DISABLED = GuiTheme.TEXT_DISABLED  # 按钮禁用文字 (主题统一)
 COLOR_ACCENT = GuiTheme.ACCENT   # 主题强调色
 COLOR_TEXT_SUB = GuiTheme.TEXT_SUB
 COL_GREEN = (110, 220, 90)      # 实测 / 目标标靶高亮 (数据可视化色, 本地保留)
