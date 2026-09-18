@@ -219,7 +219,7 @@ class TestGuiLauncher(unittest.TestCase):
     def test_text_wrapping_utility(self):
         """测试文本根据最大像素宽度自适应折行计算"""
         from tools.gui_launcher import wrap_text_by_width, get_cached_font
-        long_chinese_text = "【核心生产算法】调用物理相机抓拍一帧并解算最上层芦笋空间位姿，输出抓取指令。"
+        long_chinese_text = "【标定收尾验证】完全离线工具：文件照片输入，解算顶层芦笋空间位姿并预览 SCARA 抓取 G-code。"
         lines = wrap_text_by_width(long_chinese_text, font_size=14, max_width=200)
         self.assertTrue(len(lines) > 1)
         font = get_cached_font(14)
@@ -227,6 +227,41 @@ class TestGuiLauncher(unittest.TestCase):
             bbox = font.getbbox(line)
             w = bbox[2] - bbox[0]
             self.assertLessEqual(w, 200)
+
+    def test_asparagus_card_position_and_shortcuts(self):
+        """测试芦笋离线验证卡片位于 B 组第 6 位，且后续数字快捷键严格顺移"""
+        catalog = build_tools_catalog()
+        ids = [t.key_id for t in catalog]
+        self.assertEqual(ids[5], "asparagus_offline")
+        self.assertEqual(catalog[5].shortcut, "6")
+        self.assertEqual(catalog[5].category, "B — Tag 标定流水线")
+        self.assertTrue(catalog[5].is_gui)
+        # 数字快捷键与卡片一一对应且顺移无冲突
+        expected = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+        for idx, sc in enumerate(expected):
+            self.assertEqual(catalog[idx].shortcut, sc)
+        self.assertEqual(catalog[6].key_id, "robot_online_tracker")
+        self.assertEqual(catalog[7].key_id, "d435_live")
+        self.assertEqual(catalog[8].key_id, "scara_debug")
+
+    def test_grid_layout_two_plus_two_plus_one(self):
+        """测试 B/D 两组 5 张卡片的 2+2+1 网格布局几何正确"""
+        rects = [self.app._get_card_rect(i) for i in range(12)]
+        # B 组: idx 2/3 第一行, 4/5 第二行, 6 第三行仅左列
+        self.assertEqual(rects[2][1], rects[3][1])
+        self.assertEqual(rects[4][1], rects[5][1])
+        self.assertGreater(rects[4][1], rects[2][1])
+        self.assertGreater(rects[6][1], rects[4][1])
+        self.assertEqual(rects[6][0], rects[2][0])          # 第三行仅左列
+        # D 组: idx 7/8 第一行, 9/10 第二行, 11 第三行仅左列, 整体低于 B 组
+        self.assertEqual(rects[7][1], rects[8][1])
+        self.assertGreater(rects[9][1], rects[7][1])
+        self.assertGreater(rects[11][1], rects[9][1])
+        self.assertEqual(rects[11][0], rects[7][0])
+        self.assertGreater(rects[7][1], rects[6][1])
+        # 全部卡片在 1000px 基准画布内
+        for r in rects:
+            self.assertLess(r[1] + r[3], 1000)
 
     def test_default_overview_panel_rendering(self):
         """测试无卡片选中/悬停时，右侧默认渲染系统环境与硬件健康总览面板"""

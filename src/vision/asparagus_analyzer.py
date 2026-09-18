@@ -63,13 +63,13 @@ class AsparagusTarget:
         if self.calibration_source == "uncalibrated":
             lines.append(f"; [安全警告] 当前手眼矩阵尚未标定 (UNCALIBRATED)！")
             lines.append(f"; 坐标模式: 传送带物理基准系 (Z 轴采用凸起高度 {self.robot_z:.1f}mm，已拦截相机 500+mm 深度)")
-            lines.append(f"; 实机运行前请完成 AprilTag 建图 (tools/calibration/tag_map_builder.py) 或手工标定 (tools/calibration/hand_eye_calibration.py)！")
+            lines.append(f"; 实机运行前请完成 AprilTag 建图 (tools/calibration/tag_map_builder.py) 或在 config.yaml 写入手工标定矩阵！")
         elif self.calibration_source == "tag_online":
             lines.append(f"; [状态] AprilTag 在线标靶定位 (实时 PnP 外参) 转换至机械臂基座坐标系")
         elif self.calibration_source == "tag_cached":
             lines.append(f"; [状态] AprilTag 历史缓存外参 (标靶暂不可见，沿用上帧锁定值)")
         elif self.calibration_source == "hand_eye":
-            lines.append(f"; [状态] 手工 SVD 点触标定矩阵 (T_cam_to_scara) 转换至机械臂基座坐标系")
+            lines.append(f"; [状态] 手工标定矩阵 (config.yaml T_cam_to_scara) 转换至机械臂基座坐标系")
         else:
             lines.append(f"; [状态] 标定来源: {self.calibration_source}")
         lines.append(f"; ==============================================================================")
@@ -355,7 +355,7 @@ class AsparagusAnalyzer:
         fg = (color_valid & (rel_h >= self.table_margin_mm) & (hsv[:, :, 2] > 25) & (depth_mm >= 400) & (depth_mm <= 670)).astype(np.uint8) * 255
         return fg
 
-    def analyze(self, color_bgr: np.ndarray, depth_mm: np.ndarray) -> List[AsparagusTarget]:
+    def analyze(self, color_bgr: np.ndarray, depth_mm: Optional[np.ndarray]) -> List[AsparagusTarget]:
         """
         端到端全流程分析：
           0. AprilTag 三级标定降级链解算当前帧坐标变换
@@ -364,7 +364,11 @@ class AsparagusAnalyzer:
           3. 基于 fitLine 解算各根芦笋轴线角度与长径尺寸
           4. 脊线深度采样与工作台倾斜补偿
           5. 叠压拓扑分析，锁定最顶层可抓取目标 (Topmost Pickable Target)
+        :param depth_mm: 对齐深度矩阵 (uint16 mm)；传 None 时降级为纯照片 2D 预览模式
         """
+        if depth_mm is None:
+            return self._analyze_2d(color_bgr)
+
         # 步骤 0：三级标定降级链 — 解算当前帧最优坐标变换
         frame_transform, frame_calib_source = self._resolve_calibration(color_bgr)
 
@@ -527,7 +531,101 @@ class AsparagusAnalyzer:
         if len(targets) > 0:
             targets.sort(key=lambda t: t.rel_height_mm, reverse=True)
             targets[0].is_topmost = True
-            
+
+        return targets
+
+    def _analyze_2d(self, color_bgr: np.ndarray, nominal_z_mm: float = 640.0) -> List[AsparagusTarget]:
+        """
+        纯照片 2D 降级分析 (无深度数据)：
+          - 仅用植物色域分割 + 黑帽暗缝切分，输出轴线倾角与轮廓几何；
+          - 物理尺寸按标称工作距离 (nominal_z_mm) 估算，仅作 2D 预览参考；
+          - 无深度不做顶层判决 (is_topmost 全为 False)，不输出抓取 G-code。
+        """
+        h, w = color_bgr.shape[:2]
+        b, g, r = cv2.split(color_bgr)
+        hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)
+
+        # 植物色域前景 (无深度约束, 收紧为绿主导或高饱和黄绿色域, 排除灰底/台面)
+        color_valid = ((g.astype(float) >= b.astype(float) * 1.08) & (g.astype(float) >= r.astype(float) * 1.08)) \
+            | ((hsv[:, :, 0] >= 20) & (hsv[:, :, 0] <= 100) & (hsv[:, :, 1] >= 40) & (hsv[:, :, 2] >= 40))
+        fg_mask = (color_valid & (hsv[:, :, 2] > 25)).astype(np.uint8) * 255
+        roi_mask = np.zeros((h, w), dtype=np.uint8)
+        roi_mask[int(h * 0.04):int(h * 0.96), int(w * 0.04):int(w * 0.96)] = 255
+        fg_mask = cv2.bitwise_and(fg_mask, roi_mask)
+        fg_clean = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (7, 5)))
+
+        # 黑帽暗缝切分粘连
+        gray = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2GRAY)
+        black_hat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (31, 5)))
+        _, seams = cv2.threshold(black_hat, 8, 255, cv2.THRESH_BINARY)
+        seams_dil = cv2.dilate(seams, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3)), iterations=1)
+        cut_mask = cv2.bitwise_and(fg_clean, cv2.bitwise_not(seams_dil))
+        cut_clean = cv2.morphologyEx(cut_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3)))
+
+        cnts, _ = cv2.findContours(cut_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        targets: List[AsparagusTarget] = []
+        target_idx = 1
+        scale = nominal_z_mm / self.fx   # 标称距离下的 mm/px 尺度
+        for cnt in cnts:
+            area = cv2.contourArea(cnt)
+            if area < self.min_area:
+                continue
+
+            [vx, vy, x0, y0] = cv2.fitLine(cnt, cv2.DIST_L2, 0, 0.01, 0.01)
+            vx_val, vy_val = float(vx[0]), float(vy[0])
+            cx_val, cy_val = float(x0[0]), float(y0[0])
+
+            angle_rad = np.arctan2(vy_val, vx_val)
+            yaw_deg = float(np.degrees(angle_rad))
+            if yaw_deg > 90.0: yaw_deg -= 180.0
+            elif yaw_deg < -90.0: yaw_deg += 180.0
+
+            pts = cnt.reshape(-1, 2).astype(float)
+            diff = pts - np.array([cx_val, cy_val])
+            proj_len = np.dot(diff, np.array([vx_val, vy_val]))
+            proj_wid = np.dot(diff, np.array([-vy_val, vx_val]))
+            length_px = float(np.max(proj_len) - np.min(proj_len))
+            diam_px = float(np.max(proj_wid) - np.min(proj_wid))
+
+            if length_px / max(1.0, diam_px) < self.min_aspect_ratio:
+                continue
+
+            length_mm = float(length_px * scale)
+            diam_mm = float(diam_px * scale)
+            if not (self.min_length_mm <= length_mm <= self.max_length_mm):
+                continue
+            if not (self.min_diam_mm <= diam_mm <= self.max_diam_mm):
+                continue
+
+            rect = cv2.minAreaRect(cnt)
+            box_corners = cv2.boxPoints(rect).astype(np.int32)
+
+            targets.append(AsparagusTarget(
+                id=target_idx,
+                center_px=(cx_val, cy_val),
+                length_px=length_px,
+                diam_px=diam_px,
+                yaw_deg=round(yaw_deg, 1),
+                axis_vector=(vx_val, vy_val),
+                box_corners=box_corners,
+                contour=cnt,
+                length_mm=round(length_mm, 1),
+                diam_mm=round(diam_mm, 1),
+                grip_x=round((cx_val - self.cx) * nominal_z_mm / self.fx, 1),
+                grip_y=round((cy_val - self.cy) * nominal_z_mm / self.fy, 1),
+                grip_z=0.0,
+                z_top=0.0,
+                rel_height_mm=0.0,
+                robot_x=round((cx_val - self.cx) * nominal_z_mm / self.fx, 1),
+                robot_y=round((cy_val - self.cy) * nominal_z_mm / self.fy, 1),
+                robot_z=0.0,
+                robot_r=round(yaw_deg, 1),
+                is_topmost=False,
+                calibration_source="2d_preview"
+            ))
+            target_idx += 1
+
         return targets
 
     def draw_detections(self, image: np.ndarray, targets: List[AsparagusTarget]) -> np.ndarray:

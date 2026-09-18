@@ -27,12 +27,12 @@ graph TD
             Dashboard["综合控制中心 Dashboard<br>(gui_launcher.py)"]
             Hub["工况与场景管理中枢<br>Scene Hub (scene_hub/)"]
             Studio["离线标定综合工作站<br>Studio (studio/)"]
+            Asparagus["芦笋抓取位姿离线验证<br>(asparagus_offline.py)"]
             Tracker["Robot 在线跟踪<br>(tracker/)"]
         end
         subgraph L3_Core["通用核心应用 (tools/)"]
             Viewer["D435 实时相机主视窗"]
-            Finder["单帧抓取解算 (find_top_asparagus.py)"]
-            CLI["统一控制终端 (cli_menu.py)"]
+            Diag["环境诊断脚本 (diagnose_env.py)"]
         end
         subgraph L3_Calib["标定专用工具链 (tools/calibration/)"]
             TagGen["标靶图纸生成与管理"]
@@ -41,7 +41,6 @@ graph TD
             Reviewer["采图清单质检画板"]
             MapBuilder["离线极限 BA 空间建图求解器"]
             Diagnose["标靶漏检病因切片诊断"]
-            HandEye["SCARA 接触式手眼标定"]
         end
     end
 
@@ -50,7 +49,7 @@ graph TD
         TestMock["仿真管线测试"]
         TestMap["BA 建图单元测试"]
         TestVerifier["AR 验证器回归测试"]
-        TestHandEye["手眼标定精度测试"]
+        TestHandEye["手眼矩阵兜底与防撞 G-code 测试"]
     end
 
     Camera --> Analyzer
@@ -90,7 +89,7 @@ graph TD
 | 主轴拟合与偏航角解算 | `cv2.fitLine` 求解中心轴线方向，映射夹爪角度 $R$ |
 | 3D 空间欧氏测距 | 消除 $\pm 30°$ 大倾角的透视短缩畸变 |
 | 顶层拓扑排序 | 按相对凸起净高锁定最顶层目标 (`is_topmost`) |
-| 多源标定外参接入 | 自动选择 AprilTag 在线外参、历史缓存或手眼标定矩阵 |
+| 多源标定外参接入 | 自动选择 AprilTag 在线外参、历史缓存或 config.yaml 手工矩阵 |
 | G-code 位姿生成 | 输出 SCARA 笛卡尔抓取指令，内置未标定防撞拦截 |
 
 **调用接口**：`analyze(color_bgr, depth_mm) -> List[AsparagusTarget]`
@@ -118,9 +117,9 @@ graph TD
 | :--- | :--- | :--- |
 | **综合控制中心 Dashboard** | `tools/gui_launcher.py` | 1280x1000 工业大屏，卡片式统一调度全部核心应用与测试入口；含 12 张卡片三模式 (GUI/CMD/TERM)，右侧大屏可切换为内嵌终端视图 |
 | **硬件环境配置** | `tools/hardware_config.py` | 输入 (相机类型/分辨率) 与输出 (机械臂类型/默认串口) 设备选型，配置写入 `config/hardware_env.json` 全系统自动读取 |
-| **控制终端 CLI** | `tools/cli_menu.py` | 统一命令行入口，集成应用启动、标定二级专区与测试执行 |
+| **环境诊断脚本** | `tools/diagnose_env.py` | 系统环境深度诊断输出 (Dashboard [T] 卡片 TERM 模式承载)；原交互式 CLI 菜单 (cli_menu.py) 已退役，其功能全部由 Dashboard 卡片覆盖 |
 | **实时相机主视窗** | `tools/d435_viewer.py` | 双流实时预览、鼠标 3D 探测、动态色谱拉伸、G-code 打印 |
-| **单帧抓取解算** | `tools/find_top_asparagus.py` | 载入单帧或最新快照，输出标准抓取位姿与 JSON 报表 |
+| **单帧抓取解算** | `tools/asparagus_offline.py` | 完全离线的芦笋抓取位姿验证 GUI：文件照片 (png+npy 成对) 输入解算顶层位姿与 SCARA G-code，纯照片降级 2D 预览，支持批量解算汇总报表 |
 
 ### 3.2 顶层标定应用 (`tools/` 子包, 入口 `app.py`)
 
@@ -142,7 +141,6 @@ graph TD
 | **采图清单质检画板** | `tools/calibration/tag_manifest_reviewer.py` | 轻量级原生 GUI 画板，鼠标点击保留/剔除，连通性实时状态 |
 | **空间平差建图求解器** | `tools/calibration/tag_map_builder.py` | 极限精度 BA 求解器、两阶段平差、MAD 清洗、Quiver 图与体检报告；`solve_single_tag_pnp` 支持 `expected_z_cam` 法向先验参数防 180° 翻转 |
 | **病因深度切片诊断** | `tools/calibration/diagnose_tag_frame.py` | 单帧漏检/残差异常病因分析（反差/面积/梯度/倾角） |
-| **接触式手眼标定向导** | `tools/calibration/hand_eye_calibration.py` | SCARA 经典接触式物理点对标定 (极端无 Tag 备用) |
 
 ---
 
@@ -189,7 +187,7 @@ Dashboard、Tracker、Scene Hub 等 GUI 应用共享以下基础设施，统一�
 | | `tests/test_tag_offline_studio.py` | Offline Studio 工作站 |
 | | `tests/test_viewport_manager.py`、`tests/test_verification_reporter.py` | 视口管理与精度体检报告生成 |
 | | `tests/test_hardware_config.py`、`tests/test_terminal_panel.py` | 硬件环境配置应用与 Dashboard 内嵌终端面板 |
-| **手眼标定** | `tests/test_hand_eye_calibration.py` | Horn/Kabsch SVD 配准精度与 500+mm 危险深度拦截 |
+| **手眼矩阵兜底** | `tests/test_hand_eye_calibration.py` | config.yaml 手工矩阵层级变换与 500+mm 危险深度拦截 |
 
 ---
 

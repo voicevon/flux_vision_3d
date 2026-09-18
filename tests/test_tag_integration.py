@@ -200,7 +200,7 @@ class TestTagIntegration(unittest.TestCase):
         # hand_eye
         base.calibration_source = "hand_eye"
         gcode = base.generate_gcode()
-        self.assertIn("手工 SVD", gcode)
+        self.assertIn("手工标定矩阵", gcode)
 
 
 if __name__ == "__main__":

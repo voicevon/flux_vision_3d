@@ -4,6 +4,24 @@
 
 ---
 
+## [2026-09-18] - 芦笋抓取离线化与 CLI 菜单退役
+
+### 1. 芦笋抓取位姿工具全面离线化
+- **新增** `tools/asparagus_offline.py` (GUI)：数据源为文件照片 (`data/snapshots/` 的 `color_*.png + depth_raw_*.npy` 成对，`--dir` 可指定)；成对样本走完整 3D 链路 (台面拟合/实例切分/顶层判决/SCARA 位姿/G-code 预览)，纯照片自动降级 2D 检测预览且不生成 G-code；一键批量解算输出 `reports/asparagus_batch_report_*.md` 汇总报表；
+- `AsparagusAnalyzer.analyze` 支持 `depth_mm=None` 纯照片 2D 降级路径；内参改由 `config.yaml` 读取并按快照分辨率等比缩放 (消除 909.12 硬编码不一致)；
+- **删除** `tools/find_top_asparagus.py` (相机实时路径退役)；Dashboard 芦笋卡片迁入「B Tag 标定流水线」组第 6 位，后续快捷键顺移 (跟踪→7/诊断→8/SCARA→9)，网格布局改为 A(1×2) + B(2+2+1) + D(2+2+1)。
+
+### 2. CLI 交互菜单退役
+- **删除** `tools/cli_menu.py`：交互菜单全部功能已由 Dashboard 卡片覆盖；
+- `--diagnose` 环境诊断剥离为独立脚本 `tools/diagnose_env.py`，[T] 卡片 TERM 模式改指向之；
+- `run.bat` / `run.ps1` 启动入口直连 `tools/gui_launcher.py`；README / architecture / requirements 同步收口。
+
+### 3. 示教式手眼标定向导移除
+- **删除** `tools/calibration/hand_eye_calibration.py`：示教式接触标定 (摇杆示教点对 + SVD 配准) 与 AprilTag 建图技术路线不符；
+- 分析器 hand_eye 兜底层级保留，仅消费 config.yaml 的 `T_cam_to_scara` 手工矩阵 (可由 AprilTag 路线产生)；`tests/test_hand_eye_calibration.py` 移除 SVD 数学测试，保留 500+mm 防撞拦截与矩阵层级变换测试。
+
+---
+
 ## [2026-09-18] - GUI 基础设施统一化与 Dashboard 内嵌终端体系
 
 ### 1. GUI 基础设施三件套抽取

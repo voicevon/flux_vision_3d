@@ -9,4 +9,4 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-python -X utf8 tools\cli_menu.py $args
+python -X utf8 tools\gui_launcher.py $args

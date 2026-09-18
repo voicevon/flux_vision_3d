@@ -219,8 +219,30 @@ def build_tools_catalog() -> List[ToolCardMeta]:
         ),
 
         ToolCardMeta(
-            key_id="robot_online_tracker",
+            key_id="asparagus_offline",
             shortcut="6",
+            title="芦笋抓取位姿离线验证",
+            subtitle="文件照片输入/批量解算/G-code 预览",
+            category="B — Tag 标定流水线",
+            is_gui=True,
+            command=[sys.executable, "tools/asparagus_offline.py"],
+            tag_color=COLOR_B,
+            summary="【标定收尾验证】完全离线工具：文件照片输入，解算顶层芦笋空间位姿并预览 SCARA 抓取 G-code。",
+            details=[
+                "数据源为文件照片：默认扫描 data/snapshots/ 快照 (d435_viewer [S] 抓拍)，--dir 指定目录",
+                "彩色 png + 对齐深度 npy 成对 → 完整 3D 链路：台面拟合/实例切分/顶层判决/SCARA 位姿",
+                "纯照片自动降级 2D 预览：轴线倾角与标称距离估算尺寸，不生成抓取 G-code",
+                "内参与标定链与生产同源：config.yaml 内参按快照分辨率自动缩放，AprilTag 建图/手工矩阵三级降级",
+                "一键批量解算目录全样本，输出 reports/asparagus_batch_report_*.md 汇总报表"
+            ],
+            inputs=["样本照片目录 (data/snapshots/ 或 --dir)", "config.yaml (内参/标定矩阵/机械臂参数)", "tags_map.yaml (AprilTag 建图, 可选)"],
+            outputs=["标注可视化与检测结果列表", "SCARA 抓取 G-code 预览与导出 (reports/)", "批量汇总报表 (reports/asparagus_batch_report_*.md)"],
+            quick_tips="快捷键: [6] 启动 | 界面内 [↑↓] 切换样本 | [B] 批量解算 | [E] 导出G-code | [ESC] 退出"
+        ),
+
+        ToolCardMeta(
+            key_id="robot_online_tracker",
+            shortcut="7",
             title="Robot 在线跟踪",
             subtitle="Tag2 世界坐标实时解算/机械臂联动跟踪/相机位置校准",
             category="B — Tag 标定流水线",
@@ -238,36 +260,35 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense D435 或 USB 摄像头", "当前场景世界坐标地图 tags_map.yaml", "机械臂串口 COM3 (config.yaml robot)"],
             outputs=["屏幕实时世界坐标显示、机械臂末端到位偏差统计"],
-            quick_tips="快捷键: [6] 启动 | 界面内 [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定世界坐标系 | [C] 连接机械臂 | [T] 触发跟踪 | [X] 退出"
+            quick_tips="快捷键: [7] 启动 | 界面内 [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定世界坐标系 | [C] 连接机械臂 | [T] 触发跟踪 | [X] 退出"
         ),
 
         # ===== D — 生产调试 =====
         ToolCardMeta(
             key_id="d435_live",
-            shortcut="7",
+            shortcut="8",
             title="RealSense 诊断",
             subtitle="硬件检测/深度探针/顶部按钮栏",
             category="D — 生产调试",
             is_gui=True,
             command=[sys.executable, "tools/d435_viewer.py"],
             tag_color=COLOR_D,
-            summary="【硬件诊断 + 芦笋视觉】RealSense 物理深度相机综合查看器，顶部按钮栏快捷控制显示与业务功能。",
+            summary="【纯预览诊断】RealSense 物理深度相机查看器，无任何识别/保存等业务功能。",
             details=[
                 "实时 RGB + 对齐深度流，支持独立开关 RGB/Depth 画面",
                 "上下/左右排列切换，暂停定格，缩放放大缩小",
-                "芦笋识别、ROI 边框、激光、滤波均可独立开关",
-                "鼠标探针: 毫米级 (X, Y, Z) 空间坐标",
-                "按 [S] 抓拍快照 / [G] 打印 G-code"
+                "鼠标探针: 毫米级深度与 (X, Y, Z) 空间坐标",
+                "深度热力图色阶可微调，支持自动量程"
             ],
-            inputs=["Intel RealSense D435 深度相机"],
-            outputs=["控制台诊断信息 / data/snapshots/ 快照"],
-            quick_tips="快捷键: [7] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
+            inputs=["Intel RealSense D435 深度相机 或 USB 摄像头"],
+            outputs=["屏幕实时预览画面与深度探针读数 (不落盘)"],
+            quick_tips="快捷键: [8] 启动 | [Space]暂停 | [V]排列 | [S]抓拍 | [Q]退出"
         ),
 
         # ===== D — 生产调试 (续，SCARA 机械臂调试) =====
         ToolCardMeta(
             key_id="scara_debug",
-            shortcut="8",
+            shortcut="9",
             title="SCARA 机械臂调试 (Flux Loader)",
             subtitle="串口点动/回零设零/夹爪舵机/搬运宏/G-code 透传",
             category="D — 生产调试",
@@ -285,29 +306,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["MKS Base V1.6 串口 (如 COM11)", "几何参数 loader_core/config.py"],
             outputs=["串口 G-code 指令下发、机械臂动作执行与通信日志"],
-            quick_tips="快捷键: [8] 启动 | 界面内 W/S/A/D 点动 | [G28] 回零 | [ESC] 退出"
-        ),
-
-        # ===== D — 生产调试 (续，芦笋抓取) =====
-        ToolCardMeta(
-            key_id="asparagus_live",
-            shortcut="9",
-            title="芦笋抓取位姿解算 (实时生产)",
-            subtitle="硬件相机抓拍解算顶层芦笋/输出 G-code",
-            category="D — 生产调试",
-            is_gui=False,
-            command=[sys.executable, "tools/find_top_asparagus.py"],
-            tag_color=COLOR_D,
-            summary="【核心生产算法】调用物理相机抓拍一帧并解算最上层芦笋空间位姿，输出抓取指令。",
-            details=[
-                "自动拉起 RealSense 物理相机完成自动曝光对齐与单帧捕获",
-                "3D 表面法向量与空间骨架线拟合，精确定位顶层可抓取芦笋",
-                "将相机坐标系位姿通过生产标定矩阵转换为 SCARA 机械臂基坐标系",
-                "直接生成控制 SCARA 机械臂抓取的标准 G-code 指令与 JSON 协议"
-            ],
-            inputs=["RealSense 硬件相机", "config/camera_intrinsics.yaml", "config/tags_map.yaml"],
-            outputs=["终端打印机械臂 G-code 指令、JSON 抓取坐标与调试渲染图"],
-            quick_tips="快捷键: [9] 启动 | 独立控制台视窗执行，打印抓取坐标后按任意键退出。"
+            quick_tips="快捷键: [9] 启动 | 界面内 W/S/A/D 点动 | [G28] 回零 | [ESC] 退出"
         ),
 
         # ===== D — 生产调试 (续，系统诊断) =====
@@ -318,7 +317,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             subtitle="[T] 驱动与依赖诊断 / 85+ 项自动化 CI/CD 全量测试",
             category="D — 生产调试",
             is_gui=False,
-            command=[sys.executable, "tools/cli_menu.py", "--diagnose"],
+            command=[sys.executable, "tools/diagnose_env.py"],
             tag_color=COLOR_D,
             summary="【系统健康与质量守门】全面检查系统环境依赖，并提供工程全量自动化测试套件。",
             details=[
@@ -607,7 +606,7 @@ class GuiLauncherApp:
                 self._launch_tool(self.tools[card_idx])
 
     def _handle_keyboard(self, raw_key: int):
-        """键盘快捷键响应 (3分组: row0 A 2张并列, rows1-2 B 2×2, rows3-5 D 2×3)"""
+        """键盘快捷键响应 (3分组: row0 A 2张并列, rows1-3 B 5张(2+2+1), rows4-6 D 5张(2+2+1))"""
         if self.is_subtool_running:
             return  # 子应用运行期间，主视窗处于安全挂起待命态，屏蔽一切按键操作
 
@@ -623,28 +622,26 @@ class GuiLauncherApp:
 
         # 方向键：将卡片索引映射到 (row, col) 坐标后导航
         # row 0: idx 0-1 (A 环境场景 2张并列)
-        # row 1-2: idx 2-5 (B 2×2)
-        # row 3-5: idx 6-11 (D 2×3)
+        # rows 1-3: idx 2-6 (B 5张: 2+2+1)
+        # rows 4-6: idx 7-11 (D 5张: 2+2+1)
         def idx_to_rc(i: int) -> Tuple[int, int]:
             if i <= 1:
                 return (0, i)
-            if 2 <= i <= 5:   # B 区
+            if 2 <= i <= 6:   # B 区
                 b = i - 2
                 return (b // 2 + 1, b % 2)
-            if 6 <= i <= 11:  # D 区 2×3
-                d = i - 6
-                return (d // 2 + 3, d % 2)
-            return (5, 1)
+            d = i - 7         # D 区
+            return (d // 2 + 4, d % 2)
 
         def rc_to_idx(r: int, c: int) -> int:
             if r == 0:
                 return min(c, 1)
-            if 1 <= r <= 2:   # B 区
+            if 1 <= r <= 3:   # B 区 (row3 仅左列)
                 base_b = (r - 1) * 2
-                return min(2 + base_b + c, 5)
-            if 3 <= r <= 5:   # D 区
-                base_d = (r - 3) * 2
-                return min(6 + base_d + c, 11)
+                return min(2 + base_b + c, 6)
+            if 4 <= r <= 6:   # D 区 (row6 仅左列)
+                base_d = (r - 4) * 2
+                return min(7 + base_d + c, 11)
             return 11
 
         row, col = idx_to_rc(self.selected_tool_idx)
@@ -657,7 +654,7 @@ class GuiLauncherApp:
             return
 
         if raw_key in (2621440, 65364, 40):    # 下
-            if row < 5:
+            if row < 6:
                 row += 1
             self.selected_tool_idx = rc_to_idx(row, col)
             self.hover_tool_idx = self.selected_tool_idx
@@ -708,10 +705,10 @@ class GuiLauncherApp:
             '3': "tag_manager",        # B
             '4': "tag_wizard",         # B
             '5': "tag_studio",         # B
-            '6': "robot_online_tracker", # B Robot 在线跟踪
-            '7': "d435_live",          # D
-            '8': "scara_debug",        # D SCARA 机械臂调试
-            '9': "asparagus_live",     # D
+            '6': "asparagus_offline",  # B 芦笋抓取位姿离线验证
+            '7': "robot_online_tracker", # B Robot 在线跟踪
+            '8': "d435_live",          # D
+            '9': "scara_debug",        # D SCARA 机械臂调试
             # 单字母快捷键 (无数字键卡片)
             't': "sys_diagnose_tests",
             'p': "pip_install",
@@ -730,10 +727,10 @@ class GuiLauncherApp:
     def _get_card_rect(self, idx: int) -> Tuple[int, int, int, int]:
         """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
-        布局 (5行，3分组):
-          row 0   A 环境场景 (2张并列)
-          rows 1-2  B Tag 标定流水线 (2×2 = 4张)
-          rows 3-5  D 生产调试 (2×3 = 6张)
+        布局 (7行，3分组):
+          row 0    A 环境场景 (2张并列)
+          rows 1-3  B Tag 标定流水线 (5张: 2+2+1)
+          rows 4-6  D 生产调试 (5张: 2+2+1)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
@@ -748,17 +745,15 @@ class GuiLauncherApp:
         if idx <= 1:          # A: 顶部两张并列 (环境场景组)
             return X0 + idx * (CW + SX), Y0 + LH, CW, CH
 
-        if 2 <= idx <= 5:     # B: 2×2 (2行)
+        if 2 <= idx <= 6:     # B: 5张 (2+2+1, 3行)
             b = idx - 2
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        if 6 <= idx <= 11:    # D: 生产调试 (2×3 = 6张)
-            d = idx - 6
-            base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
-            return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
-
-        return 0, 0, 0, 0
+        # D: 5张 (2+2+1, 3行)
+        d = idx - 7
+        base_y = Y0 + LH + CH + GY + LH + 3 * (CH + SY) + GY + LH
+        return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
 
     def _hit_test_cards(self, x: int, y: int) -> int:
         """鼠标命中测试：委托给 _get_card_rect，与渲染位置严格一致"""
@@ -1027,7 +1022,7 @@ class GuiLauncherApp:
         group_headers = [
             (self._get_card_rect(0)[1] - LH,  FW, "A  环境场景",                        (195, 155,  45)),
             (self._get_card_rect(2)[1] - LH,  FW, "B  Tag 标定流水线 (AprilTag)",        ( 65, 175, 160)),
-            (self._get_card_rect(6)[1] - LH,  FW, "D  生产调试 (感知/抓取/诊断)",        ( 90, 140, 195)),
+            (self._get_card_rect(7)[1] - LH,  FW, "D  生产调试 (感知/抓取/诊断)",        ( 90, 140, 195)),
         ]
         for hy, hw, label, accent in group_headers:
             cv2.rectangle(canvas, (X0, hy), (X0 + hw, hy + LH - max(1, int(2 * s))), (18, 22, 30), -1)

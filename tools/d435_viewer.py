@@ -1,20 +1,18 @@
 """
-D435 实时彩色/对齐深度流可视化与深度探针交互工具
+D435 实时彩色/对齐深度流纯预览与深度探针工具
 =====================================================
 用途：
-  1. 实时预览 RealSense D435 的 RGB 画面与对齐深度热力图
-  2. 顶部按钮栏：RGB/Depth 显隐、排列方式、业务开关、暂停、缩放、退出
+  1. 实时预览 RealSense D435 (或 USB 摄像头) 的 RGB 画面与对齐深度热力图
+  2. 顶部按钮栏：相机类型、分辨率、开启/关闭、RGB/Depth 显隐、排列方式、暂停、缩放、退出
   3. 支持 [Space] 空格键一键定格/暂停画面
-  4. 芦笋特征提取与顶层抓取点标注（可开关），按 [G] 打印 G-code
-  5. 叠加有效作业 ROI 区域边框（可开关）
-  6. 鼠标悬停/点击查看毫米级深度与 (X, Y, Z) 空间坐标
+  4. 鼠标悬停/点击查看毫米级深度与 (X, Y, Z) 空间坐标
+  5. 无任何识别/抓拍/G-code 等业务功能
 """
 
 import os
 import sys
 import time
 import json
-from datetime import datetime
 import argparse
 import yaml
 import numpy as np
@@ -33,9 +31,8 @@ try:
 except ImportError:
     HAVE_REALSENSE = False
 
-# 导入芦笋特征分析与最顶层判决核心模块
+# 导入通用 GUI 基础设施
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
 from src.utils.gui_window_manager import GuiWindowManager
 from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
@@ -80,18 +77,7 @@ class D435Viewer:
         self.show_depth = True     # 深度图开关
         self.split_vertical = True # True=上下排列, False=左右排列
 
-        self.filters_enabled = True
-        self.laser_enabled = True
         self.init_filters()
-
-        # 芦笋视觉特征分析器
-        self.detection_enabled = True
-        self.analyzer = AsparagusAnalyzer()
-        if self.t_cam_to_scara is not None:
-            self.analyzer.set_hand_eye_matrix(self.t_cam_to_scara)
-        if self.tag_localizer is not None:
-            self.analyzer.set_tag_localizer(self.tag_localizer)
-        self.latest_targets = []
 
         # 鼠标交互状态
         self.hover_x = -1
@@ -105,15 +91,8 @@ class D435Viewer:
         self.cmap_max = 0.66
         self.auto_range = False
 
-        # --- 视图与交互升级特性 ---
-        # 深度图呈现模式: "height_map" (传送带纠偏相对高度图, 台面Z=0) 或 "raw_depth" (相机原生镜头绝对深度)
-        self.depth_display_mode = "height_map"
-        self.max_height_mm = 80.0       # 纠偏高度图满量程刻度 (mm)
-
-        # 排版模式: "split_v" (上下排列), "rgb_only" (单图放大仅看RGB), "split_h" (左右并排), "depth_only" (仅深度图)
-        self.view_mode = "split_v"
+        # 排版模式: split_vertical=True 上下排列, False 左右并排
         self.is_paused = False          # 空格键暂停/定格模式，消除花屏闪烁
-        self.show_roi = True            # 显示有效作业 ROI 区域框
         self.paused_color_frame = None
         self.paused_depth_frame = None
 
@@ -166,43 +145,16 @@ class D435Viewer:
                 }
             }
         }
-        self.t_cam_to_scara = None
-        self.tag_localizer = None
-        self.safe_z = 80.0
-        self.drop_x = 220.0
-        self.drop_y = 0.0
-
         if os.path.exists(self.config_path):
             with open(self.config_path, "r", encoding="utf-8") as f:
                 loaded = yaml.safe_load(f)
-                if loaded:
-                    if "camera" in loaded:
-                        default_config["camera"].update(loaded["camera"])
-                    if "calibration" in loaded:
-                        self.t_cam_to_scara = loaded["calibration"].get("t_cam_to_scara", None)
-                        # AprilTag 多标靶地图定位
-                        tags_map_path = loaded["calibration"].get("tags_map_path", "")
-                        if tags_map_path and os.path.exists(tags_map_path):
-                            try:
-                                from src.vision.tag_localizer import TagLocalizer
-                                self.tag_localizer = TagLocalizer(tags_map_path=tags_map_path)
-                                log.info(f"[D435Viewer] AprilTag 地图已加载: {tags_map_path}")
-                            except Exception as e:
-                                log.warning(f"[D435Viewer] AprilTag 定位器加载失败: {e}")
-                    if "robot" in loaded:
-                        self.safe_z = float(loaded["robot"].get("safe_z_mm", 80.0))
-                        self.drop_x = float(loaded["robot"].get("drop_x_mm", 220.0))
-                        self.drop_y = float(loaded["robot"].get("drop_y_mm", 0.0))
+                if loaded and "camera" in loaded:
+                    default_config["camera"].update(loaded["camera"])
 
         self.cfg = default_config["camera"]
         self.cmap_min = self.cfg["colormap"].get("min_distance", 0.48)
         self.cmap_max = self.cfg["colormap"].get("max_distance", 0.66)
         self.auto_range = self.cfg["colormap"].get("auto_range", False)
-
-        if hasattr(self, 'analyzer') and self.analyzer:
-            self.analyzer.set_hand_eye_matrix(self.t_cam_to_scara)
-            if self.tag_localizer is not None:
-                self.analyzer.set_tag_localizer(self.tag_localizer)
 
     def init_filters(self):
         """初始化 RealSense 后处理滤波模块"""
@@ -226,8 +178,8 @@ class D435Viewer:
         self.threshold_filter.set_option(rs.option.max_distance, f_cfg["threshold"]["max_distance"])
 
     def apply_filters(self, depth_frame):
-        """对深度帧执行 SDK 级硬件滤波链"""
-        if not self.filters_enabled or not HAVE_REALSENSE:
+        """对深度帧执行 SDK 级硬件滤波链 (始终启用，提升深度预览质量)"""
+        if not HAVE_REALSENSE:
             return depth_frame
         try:
             filtered = self.threshold_filter.process(depth_frame)
@@ -273,10 +225,6 @@ class D435Viewer:
         self.color_intrinsics = color_stream.get_intrinsics()
         self.actual_w = self.color_intrinsics.width
         self.actual_h = self.color_intrinsics.height
-        self.analyzer.update_intrinsics(
-            self.color_intrinsics.fx, self.color_intrinsics.fy,
-            self.color_intrinsics.ppx, self.color_intrinsics.ppy
-        )
 
     def apply_device_settings(self, profile):
         """配置预设与红外发射功率"""
@@ -414,22 +362,6 @@ class D435Viewer:
                 except Exception:
                     pass  # 恢复相机失败的善后尝试，原始错误已在上方记录
 
-    def _restore_stream_settings(self):
-        """根据当前 toolbar 状态恢复激光、滤波等流设置"""
-        try:
-            ctx = rs.context()
-            if len(ctx.query_devices()) == 0:
-                return
-            dev = ctx.query_devices()[0]
-            depth_sensor = dev.first_depth_sensor()
-            # 激光
-            if self.laser_enabled and depth_sensor.supports(rs.option.laser_power):
-                depth_sensor.set_option(rs.option.laser_power, float(self.cfg.get("laser_power", 120)))
-            # 滤波
-            # (滤波是 processing block 级别的，不通过设备 options 控制)
-        except Exception as e:
-            log.warning(f"恢复 RealSense 流设置失败: {e}")
-
     def on_mouse(self, event, x, y, flags, param):
         """鼠标移动/点击事件处理（含顶部工具栏 + 下拉菜单 hit-testing）"""
         # 0. 持续跟踪鼠标位置 (用于 hover 效果)
@@ -466,7 +398,6 @@ class D435Viewer:
         # param 可能为 None（OpenCV 回调未传时），做防御处理
         param = param or {}
 
-        view_mode = getattr(self, "view_mode", "split_v")
         orig_w = getattr(self, "actual_w", 1280)
         orig_h = getattr(self, "actual_h", 720)
 
@@ -486,11 +417,7 @@ class D435Viewer:
 
         u, v = -1, -1
 
-        if view_mode == "rgb_only":
-            # 单图放大模式：整个窗口对应 RGB 画面
-            u = int(x * orig_w / cw)
-            v = int(y * orig_h / ch)
-        elif view_mode == "split_v":
+        if self.split_vertical:
             # 上下排列模式：上半屏 (0 ~ ch/2) 为 RGB 画面，下半屏为深度图
             half_h = ch // 2
             if y < half_h:
@@ -499,14 +426,11 @@ class D435Viewer:
             else:
                 u = int(x * orig_w / cw)
                 v = int((y - half_h) * orig_h / half_h)
-        elif view_mode == "split_h":
+        else:
             # 左右排列模式：左半屏为 RGB，右半屏为深度图
             half_w = cw // 2
             local_x = x % half_w
             u = int(local_x * orig_w / half_w)
-            v = int(y * orig_h / ch)
-        elif view_mode == "depth_only":
-            u = int(x * orig_w / cw)
             v = int(y * orig_h / ch)
 
         if 0 <= u < orig_w and 0 <= v < orig_h:
@@ -514,16 +438,6 @@ class D435Viewer:
             self.hover_y = v
             if event == cv2.EVENT_LBUTTONDOWN:
                 self.selected_point = (u, v)
-
-    def draw_roi_bounds(self, img):
-        """在画面上绘制中心有效分析 ROI 区域框"""
-        h, w = img.shape[:2]
-        r_x1, r_y1 = int(w * 0.04), int(h * 0.04)
-        r_x2, r_y2 = int(w * 0.96), int(h * 0.96)
-        # 绘制亮黄色半透明作业有效线
-        cv2.rectangle(img, (r_x1, r_y1), (r_x2, r_y2), (0, 220, 255), 1, cv2.LINE_AA)
-        put_text(img, "WORK_ROI (有效分析作业区)", (r_x1 + 8, r_y1 + 18),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1)
 
     # ================================================================
     # 工具栏状态持久化
@@ -541,14 +455,10 @@ class D435Viewer:
             if not state:
                 return
             # 逐项恢复（仅恢复已知字段）
-            bool_fields = ["show_rgb", "show_depth", "split_vertical",
-                           "detection_enabled", "show_roi", "filters_enabled",
-                           "laser_enabled", "auto_range"]
+            bool_fields = ["show_rgb", "show_depth", "split_vertical", "auto_range"]
             for k in bool_fields:
                 if k in state and isinstance(state[k], bool):
                     setattr(self, k, state[k])
-            if "depth_display_mode" in state and state["depth_display_mode"] in ("height_map", "raw_depth"):
-                self.depth_display_mode = state["depth_display_mode"]
             if "cmap_min" in state and isinstance(state["cmap_min"], (int, float)):
                 self.cmap_min = float(state["cmap_min"])
             if "cmap_max" in state and isinstance(state["cmap_max"], (int, float)):
@@ -583,11 +493,6 @@ class D435Viewer:
                 "show_rgb": self.show_rgb,
                 "show_depth": self.show_depth,
                 "split_vertical": self.split_vertical,
-                "detection_enabled": self.detection_enabled,
-                "show_roi": self.show_roi,
-                "depth_display_mode": self.depth_display_mode,
-                "filters_enabled": self.filters_enabled,
-                "laser_enabled": self.laser_enabled,
                 "auto_range": self.auto_range,
                 "cmap_min": self.cmap_min,
                 "cmap_max": self.cmap_max,
@@ -604,7 +509,7 @@ class D435Viewer:
     # 顶部工具栏
     # ================================================================
     def _build_toolbar_buttons(self):
-        """构建工具栏按钮定义列表
+        """构建工具栏按钮定义列表（仅预览相关，无业务开关）
         格式: (label, action_id, button_type, is_toggle_or_options, get_state_fn)
         button_type: "toggle" | "action" | "dropdown"
         """
@@ -613,11 +518,6 @@ class D435Viewer:
             ("RGB",    "toggle_rgb",    "toggle",  None,           lambda: self.show_rgb),
             ("Depth",  "toggle_depth",  "toggle",  None,           lambda: self.show_depth),
             ("排列",   "cycle_split",   "action",  None,           None),
-            ("检测",   "toggle_detect", "toggle",  None,           lambda: self.detection_enabled),
-            ("ROI",    "toggle_roi",    "toggle",  None,           lambda: self.show_roi),
-            ("深度类型","toggle_depth","toggle",  None,           lambda: self.depth_display_mode == "height_map"),
-            ("滤波",   "toggle_filter", "toggle",  None,           lambda: self.filters_enabled),
-            ("激光",   "toggle_laser",  "toggle",  None,           lambda: self.laser_enabled),
             ("暂停",   "toggle_pause",  "toggle",  None,           lambda: self.is_paused),
             ("Zoom+",  "zoom_in",       "action",  None,           None),
             ("Zoom-",  "zoom_out",      "action",  None,           None),
@@ -767,23 +667,6 @@ class D435Viewer:
             self.show_depth = not self.show_depth; needs_save = True
         elif action_id == "cycle_split":
             self.split_vertical = not self.split_vertical; needs_save = True
-        elif action_id == "toggle_detect":
-            self.detection_enabled = not self.detection_enabled; needs_save = True
-        elif action_id == "toggle_roi":
-            self.show_roi = not self.show_roi; needs_save = True
-        elif action_id == "toggle_depth_mode":
-            self.depth_display_mode = "raw_depth" if self.depth_display_mode == "height_map" else "height_map"; needs_save = True
-        elif action_id == "toggle_filter":
-            self.filters_enabled = not self.filters_enabled; needs_save = True
-        elif action_id == "toggle_laser":
-            self.laser_enabled = not self.laser_enabled; needs_save = True
-            if self.pipeline_running and self.camera_type == "realsense":
-                try:
-                    depth_sensor = self.pipeline.get_active_profile().get_device().first_depth_sensor()
-                    if depth_sensor.supports(rs.option.emitter_enabled):
-                        depth_sensor.set_option(rs.option.emitter_enabled, 1.0 if self.laser_enabled else 0.0)
-                except Exception as e:
-                    log.warning(f"切换激光发射器状态失败: {e}")
         elif action_id == "toggle_pause":
             self.is_paused = not self.is_paused
         elif action_id == "zoom_in":
@@ -904,9 +787,9 @@ class D435Viewer:
         content_h = 576
 
         print("\n" + "=" * 68)
-        print(" D435/USB 相机诊断工具 (未连接)")
-        print("   顶部: 相机类型 → 分辨率 → [开启] → 其他功能按钮")
-        print("   键盘: [Space]暂停 | [O]ROI | [D]检测 | [F]滤波 | [L]激光 | [Q/ESC]退出")
+        print(" D435/USB 相机纯预览工具 (未连接)")
+        print("   顶部: 相机类型 → 分辨率 → [开启] → 预览控制按钮")
+        print("   键盘: [Space]暂停 | [V]排列 | [A]自动色阶 | [Q/ESC]退出")
         print("=" * 68 + "\n")
 
         fps_counter = 0
@@ -971,13 +854,7 @@ class D435Viewer:
                     h, w = color_image.shape[:2]
                     depth_image = np.zeros((h, w), dtype=np.uint16)
 
-                # 2. 传送带基准平面拟合与纠偏相对高度图渲染 (仅 RealSense)
-                current_plane_coeff = self.analyzer.fit_table_plane(depth_image)
-                pitch_deg, roll_deg, tilt_deg = self.analyzer.get_table_tilt_angles(current_plane_coeff)
-
-                height_colormap = self.analyzer.render_height_map(depth_image, current_plane_coeff, max_h_mm=self.max_height_mm)
-                self.current_height_colormap = height_colormap.copy()
-
+                # 2. 深度热力图渲染 (相机原生绝对深度)
                 depth_meters = depth_image.astype(float) * 0.001
                 if self.auto_range:
                     valid_mask = (depth_image > 200) & (depth_image < 1500)
@@ -991,31 +868,10 @@ class D435Viewer:
                     act_min, act_max = self.cmap_min, self.cmap_max
 
                 norm = np.clip((act_max - depth_meters) / max(0.005, (act_max - act_min)) * 255.0, 0, 255).astype(np.uint8)
-                raw_depth_colormap = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
-                raw_depth_colormap[depth_image == 0] = (25, 25, 25)
+                depth_colormap = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+                depth_colormap[depth_image == 0] = (25, 25, 25)
 
-                if self.depth_display_mode == "height_map":
-                    depth_colormap = height_colormap
-                else:
-                    depth_colormap = raw_depth_colormap
-
-                # 3. 芦笋特征提取
-                raw_color_for_save = color_image.copy()
-                if self.detection_enabled:
-                    try:
-                        self.latest_targets = self.analyzer.analyze(color_image, depth_image)
-                        display_color_image = self.analyzer.draw_detections(color_image, self.latest_targets)
-                    except Exception as e:
-                        curr_t = time.time()
-                        if getattr(self, '_last_err_print_t', 0) + 3.0 < curr_t:
-                            self._last_err_print_t = curr_t
-                            log.warning(f"\n感知解算发生异常: {e}")
-                        display_color_image = color_image.copy()
-                else:
-                    display_color_image = color_image.copy()
-
-                if self.show_roi:
-                    self.draw_roi_bounds(display_color_image)
+                display_color_image = color_image.copy()
 
                 # 4. 鼠标探针测距
                 target_pt = self.selected_point if self.selected_point else (self.hover_x, self.hover_y)
@@ -1104,34 +960,6 @@ class D435Viewer:
                 # [V] 排列切换
                 elif key in [ord('v'), ord('V')]:
                     self.split_vertical = not self.split_vertical
-
-                # [O] ROI
-                elif key in [ord('o'), ord('O')]:
-                    self.show_roi = not self.show_roi
-
-                # [H] 深度类型
-                elif key in [ord('h'), ord('H')]:
-                    self.depth_display_mode = "raw_depth" if self.depth_display_mode == "height_map" else "height_map"
-
-                # [D] 检测
-                elif key == ord('d'):
-                    self.detection_enabled = not self.detection_enabled
-
-                # [F] 滤波
-                elif key == ord('f'):
-                    self.filters_enabled = not self.filters_enabled
-
-                # [L] 激光
-                elif key == ord('l'):
-                    self._execute_action("toggle_laser")
-
-                # [S] 抓拍
-                elif key == ord('s'):
-                    self.save_snapshot(raw_color_for_save, depth_image, depth_colormap, getattr(self, 'current_height_colormap', None))
-
-                # [G] G-code
-                elif key == ord('g'):
-                    self._print_gcode_or_diag(color_image, depth_image)
 
                 # [A] Auto-Range
                 elif key == ord('a'):
@@ -1223,15 +1051,6 @@ class D435Viewer:
         """构建状态行文字"""
         parts = []
 
-        # 标定状态
-        tag_info = getattr(self.analyzer, 'last_tag_info', {})
-        if tag_info and tag_info.get("static_tags_count", 0) >= 2:
-            parts.append(f"[TAG {tag_info['static_tags_count']}标靶]")
-        elif getattr(self.analyzer, 'is_hand_eye_calibrated', False):
-            parts.append("[手眼标定OK]")
-        else:
-            parts.append("[未标定]")
-
         # 视图/排列
         view = f"{'上下' if self.split_vertical else '左右'}排列" if (self.show_rgb and self.show_depth) else \
                ("仅RGB" if self.show_rgb else "仅Depth")
@@ -1241,80 +1060,16 @@ class D435Viewer:
         if self.is_paused:
             parts.append("[PAUSED]")
 
-        # 检出数 & FPS
-        if self.detection_enabled:
-            parts.append(f"检出:{len(getattr(self, 'latest_targets', []))}")
+        # FPS
         parts.append(f"FPS:{fps:.0f}")
 
-        # 深度类型
-        parts.append("高度图" if self.depth_display_mode == "height_map" else "原生深度")
+        # 深度色阶
+        if self.auto_range:
+            parts.append("色阶:自动")
+        else:
+            parts.append(f"色阶:{self.cmap_min:.2f}~{self.cmap_max:.2f}m")
 
         return " | ".join(parts)
-
-    def _print_gcode_or_diag(self, color_image, depth_image):
-        """[G] 打印顶层 G-code 或执行诊断"""
-        topmost = next((t for t in self.latest_targets if t.is_topmost), None) if self.detection_enabled else None
-        if topmost:
-            print("\n" + topmost.generate_gcode(safe_z=self.safe_z, drop_x=self.drop_x, drop_y=self.drop_y) + "\n")
-            return
-
-        # 鼠标点选示教点
-        if self.selected_point is not None:
-            px, py = self.selected_point
-            if py < depth_image.shape[0] and px < depth_image.shape[1]:
-                d_val = float(depth_image[py, px])
-                if d_val > 0 and hasattr(self.analyzer, 'fx') and self.analyzer.fx:
-                    z_cam = d_val
-                    x_cam = (px - self.analyzer.cx) * z_cam / self.analyzer.fx
-                    y_cam = (py - self.analyzer.cy) * z_cam / self.analyzer.fy
-                    manual_t = AsparagusTarget(
-                        id=999, center_px=(float(px), float(py)), length_px=200.0, diam_px=20.0,
-                        yaw_deg=0.0, axis_vector=(1.0, 0.0),
-                        box_corners=np.zeros((4, 2), dtype=np.int32),
-                        contour=np.zeros((1, 1, 2), dtype=np.int32),
-                        length_mm=180.0, diam_mm=15.0,
-                        grip_x=round(x_cam, 1), grip_y=round(y_cam, 1), grip_z=round(z_cam, 1),
-                        z_top=round(z_cam, 1), rel_height_mm=25.0,
-                        robot_x=round(x_cam, 1), robot_y=round(y_cam, 1), robot_z=25.0,
-                        robot_r=0.0, is_topmost=True, calibration_source="uncalibrated"
-                    )
-                    log.info("\n根据鼠标点选示教点生成 G-code:")
-                    print(manual_t.generate_gcode(safe_z=self.safe_z, drop_x=self.drop_x, drop_y=self.drop_y) + "\n")
-                    return
-
-        # 诊断
-        print("\n" + "=" * 70)
-        print("[!] 未检测到芦笋目标，执行现场感知诊断...")
-        print("-" * 70)
-        if hasattr(self.analyzer, 'diagnose'):
-            print(self.analyzer.diagnose(color_image, depth_image))
-        else:
-            print("诊断功能不可用")
-        print("=" * 70 + "\n")
-
-    def save_snapshot(self, color_img, depth_raw, depth_color, height_color=None):
-        """抓拍并保存当前帧数据 (含彩色图、原生深度图、纠偏高度图、原始点云矩阵)"""
-        save_dir = os.path.join("data", "snapshots")
-        os.makedirs(save_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        rgb_path = os.path.join(save_dir, f"color_{ts}.png")
-        depth_vis_path = os.path.join(save_dir, f"depth_vis_{ts}.png")
-        height_vis_path = os.path.join(save_dir, f"height_vis_{ts}.png")
-        depth_raw_path = os.path.join(save_dir, f"depth_raw_{ts}.npy")
-
-        cv2.imwrite(rgb_path, color_img)
-        cv2.imwrite(depth_vis_path, depth_color)
-        if height_color is not None:
-            cv2.imwrite(height_vis_path, height_color)
-        np.save(depth_raw_path, depth_raw)
-
-        log.info(f"\n[SNAPSHOT] 数据已抓拍保存:")
-        log.info(f"  -> 彩色图:   {rgb_path}")
-        log.info(f"  -> 深度热力: {depth_vis_path}")
-        if height_color is not None:
-            log.info(f"  -> 纠偏高度: {height_vis_path}")
-        log.info(f"  -> 原始深度: {depth_raw_path} (uint16 mm)")
 
 
 if __name__ == "__main__":

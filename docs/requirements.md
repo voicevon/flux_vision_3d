@@ -85,11 +85,11 @@
 | FR-5.2 | 沿长轴扫描截面：平均外径 $D_{mm}$, 弧长展开长度 $L_{mm}$, 直线度 $S$ |
 | FR-5.3 | 分级映射 → `Target ID: 1~8` |
 
-### FR-6 手眼标定与世界坐标变换
+### FR-6 世界坐标变换与手眼矩阵
 
 | 编号 | 需求 |
 | :--- | :--- |
-| FR-6.1 | Eye-to-Hand 标定：$P_{scara} = T_{cam}^{scara} \cdot P_{cam}$ |
+| FR-6.1 | Eye-to-Hand 变换：$P_{scara} = T_{cam}^{scara} \cdot P_{cam}$；$T_{cam}^{scara}$ 优先由 AprilTag 建图路线解算，兜底层级消费 config.yaml 手工矩阵 |
 | FR-6.2 | 相机系夹角 $\theta$ 折算为 SCARA 世界系角度 $R_{world}$ |
 | FR-6.3 | **Tag 0 动原点解耦**：Tag 0 仅用于建图原点，运行时禁止随臂旋转动态修改世界原点 |
 | FR-6.4 | **大跨距基线标定**：两标靶中心距 $\ge 500\text{mm}$，将测量误差占比压至 $0.1\%$ |
@@ -136,7 +136,7 @@
 | :--- | :--- | :--- |
 | FR-11.1 | **工具卡片裁剪与编号对齐** | 「Tag 标定流水线」分类移除「离线精度体检台 (LOO盲测)」与「机械臂追踪验证 (Tag ID=2)」两张卡片，二者底层工具代码一并彻底移除（含其专属测试）；后续所有卡片编号顺次前移，保持编号与卡片顺序严格一致。 |
 | FR-11.2 | **单一启动快捷键** | 每张卡片仅对应一个启动快捷键：已有数字快捷键的卡片一律使用数字键，移除字母热键（含卡片副标题的字母徽章前缀与快捷键提示文案中的"或 [字母]"）；无数字快捷键的卡片保留其原有单一字母快捷键。工具运行界面内部的功能按键不受本需求约束。 |
-| FR-11.3 | **示教标定卡片裁剪** | 「[H] SCARA 示教标定 (接触式)」卡片从 Dashboard 移除（其底层 `tools/calibration/hand_eye_calibration.py` 仍保留作为 cli_menu 标定专区内的备用入口，见 architecture.md §3.3）；方向键导航与组标题渲染同步调整。 |
+| FR-11.3 | **示教标定卡片裁剪** | 「[H] SCARA 示教标定 (接触式)」卡片从 Dashboard 移除；示教式接触手眼标定向导 (`tools/calibration/hand_eye_calibration.py`) 与技术路线不符，已连同其专属测试一并删除；分析器 hand_eye 兜底层级仅消费 config.yaml 的 `T_cam_to_scara` 矩阵（可由 AprilTag 路线或人工写入），相关防撞安全测试保留；方向键导航与组标题渲染同步调整。 |
 | FR-11.4 | **主标题与命名统一** | Dashboard 主标题由「工业视觉综合控制中心」改为「芦笋上料自动化」，窗口标题与欢迎 Toast 同步；第 1 张卡片更名为「场景管理」（旧名「卡片」），第 6 张卡片简化为「RealSense 诊断」（移除「多视角」前缀）。 |
 
 ### FR-12 Robot 在线跟踪与相机位置校准需求
@@ -168,7 +168,7 @@
 | :--- | :--- | :--- |
 | FR-14.1 | **三模式定义** | Dashboard 工具卡片运行模式分三态：`GUI` (青绿徽章，独立视窗)、`CMD` (灰徽章，外部控制台弹窗)、`TERM` (绿徽章，Dashboard 内嵌终端)；`ToolCardMeta.mode` 参数显式指定，默认由 `is_gui` 自动派生为 GUI 或 CMD。 |
 | FR-14.2 | **内嵌终端面板** | 实现 `src/utils/terminal_panel.py` 作为 Dashboard 内嵌终端面板，支持 ANSI 颜色解析、进度条更新与事件驱动渲染；点击 TERM 模式卡片时右侧动态即时说明大屏 (Live Inspector) 切换为终端视图承载子进程输出。 |
-| FR-14.3 | **TERM 模式承载范围** | 「系统环境深度诊断」与「安装/更新项目依赖」两张卡片使用 TERM 模式，分别承载 `python tools/cli_menu.py --diagnose` 与 `pip install -r requirements.txt` 的实时输出；提供停止按钮、返回按钮与状态指示器。 |
+| FR-14.3 | **TERM 模式承载范围** | 「系统环境深度诊断」与「安装/更新项目依赖」两张卡片使用 TERM 模式，分别承载 `python tools/diagnose_env.py` 与 `pip install -r requirements.txt` 的实时输出；提供停止按钮、返回按钮与状态指示器。 |
 | FR-14.4 | **终端面板单元测试** | 提供 `tests/test_terminal_panel.py` 验证 ANSI 颜色解析、进度条更新与状态切换逻辑。 |
 
 

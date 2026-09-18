@@ -122,7 +122,7 @@ graph TD
         M --> N{"视野内可见已知 Tag 数"}
         N -- "≥ 2" --> O["实时 PnP 解算 T_cam_to_world (tag_online)"]
         N -- "< 2" --> P["沿用上一帧锁定有效位姿 (tag_cached)"]
-        P -- "连续丢标" --> Q["回退至手工接触式手眼标定矩阵 (hand_eye)"]
+        P -- "连续丢标" --> Q["回退至 config.yaml 手工标定矩阵 (hand_eye)"]
     end
 ```
 
@@ -225,8 +225,9 @@ tags:
 | **采图清单画板** | `tools/calibration/tag_manifest_reviewer.py` | **工序 4（交互审核画板）**：原生 GUI 审核画板，鼠标右键上下文菜单（红绿自适应剔除/恢复、局部Refine重算、靶向聚焦）、整帧临时旁路、一键保存并自动触发平差热重载 |
 | **离线标定综合工作站** | `tools/studio/app.py` | **工序 5A（空间建图平差）**：帧序列资产管理、交互审核、两阶段/迭代剪枝 BA 平差、MAD 清洗、Quiver 矢量图与离线精度体检 |
 | **Robot 在线跟踪** | `tools/tracker/app.py` | **工序 5B（在线跟踪与验证）**：真实相机实时解算目标 Tag 世界坐标，机械臂"抬起→平移→下探"安全路径联动跟踪，M114 回读末端实际坐标同屏对比偏差用于相机位置校准 |
-| **接触标定向导** | `tools/calibration/hand_eye_calibration.py` | 备用通道：SCARA 经典接触式点对物理标定向导 (极端无标靶场景) |
 | **在线定位器** | `src/vision/tag_localizer.py` | 运行时每帧毫秒级检测已知标靶，输出相机外参 $T_{cam\_to\_world}$ |
+
+> 注：原示教式接触手眼标定向导 (`hand_eye_calibration.py`) 与 AprilTag 技术路线不符，已移除；无标靶兜底统一走 config.yaml 手工矩阵。
 
 ---
 

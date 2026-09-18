@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title flux_vision_3d Control Terminal
+title flux_vision_3d Dashboard
 
 where python >nul 2>&1
 if %errorlevel% neq 0 (
@@ -15,7 +15,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-python -X utf8 tools\cli_menu.py %*
+python -X utf8 tools\gui_launcher.py %*
 
 if %errorlevel% neq 0 (
     echo.
