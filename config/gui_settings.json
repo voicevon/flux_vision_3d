@@ -1,6 +1,37 @@
 {
-  "scale_pct": 120,
-  "canvas_w": 1920,
-  "canvas_h": 1017,
-  "updated_at": "2026-09-17 21:24:53"
+  "scale_pct": 100,
+  "canvas_w": 1280,
+  "canvas_h": 1000,
+  "updated_at": "2026-09-18 07:25:11",
+  "gui_launcher": {
+    "scale_pct": 110,
+    "canvas_w": 1408,
+    "canvas_h": 1061,
+    "updated_at": "2026-09-18 08:09:34"
+  },
+  "robot_online_tracker": {
+    "scale_pct": 100,
+    "canvas_w": 1280,
+    "canvas_h": 720,
+    "updated_at": "2026-09-18 08:10:02",
+    "viewer_state": {
+      "camera_type": "realsense",
+      "resolution": "1920x1080",
+      "show_plane": false,
+      "plane_z": 0,
+      "robot_port": "COM11"
+    }
+  },
+  "scara_debug": {
+    "scale_pct": 100,
+    "canvas_w": 1280,
+    "canvas_h": 800,
+    "updated_at": "2026-09-18 07:55:02"
+  },
+  "scene_hub": {
+    "scale_pct": 60,
+    "canvas_w": 768,
+    "canvas_h": 432,
+    "updated_at": "2026-09-18 08:01:00"
+  }
 }

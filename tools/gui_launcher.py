@@ -12,7 +12,6 @@
 
 import os
 import sys
-import json
 import time
 import argparse
 import subprocess
@@ -29,7 +28,9 @@ if PROJECT_ROOT not in sys.path:
 GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
 
 from src.calibration.scene_manager import CalibrationSceneManager
-from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
+from src.utils.gui_theme import GuiTheme
+from src.utils.gui_window_manager import GuiWindowManager
+from src.utils.text_rendering import draw_text, get_cached_font, put_text
 from src.utils.logger import get_logger
 from tools.env_utils import check_env_status
 
@@ -101,14 +102,11 @@ class ToolCardMeta:
 
 
 def build_tools_catalog() -> List[ToolCardMeta]:
-    """构建全系统核心工具目录：12 张卡片，四大功能分组 (A场景→B Tag标定→C示教标定→D生产调试)"""
+    """构建全系统核心工具目录：11 张卡片，三大功能分组 (A场景→B Tag标定→D生产调试)"""
 
     COLOR_A = (195, 155, 45)   # A 场景总控  : 琥珀金 (Amber)
     COLOR_B = (65,  175, 160)  # B Tag标定   : 精密工业深青 (Teal)
-    COLOR_C = (220, 145,  60)  # C 示教标定  : 暖橙 (Manual Teach)
     COLOR_D = (90,  140, 195)  # D 生产调试  : 钢蓝 (Steel Blue)
-    COLOR_E = (80,  190, 115)  # 预留色彩槽
-    COLOR_F = (130, 145, 165)  # 预留色彩槽
 
     catalog = [
         # ===== A — 场景总控 (1张，顶部全宽) =====
@@ -218,28 +216,6 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             inputs=["RealSense D435 或 USB 摄像头", "当前场景世界坐标地图 tags_map.yaml", "机械臂串口 COM3 (config.yaml robot)"],
             outputs=["屏幕实时世界坐标显示、机械臂末端到位偏差统计"],
             quick_tips="快捷键: [5] 启动 | 界面内 [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定世界坐标系 | [C] 连接机械臂 | [T] 触发跟踪 | [X] 退出"
-        ),
-
-        # ===== C — 示教标定 (1张，与 Tag 标定并列的独立路线) =====
-        ToolCardMeta(
-            key_id="hand_eye_calibration",
-            shortcut="H",
-            title="SCARA 示教标定 (接触式)",
-            subtitle="[H] Kabsch/SVD 点对刚体配准/极端无Tag场景",
-            category="C — 示教标定 (接触式)",
-            is_gui=False,
-            command=[sys.executable, "tools/calibration/hand_eye_calibration.py"],
-            tag_color=COLOR_C,
-            summary="【独立路线 · 示教标定】与 Tag 标定并列的接触式方案：示教 4~6 个物理对应点对，Kabsch/SVD 求解相机→SCARA 变换。",
-            details=[
-                "经典 Kabsch / Horn / Umeyama SVD 最小二乘刚体配准",
-                "操作员示教 N 个点对 (相机坐标 ↔ SCARA 基座坐标, N≥3, 推荐 4~6)",
-                "自动计算 R、t 与 RMSE，一键回写 config.yaml T_cam_to_scara",
-                "适用：Tag 因反光/遮挡/极端角度无法识别时的保底方案"
-            ],
-            inputs=["操作员手动示教的点对坐标"],
-            outputs=["config.yaml 更新、终端打印 RMSE 与配准质量"],
-            quick_tips="快捷键: [H] 启动 (控制台) | 推荐 4~6 个非共面点对"
         ),
 
         # ===== D — 生产调试 =====
@@ -379,33 +355,33 @@ def build_tools_catalog() -> List[ToolCardMeta]:
 class GuiLauncherApp:
     """3D Vision 统一 GUI 控制中心主应用"""
 
-    # 沉稳专业的高级暗色系工业调色板 (克制、低饱和、冷峻科技)
-    COLOR_BG = (15, 17, 21)             # 钛黑背景 (#0F1115)
-    COLOR_CARD_BG = (22, 26, 33)        # 碳灰底色 (#161A21)
-    COLOR_CARD_HOVER = (30, 38, 50)     # 悬停轻提亮
-    COLOR_CARD_SEL = (28, 44, 58)       # 选中微蓝底色
-    COLOR_BORDER = (38, 46, 58)         # 沉稳边框线
-    COLOR_BORDER_HOVER = (0, 220, 180)  # 悬停微光冷青
-    COLOR_BORDER_SEL = (0, 240, 200)    # 选中发光青冷线
-    COLOR_TEXT_TITLE = (242, 245, 248)  # 纯白冷色
-    COLOR_TEXT_SUB = (155, 170, 185)    # 冷银灰副标题
-    COLOR_TEXT_MUTED = (115, 130, 145)  # 辅助提示暗灰
-    COLOR_ACCENT = (0, 210, 180)        # 科技主强调色 (冰魄冷青)
-    COLOR_GOLD = (210, 175, 60)         # 关键生产资产点缀金
+    # 主题调色板统一取自 GuiTheme 单源 (暗色工业风; 明暗切换改 src/utils/gui_theme.py)
+    COLOR_BG = GuiTheme.BG              # 钛黑背景
+    COLOR_CARD_BG = GuiTheme.CARD_BG    # 碳灰底色
+    COLOR_CARD_HOVER = GuiTheme.CARD_HOVER   # 悬停轻提亮
+    COLOR_CARD_SEL = GuiTheme.CARD_SEL  # 选中微蓝底色
+    COLOR_BORDER = GuiTheme.BORDER      # 沉稳边框线
+    COLOR_BORDER_HOVER = GuiTheme.BORDER_HOVER  # 悬停微光冷青
+    COLOR_BORDER_SEL = GuiTheme.BORDER_SEL      # 选中发光青冷线
+    COLOR_TEXT_TITLE = GuiTheme.TEXT    # 纯白冷色
+    COLOR_TEXT_SUB = GuiTheme.TEXT_SUB  # 冷银灰副标题
+    COLOR_TEXT_MUTED = GuiTheme.TEXT_MUTED  # 辅助提示暗灰
+    COLOR_ACCENT = GuiTheme.ACCENT      # 科技主强调色 (冰魄冷青)
+    COLOR_GOLD = GuiTheme.GOLD          # 关键生产资产点缀金
 
     def __init__(self, settings_file: Optional[str] = None):
         self._settings_file = settings_file or GUI_SETTINGS_FILE
         self._is_active = True
-        self.canvas_w = 1280
-        self.canvas_h = 1000
         # 窗口内部 key 标识使用纯英文，通过 Windows API 设定中文标题杜绝乱码
         self.window_name = "flux_vision_3d_suite_dashboard"
         self._running = True
-        self._hwnd = None
-        self._last_zoom_action = 0.0
-        self._force_ctrl_pressed = False
-        self._need_save = False
-        self._last_resize_time = 0.0
+
+        # 视口/缩放/窗口偏好统一委托 GuiWindowManager 单源管理 (基准 1280x1000)
+        self._base_w = 1280
+        self._base_h = 1000
+        self.win_mgr = GuiWindowManager(
+            app_id="gui_launcher", base_w=self._base_w, base_h=self._base_h,
+            settings_file=self._settings_file)
 
         self.scene_mgr = CalibrationSceneManager()
         self.tools = build_tools_catalog()
@@ -415,14 +391,6 @@ class GuiLauncherApp:
         # 子工具前台运行与暗化挂起态
         self.is_subtool_running: bool = False
         self.running_tool_meta: Optional[ToolCardMeta] = None
-
-        # 视口与真矢量放大镜缩放控制 (基准 1280x830)
-        self._base_w   = 1280
-        self._base_h   = 1000
-        self.scale_pct = 100   # 缩放百分比 (50% ~ 200%)
-
-        # 加载上次记忆的用户偏好设置 (自动恢复缩放与窗口尺寸)
-        self._load_settings()
 
         self.mouse_x = -1
         self.mouse_y = -1
@@ -436,44 +404,44 @@ class GuiLauncherApp:
         self.system_status = {}
         self.refresh_system_status()
 
-    def _load_settings(self):
-        """从配置文件读取上次记忆的缩放比例与窗口尺寸"""
-        target_file = getattr(self, "_settings_file", GUI_SETTINGS_FILE)
-        if os.path.exists(target_file):
-            try:
-                with open(target_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if "scale_pct" in data:
-                    self.scale_pct = max(50, min(200, int(data["scale_pct"])))
-                s = self.scale_pct / 100.0
-                saved_w = data.get("canvas_w")
-                saved_h = data.get("canvas_h")
-                if saved_w and saved_h and int(saved_w) >= 480 and int(saved_h) >= 270:
-                    self.canvas_w = int(saved_w)
-                    self.canvas_h = int(saved_h)
-                else:
-                    self.canvas_w = max(640, int(self._base_w * s))
-                    self.canvas_h = max(360, int(self._base_h * s))
-            except Exception as e:
-                log.warning(f"加载 GUI 界面设置失败，使用默认尺寸: {e}")
+    # ---- 视口属性委托 GuiWindowManager 单源 (renderer 全部经此读写) ----
+    @property
+    def scale_pct(self) -> int:
+        return self.win_mgr.scale_pct
+
+    @scale_pct.setter
+    def scale_pct(self, value: int):
+        self.win_mgr.scale_pct = value
+
+    @property
+    def canvas_w(self) -> int:
+        return self.win_mgr.canvas_w
+
+    @canvas_w.setter
+    def canvas_w(self, value: int):
+        self.win_mgr.canvas_w = value
+
+    @property
+    def canvas_h(self) -> int:
+        return self.win_mgr.canvas_h
+
+    @canvas_h.setter
+    def canvas_h(self, value: int):
+        self.win_mgr.canvas_h = value
+
+    @property
+    def _force_ctrl_pressed(self) -> bool:
+        return self.win_mgr._force_ctrl_pressed
+
+    @_force_ctrl_pressed.setter
+    def _force_ctrl_pressed(self, value: bool):
+        self.win_mgr._force_ctrl_pressed = value
 
     def _save_settings(self):
-        """持久化保存当前缩放比例与窗口尺寸到目标配置文件"""
+        """持久化保存当前缩放比例与窗口尺寸 (委托 GuiWindowManager, 支持多应用隔离)"""
         if not getattr(self, "_is_active", False):
             return
-        try:
-            target_file = getattr(self, "_settings_file", GUI_SETTINGS_FILE)
-            os.makedirs(os.path.dirname(target_file), exist_ok=True)
-            payload = {
-                "scale_pct": self.scale_pct,
-                "canvas_w": self.canvas_w,
-                "canvas_h": self.canvas_h,
-                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
-            }
-            with open(target_file, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            log.warning(f"保存 GUI 界面设置失败: {e}")
+        self.win_mgr.save_settings()
 
     def set_toast(self, msg: str, duration: float = 3.5):
         """设置底部提示消息"""
@@ -489,63 +457,10 @@ class GuiLauncherApp:
             self.system_status = {}
 
     def _apply_zoom(self, delta_pct: int, reset: bool = False):
-        """执行全局真矢量放大镜缩放：卡片尺寸、字号、间距等比矢量缩放，并自动持久化记忆"""
-        if reset:
-            self.scale_pct = 100
-        else:
-            self.scale_pct = max(50, min(200, self.scale_pct + delta_pct))
-
-        s = self.scale_pct / 100.0
-        rec_w = max(640, int(self._base_w * s))
-        rec_h = max(360, int(self._base_h * s))
-        self.canvas_w = rec_w
-        self.canvas_h = rec_h
-        try:
-            cv2.resizeWindow(self.window_name, rec_w, rec_h)
-        except Exception:
-            pass  # GUI 可选功能：调整窗口尺寸失败不影响缩放逻辑
-        self._save_settings()
-        self.set_toast(f"矢量放大镜: {self.scale_pct}%  (已自动记忆大小，Ctrl+0 复位)", duration=2.2)
-
-    def _poll_hardware_zoom(self):
-        """利用 Win32 原生 GetAsyncKeyState 硬件物理按键探测，彻底绕过中文输入法拦截"""
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes
-            u32 = ctypes.windll.user32
-            # 当窗口获得焦点时才响应物理热键，防止在其他程序中误触
-            fg_hwnd = u32.GetForegroundWindow()
-            if self._hwnd and fg_hwnd != self._hwnd:
-                return
-
-            now = time.time()
-            if now - self._last_zoom_action < 0.18:  # 180ms 防抖冷却，按住平滑递增，单点不跳级
-                return
-
-            # 检测 Ctrl 物理按压状态 (VK_CONTROL = 0x11)
-            ctrl_pressed = bool(u32.GetAsyncKeyState(0x11) & 0x8000)
-            if not ctrl_pressed:
-                return
-
-            # 放大: 主键盘 VK_OEM_PLUS (0xBB, 187) 或小键盘 VK_ADD (0x6B, 107)
-            zoom_in = bool((u32.GetAsyncKeyState(0xBB) & 0x8000) or (u32.GetAsyncKeyState(0x6B) & 0x8000))
-            # 缩小: 主键盘 VK_OEM_MINUS (0xBD, 189) 或小键盘 VK_SUBTRACT (0x6D, 109)
-            zoom_out = bool((u32.GetAsyncKeyState(0xBD) & 0x8000) or (u32.GetAsyncKeyState(0x6D) & 0x8000))
-            # 复位: 主键盘 '0' (0x30, 48) 或小键盘 '0' (0x60, 96)
-            zoom_reset = bool((u32.GetAsyncKeyState(0x30) & 0x8000) or (u32.GetAsyncKeyState(0x60) & 0x8000))
-
-            if zoom_in:
-                self._apply_zoom(+10)
-                self._last_zoom_action = now
-            elif zoom_out:
-                self._apply_zoom(-10)
-                self._last_zoom_action = now
-            elif zoom_reset:
-                self._apply_zoom(0, reset=True)
-                self._last_zoom_action = now
-        except Exception:
-            pass  # 热路径：每帧轮询硬件按键，静默避免日志刷屏
+        """执行全局真矢量缩放 (委托 GuiWindowManager 单源)：卡片尺寸、字号、间距等比矢量缩放并持久化"""
+        _, hint = self.win_mgr.apply_zoom(delta_pct, reset=reset)
+        if hint:
+            self.set_toast(hint, duration=2.2)
 
     def _present_canvas(self):
         """在当前物理窗口分辨率下原生呈现矢量画布 (零位图拉伸，零锯齿)"""
@@ -553,57 +468,25 @@ class GuiLauncherApp:
         cv2.imshow(self.window_name, canvas)
 
     def run(self):
-        """主事件循环 (带 Windows 原生标题 Unicode 注入与全屏真矢量动态排版重绘)"""
-        import atexit
-        atexit.register(self._save_settings)
+        """主事件循环 (GuiWindowManager 单源窗口管理 + 全屏真矢量动态排版重绘)"""
+        self.win_mgr.setup_window(self.window_name, mouse_callback=self._on_mouse)
+        self.win_mgr.set_unicode_title("flux_vision_3d | 3D 视觉综合控制中心 (Suite Dashboard)")
 
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, self.canvas_w, self.canvas_h)
-        cv2.setMouseCallback(self.window_name, self._on_mouse)
-
-        # 解决 Windows 标题栏乱码：使用原生 Win32 Unicode API 注入中文标题
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                self._hwnd = ctypes.windll.user32.FindWindowW(None, self.window_name)
-                if self._hwnd:
-                    ctypes.windll.user32.SetWindowTextW(self._hwnd, "flux_vision_3d | 3D 视觉综合控制中心 (Suite Dashboard)")
-            except Exception:
-                self._hwnd = None
-
-        # 首次呈现并确保窗口尺寸精准生效
+        # 首次呈现
         self._present_canvas()
-        try:
-            cv2.resizeWindow(self.window_name, self.canvas_w, self.canvas_h)
-        except Exception:
-            pass  # GUI 可选功能：初始窗口尺寸设置失败不影响主循环
 
         while self._running:
-            # 0. 窗口关闭检测：若用户直接点击右上角红叉 [X]，安全退出并保存偏好
-            try:
-                if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
-                    break
-            except Exception:
+            # 0. 窗口关闭检测：若用户直接点击右上角红叉 [X]，安全退出
+            if not self.win_mgr.is_window_alive():
                 break
 
             # 1. 硬件级按键轮询 (绕过中文输入法对加减号的拦截)
-            self._poll_hardware_zoom()
+            hw_changed, hw_toast = self.win_mgr.poll_hardware_zoom()
+            if hw_changed and hw_toast:
+                self.set_toast(hw_toast, duration=2.2)
 
-            # 2. 动态检测窗口实际物理大小 (支持用户手动拖拽拉伸窗口边框，原生矢量重绘)
-            rect = cv2.getWindowImageRect(self.window_name)
-            if rect and len(rect) >= 4:
-                cur_w, cur_h = rect[2], rect[3]
-                if cur_w >= 480 and cur_h >= 270:
-                    if cur_w != self.canvas_w or cur_h != self.canvas_h:
-                        self.canvas_w = cur_w
-                        self.canvas_h = cur_h
-                        self._need_save = True
-                        self._last_resize_time = time.time()
-
-            # 拖拽边框防抖保存：尺寸静止 0.35s 后自动落盘持久化
-            if self._need_save and (time.time() - self._last_resize_time > 0.35):
-                self._save_settings()
-                self._need_save = False
+            # 2. 动态检测窗口拖拽拉伸尺寸，防抖 0.35s 后自动落盘持久化
+            self.win_mgr.sync_window_size()
 
             # 3. 呈现真矢量画布 (无任何 cv2.resize 插值，字形完美)
             self._present_canvas()
@@ -632,23 +515,12 @@ class GuiLauncherApp:
         self.mouse_x = x
         self.mouse_y = y
 
-        # ── 1. Ctrl + 鼠标滚轮缩放 (最顺手的放大镜交互) ─────────────────────
-        if event == 10:  # cv2.EVENT_MOUSEWHEEL
-            ctrl_pressed = False
-            if getattr(self, "_force_ctrl_pressed", False):
-                ctrl_pressed = True
-            elif sys.platform == "win32":
-                try:
-                    import ctypes
-                    ctrl_pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
-                except Exception:
-                    pass  # GUI 可选功能：Ctrl 键状态探测失败按未按下处理
-            if ctrl_pressed:
-                if flags > 0:
-                    self._apply_zoom(+10)
-                else:
-                    self._apply_zoom(-10)
-                return
+        # ── 1. Ctrl + 鼠标滚轮缩放 (委托 GuiWindowManager 单源处理) ─────────────
+        handled, toast = self.win_mgr.handle_mouse_wheel(event, flags)
+        if toast:
+            self.set_toast(toast, duration=2.2)
+        if handled:
+            return
 
         # 检测鼠标悬停在哪个卡片上（根据当前 scale 坐标直接命中检测）
         card_idx = self._hit_test_cards(x, y)
@@ -666,15 +538,6 @@ class GuiLauncherApp:
                 self._running = False
                 return
 
-            # 右下角“一键启动当前选中工具”按钮 (动态自适应区域)
-            FW = int(370 * s) * 2 + int(12 * s)
-            split_x = int(15 * s) + FW + int(15 * s)
-            px = split_x + int(15 * s)
-            py = int(66 * s)
-            pw = max(int(360 * s), self.canvas_w - px - int(20 * s))
-            ph = max(int(450 * s), self.canvas_h - int(50 * s) - py - int(15 * s))
-            # 点击右侧面板底部启动按钮 —— 已移除按钮，不再需要点击检测
-
             # 点击左侧卡片
             if card_idx != -1:
                 self.selected_tool_idx = card_idx
@@ -691,7 +554,7 @@ class GuiLauncherApp:
                 self._launch_tool(self.tools[card_idx])
 
     def _handle_keyboard(self, raw_key: int):
-        """键盘快捷键响应 (4分组: row0 A全宽, row1-2 B 2×2, row3 C 1张, row4-6 D 2×3)"""
+        """键盘快捷键响应 (3分组: row0 A全宽, rows1-2 B 2×2, rows3-5 D 2×3)"""
         if self.is_subtool_running:
             return  # 子应用运行期间，主视窗处于安全挂起待命态，屏蔽一切按键操作
 
@@ -708,20 +571,17 @@ class GuiLauncherApp:
         # 方向键：将卡片索引映射到 (row, col) 坐标后导航
         # row 0: idx 0 (A)
         # row 1-2: idx 1-4 (B 2×2)
-        # row 3: idx 5 (C, 只有 col 0)
-        # row 4-6: idx 6-10 (D 2×3)
+        # row 3-5: idx 5-10 (D 2×3)
         def idx_to_rc(i: int) -> Tuple[int, int]:
             if i <= 0:
                 return (0, 0)
             if 1 <= i <= 4:   # B 区
                 b = i - 1
                 return (b // 2 + 1, b % 2)
-            if i == 5:        # C 区
-                return (3, 0)
-            if 6 <= i <= 10:  # D 区 2×3
-                d = i - 6
-                return (d // 2 + 4, d % 2)
-            return (6, 0)
+            if 5 <= i <= 10:  # D 区 2×3
+                d = i - 5
+                return (d // 2 + 3, d % 2)
+            return (5, 0)
 
         def rc_to_idx(r: int, c: int) -> int:
             if r == 0:
@@ -729,11 +589,9 @@ class GuiLauncherApp:
             if 1 <= r <= 2:   # B 区
                 base_b = (r - 1) * 2
                 return min(1 + base_b + c, 10)
-            if r == 3:        # C 区只有 col 0
-                return 5
-            if 4 <= r <= 6:   # D 区
-                base_d = (r - 4) * 2
-                return min(6 + base_d + c, 10)
+            if 3 <= r <= 5:   # D 区
+                base_d = (r - 3) * 2
+                return min(5 + base_d + c, 10)
             return 10
 
         row, col = idx_to_rc(self.selected_tool_idx)
@@ -783,46 +641,11 @@ class GuiLauncherApp:
             except Exception:
                 pass  # GUI 可选功能：Ctrl 键状态探测失败按未按下处理
 
-        key_byte = (raw_key & 0xFF)
-        key_word = (raw_key & 0xFFFF)
-        key_char = chr(key_byte).lower() if key_byte < 128 else ""
-
-        # ── 笔记本电脑键盘全面兼容 (支持 =/+ 放大, -/_ 缩小, 0 复位) ───────────────
-        # 1. 放大 (Zoom In):
-        #    - 字符: '=' (笔记本主键盘等号键未按Shift) 或 '+' (笔记本按了Shift)
-        #    - 键码: 主键盘 VK_OEM_PLUS (187) 或小键盘 VK_ADD (107)
-        is_zoom_in = (
-            key_char in ('=', '+') or
-            key_byte in (ord('='), ord('+'), 187, 107) or
-            key_word in (ord('='), ord('+'), 187, 107)
-        )
-
-        # 2. 缩小 (Zoom Out):
-        #    - 字符: '-' (笔记本主键盘减号键未按Shift) 或 '_' (笔记本按了Shift即下划线)
-        #    - 键码: 主键盘 VK_OEM_MINUS (189) 或小键盘 VK_SUBTRACT (109) 或 Ctrl+- 控制字符 31
-        is_zoom_out = (
-            key_char in ('-', '_') or
-            key_byte in (ord('-'), ord('_'), 189, 109, 31) or
-            key_word in (ord('-'), ord('_'), 189, 109, 31)
-        )
-
-        # 3. 复位 100% (Reset):
-        #    - 字符: '0'
-        #    - 键码: VK_0 (48) 或小键盘 VK_NUMPAD0 (96)
-        is_zoom_reset = (
-            key_char == '0' or
-            key_byte in (ord('0'), 48, 96) or
-            key_word in (ord('0'), 48, 96)
-        )
-
-        # 触发缩放：按住 Ctrl 组合键，或小键盘独占 +/- 键
-        if (ctrl_held and (is_zoom_in or is_zoom_out or is_zoom_reset)) or (key_byte in (107, 109)):
-            if is_zoom_in or key_byte == 107:
-                self._apply_zoom(+10)
-            elif is_zoom_out or key_byte == 109:
-                self._apply_zoom(-10)
-            elif is_zoom_reset:
-                self._apply_zoom(0, reset=True)
+        # ── 缩放键委托 GuiWindowManager 单源处理 (笔记本 =/+ -/_ 0 全面兼容) ──────
+        handled, toast = self.win_mgr.handle_keyboard_fallback(raw_key)
+        if toast:
+            self.set_toast(toast, duration=2.2)
+        if handled:
             return
 
         # 若按住 Ctrl 且未命中缩放，拦截避免误触普通单键快捷键
@@ -842,7 +665,6 @@ class GuiLauncherApp:
             '7': "scara_debug",          # D SCARA 机械臂调试
             '8': "asparagus_live",       # D
             # 单字母快捷键 (无数字键卡片)
-            'h': "hand_eye_calibration",
             't': "sys_diagnose_tests",
             'p': "pip_install",
             'x': "open_cmd",
@@ -860,11 +682,10 @@ class GuiLauncherApp:
     def _get_card_rect(self, idx: int) -> Tuple[int, int, int, int]:
         """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
-        布局 (5行，4分组):
+        布局 (5行，3分组):
           row 0   A 场景总控 (全宽, 1张)
           rows 1-2  B Tag 标定流水线 (2×2 = 4张)
-          row 3   C 示教标定 (1张, 左列)
-          rows 4-6  D 生产调试 (2×3 = 6张)
+          rows 3-5  D 生产调试 (2×3 = 6张)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
@@ -885,13 +706,9 @@ class GuiLauncherApp:
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        if idx == 5:          # C: 示教标定 (左列)
+        if 5 <= idx <= 10:    # D: 生产调试 (2×3 = 6张)
+            d = idx - 5
             base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
-            return X0, base_y, CW, CH
-
-        if 6 <= idx <= 11:    # D: 生产调试 (2×3 = 6张)
-            d = idx - 6
-            base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH + CH + GY + LH
             return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
 
         return 0, 0, 0, 0
@@ -924,10 +741,10 @@ class GuiLauncherApp:
                 if sys.platform == "win32":
                     full_cmd_str = " ".join([f'"{c}"' if " " in c else c for c in cmd])
                     wrapper_cmd = f'cmd.exe /c "{full_cmd_str} & echo. & echo [完成] 请按任意键返回控制中心... & pause > nul"'
-                    res = subprocess.run(wrapper_cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                    subprocess.run(wrapper_cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
                     self.set_toast(f"【{tool.title}】执行完毕，控制中心已重新就绪。")
                 else:
-                    res = subprocess.run(cmd)
+                    subprocess.run(cmd)
                     self.set_toast(f"【{tool.title}】执行完毕，控制中心已重新就绪。")
         except Exception as e:
             self.set_toast(f"启动失败: {e}", duration=5.0)
@@ -1044,8 +861,7 @@ class GuiLauncherApp:
         group_headers = [
             (self._get_card_rect(0)[1] - LH,  FW, "A  场景总控",                        (195, 155,  45)),
             (self._get_card_rect(1)[1] - LH,  FW, "B  Tag 标定流水线 (AprilTag)",        ( 65, 175, 160)),
-            (self._get_card_rect(5)[1] - LH,  CW, "C  示教标定 (接触式 · SVD)",          (220, 145,  60)),
-            (self._get_card_rect(6)[1] - LH,  FW, "D  生产调试 (感知/抓取/诊断)",        ( 90, 140, 195)),
+            (self._get_card_rect(5)[1] - LH,  FW, "D  生产调试 (感知/抓取/诊断)",        ( 90, 140, 195)),
         ]
         for hy, hw, label, accent in group_headers:
             cv2.rectangle(canvas, (X0, hy), (X0 + hw, hy + LH - max(1, int(2 * s))), (18, 22, 30), -1)
@@ -1414,7 +1230,7 @@ class GuiLauncherApp:
 
 def main():
     parser = argparse.ArgumentParser(description="3D 视觉综合控制中心 (Suite Dashboard)")
-    args = parser.parse_args()
+    parser.parse_args()
 
     app = GuiLauncherApp()
     app.run()

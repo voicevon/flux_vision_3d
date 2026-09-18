@@ -14,7 +14,9 @@ Dashboard 第 5 张卡片「Robot 在线跟踪」的主工具：
   - 按 [T] 经机械臂串口 (FR-7.1) 以"抬起→平移→下探"安全路径驱动末端跟踪目标 Tag 世界坐标；
   - 到位后 M114 回读末端实际坐标，与视觉解算世界坐标同屏对比偏差 (FR-12.4 相机位置校准)。
 
-工具栏: [相机类型 ▼] [分辨率 ▼] [开启/关闭] [识别] [确定世界坐标系] [XY平面 ▼] [显示已知Tag] [识别 Tag 2] [连接机械臂] [跟踪] ... [退出 X]
+工具栏 (双排, 组间空白分隔):
+  第一排: [相机类型 ▼] [分辨率 ▼] [开启/关闭] | [串口 ▼] [连接机械臂] [M84] [G92] ... [退出 X]
+  第二排: [识别] [确定世界坐标系] [XY平面 ▼] [显示已知Tag] [识别 Tag 2] [跟踪 Tag N]
 快捷键: [S] 一键识别  [P] XY平面下拉  [L] 确定/解除世界坐标系  [A] 显示已知Tag  [R] 识别Tag2  [C] 连接/断开机械臂  [T] 触发跟踪  [X]/[ESC] 退出
 """
 
@@ -41,10 +43,11 @@ if sys.platform == "win32":
 
 from src.calibration.offline_engine import OfflineVerificationEngine
 from src.control.robot_serial import RobotSerial
+from src.utils.gui_window_manager import GuiWindowManager
 from tools.tracker.camera_controller import CameraController
 from tools.tracker.common import (
-    COLOR_ACCENT, COLOR_BG, COLOR_TEXT_SUB, COL_CYAN, COL_YELLOW,
-    TOOLBAR_H, draw_text)
+    COLOR_ACCENT, COLOR_TEXT_SUB, COL_CYAN, COL_YELLOW,
+    TOOLBAR_H, draw_text, list_serial_ports)
 from tools.tracker.renderer import TrackerRenderer
 from src.utils.logger import get_logger
 
@@ -87,12 +90,15 @@ class RobotOnlineTracker:
 
         # 2. 机械臂串口控制器
         self.robot = RobotSerial(port=port or "", baudrate=baudrate)
+        self.port_options = list_serial_ports()   # 工具栏串口下拉选项 (打开下拉时刷新)
+        self.robot_connecting = False             # 机械臂拨号中 (按钮三态: 连接→正在连接→断开)
+        self.robot_cmd_busy = False               # M84/G92 即时指令执行中 (防重入)
 
         # 3. 相机硬件控制器 (类型/分辨率状态机 + 取流启停; GUI 先行, 不自动开相机)
         self.camera = CameraController(self.engine)
 
         # 4. 工具栏状态 (借鉴 d435_viewer: 相机类型 → 分辨率 → 开关; 绘制由 TrackerRenderer 负责)
-        self.active_dropdown = None     # "CAMERA_TYPE_DROPDOWN" | "RES_DROPDOWN" | "PLANE_DROPDOWN" | None
+        self.active_dropdown = None     # "CAMERA_TYPE_DROPDOWN" | "RES_DROPDOWN" | "PLANE_DROPDOWN" | "PORT_DROPDOWN" | None
         self.plane_z = 0                # XY 平面绘制高度 (mm, 下拉框选择)
         # XY 平面高度选项与标注: 锚点档位/标注从世界坐标地图动态生成, 基础档位为固定梯度
         self.anchor_z_labels = {int(round(pos[2])): f" (Tag {tid})"
@@ -107,7 +113,7 @@ class RobotOnlineTracker:
             for z in self.plane_z_choices
         ]
         self.renderer = TrackerRenderer(self)  # UI 渲染器 (工具栏/叠加层/按钮命中表)
-        self._last_canvas_size = None
+        self.win_mgr = GuiWindowManager(app_id="robot_online_tracker")  # 窗口/缩放/偏好单源管理
 
         # 5. 识别与世界系锁定状态 (相机开启默认纯预览, FR-12.5/12.6)
         self.recog_tag2_on = False     # "识别 Tag 2" 乒乓开关 (默认关, 仅识别目标 Tag)
@@ -190,7 +196,7 @@ class RobotOnlineTracker:
 
     # ------------------------------ 工具栏状态持久化 ------------------------------
     def _load_viewer_state(self):
-        """从 config/gui_settings.json 恢复相机类型与分辨率选择"""
+        """从 config/gui_settings.json 恢复上次退出时的下拉选择 (相机/分辨率/XY平面/串口)"""
         try:
             if not os.path.exists(GUI_SETTINGS_FILE):
                 return
@@ -201,11 +207,20 @@ class RobotOnlineTracker:
                 self.camera.camera_type = state["camera_type"]
             if any(k == state.get("resolution") for k, _ in self.camera.resolution_options):
                 self.camera.resolution = state["resolution"]
+            # XY 平面下拉: 高度档位须在当前地图可选档内, 否则保持默认 (不绘制)
+            if state.get("show_plane"):
+                pz = state.get("plane_z")
+                if isinstance(pz, int) and pz in self.plane_z_choices:
+                    self.show_xy_plane_on = True
+                    self.plane_z = pz
+            # 机械臂串口: 上次选择的 COM 口
+            if state.get("robot_port"):
+                self.robot.port = str(state["robot_port"])
         except Exception as e:
             log.warning(f"恢复相机查看器状态失败，使用默认配置: {e}")
 
     def _save_viewer_state(self):
-        """保存相机类型与分辨率选择到 config/gui_settings.json"""
+        """保存下拉选择 (相机/分辨率/XY平面/串口) 到 config/gui_settings.json"""
         try:
             root = {}
             if os.path.exists(GUI_SETTINGS_FILE):
@@ -220,6 +235,9 @@ class RobotOnlineTracker:
             node["viewer_state"] = {
                 "camera_type": self.camera.camera_type,
                 "resolution": self.camera.resolution,
+                "show_plane": bool(self.show_xy_plane_on),
+                "plane_z": int(self.plane_z),
+                "robot_port": str(self.robot.port or ""),
             }
             node["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             os.makedirs(os.path.dirname(GUI_SETTINGS_FILE), exist_ok=True)
@@ -582,7 +600,9 @@ class RobotOnlineTracker:
 
     # ------------------------------ 机械臂联动 ------------------------------
     def toggle_robot(self):
-        """连接 / 断开机械臂串口"""
+        """连接 / 断开机械臂串口 (连接过程异步, 按钮显示 '正在连接...')"""
+        if self.robot_connecting:
+            return
         if self.tracking:
             self.set_toast("跟踪任务执行中, 禁止断开", True)
             return
@@ -591,12 +611,76 @@ class RobotOnlineTracker:
             self.robot_pos = None
             self.set_toast("机械臂串口已断开")
         else:
+            if not self.robot.port:
+                self.set_toast("请先在 [串口▼] 下拉中选择串口", True)
+                return
+            self.robot_connecting = True
             self.set_toast(f"连接中: {self.robot.port} @ {self.robot.baudrate} ...")
-            try:
-                self.robot.connect()
-                self.set_toast(f"机械臂已连接: {self.robot.port}")
-            except Exception as e:
-                self.set_toast(f"连接失败: {e}", True)
+            threading.Thread(target=self._robot_connect_worker, daemon=True).start()
+
+    def _robot_connect_worker(self):
+        """机械臂拨号线程: 串口握手在后台执行, UI 保持刷新"""
+        try:
+            self.robot.connect()
+            self.set_toast(f"机械臂已连接: {self.robot.port}")
+        except Exception as e:
+            self.set_toast(f"连接失败: {e}", True)
+        finally:
+            self.robot_connecting = False
+
+    def refresh_port_options(self):
+        """重新枚举系统可用串口 (打开串口下拉时调用, 保证列表最新)"""
+        self.port_options = list_serial_ports()
+
+    def select_port(self, port_key):
+        """串口下拉选择: 更换机械臂目标串口 (连接中/拨号中禁止切换)"""
+        if not port_key:
+            self.set_toast("未枚举到可用串口, 请检查 USB 连接后重试", True)
+            return
+        if self.robot_connecting:
+            self.set_toast("正在连接中, 请稍候再切换串口", True)
+            return
+        if self.robot.is_connected:
+            self.set_toast("机械臂已连接, 请先断开再切换串口", True)
+            return
+        if self.tracking:
+            self.set_toast("跟踪任务执行中, 禁止切换串口", True)
+            return
+        self.robot.port = port_key
+        self._save_viewer_state()
+        self.set_toast(f"机械臂串口已选择: {port_key}, 点击 [连接机械臂] 拨号")
+
+    def _send_robot_cmd(self, cmd: str, desc: str):
+        """发送机械臂即时指令 (M84/G92): 后台线程执行, 避免串口应答阻塞 UI"""
+        if self.robot_connecting:
+            self.set_toast("正在连接中, 请稍候", True)
+            return
+        if self.tracking:
+            self.set_toast("跟踪任务执行中, 禁止发送指令", True)
+            return
+        if self.robot_cmd_busy:
+            return
+        if not self.robot.is_connected:
+            self.set_toast("机械臂未连接, 请先连接", True)
+            return
+        self.robot_cmd_busy = True
+        threading.Thread(target=self._robot_cmd_worker, args=(cmd, desc), daemon=True).start()
+
+    def _robot_cmd_worker(self, cmd: str, desc: str):
+        """即时指令线程: 发送 G-code 并回读坐标刷新面板"""
+        try:
+            ok = self.robot.send_gcode(cmd, timeout=3.0)
+            if not ok:
+                self.set_toast(f"{desc} 发送失败 (无 ok 应答), 详见终端日志", True)
+                return
+            pos = self.robot.get_position()
+            if pos is not None:
+                self.robot_pos = pos
+                self.set_toast(f"{desc} 完成 | 末端 {pos[0]:.1f} {pos[1]:.1f} {pos[2]:.1f}")
+            else:
+                self.set_toast(f"{desc} 已发送")
+        finally:
+            self.robot_cmd_busy = False
 
     def trigger_tracking(self):
         """触发一次"抬起→平移→下探"跟踪任务 (后台线程执行)"""
@@ -646,6 +730,7 @@ class RobotOnlineTracker:
 
     # ------------------------------ 鼠标交互 ------------------------------
     def _on_mouse(self, event, x, y, flags, param):
+        # 画布按窗口尺寸真矢量重绘, imshow 1:1 呈现, 窗口坐标即画布坐标 (零偏移)
         if event == cv2.EVENT_MOUSEMOVE:
             self.renderer.on_mouse_move(x, y)
         elif event == cv2.EVENT_LBUTTONDOWN:
@@ -698,10 +783,22 @@ class RobotOnlineTracker:
                 self.plane_z = int(payload)
                 label = self.plane_z_labels.get(self.plane_z, "")
                 self.set_toast(f"XY 平面已重绘至 Z={self.plane_z} mm{label}")
+            self._save_viewer_state()
         elif btn_id == "TRIGGER_RECOG":
             self.trigger_recognize()
         elif btn_id == "TOGGLE_ROBOT":
             self.toggle_robot()
+        elif btn_id == "TOGGLE_PORT_DD":
+            self.refresh_port_options()   # 打开时刷新枚举, 保证插拔 USB 后列表最新
+            self.active_dropdown = None if self.active_dropdown == "PORT_DROPDOWN" \
+                else "PORT_DROPDOWN"
+        elif btn_id.startswith("DD_PORT_"):
+            self.active_dropdown = None
+            self.select_port(payload)
+        elif btn_id == "ROBOT_M84":
+            self._send_robot_cmd("M84", "M84 释放电机")
+        elif btn_id == "ROBOT_G92":
+            self._send_robot_cmd("G92 X0 Y0 Z0", "G92 设当前位置为零点")
         elif btn_id == "TRIGGER_TRACK":
             self.trigger_tracking()
         elif btn_id == "QUIT":
@@ -709,30 +806,29 @@ class RobotOnlineTracker:
 
     # ------------------------------ 主循环 ------------------------------
     def run(self):
-        """主事件循环 — GUI 先行启动, 相机等用户点击 [开启]"""
-        win_name = "robot_online_tracker"  # 窗口 key 纯 ASCII (namedWindow ANSI API)
-        win_title = "Robot 在线跟踪 | flux_vision_3d"
-        cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(win_name, 1280, 720)
-        # Windows 原生 Unicode API 注入中文标题, 彻底消除标题栏问号乱码 (借鉴 GuiWindowManager)
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                hwnd = ctypes.windll.user32.FindWindowW(None, win_name)
-                if hwnd:
-                    ctypes.windll.user32.SetWindowTextW(hwnd, win_title)
-            except Exception:
-                pass  # GUI 可选功能：标题注入失败不影响窗口使用
-        cv2.setMouseCallback(win_name, self._on_mouse)
+        """主事件循环 — GUI 先行启动, 相机等用户点击 [开启]
+
+        窗口生命周期/拉伸自适应/矢量缩放统一由 GuiWindowManager 管理:
+        - 拖拽窗口边框自由调整大小, 画布按窗口尺寸真矢量重绘 (1:1 像素对齐, 鼠标零偏移),
+          停止拖拽 0.35s 后自动记忆;
+        - Ctrl+鼠标滚轮 或 Ctrl+加减键 矢量缩放, Ctrl+0 复位;
+        - 右上角红叉 [X] 优雅退出。
+        """
+        win_key = "robot_online_tracker"  # 窗口 key 纯 ASCII (namedWindow ANSI API)
+        self.win_mgr.setup_window(win_key, mouse_callback=self._on_mouse)
+        self.win_mgr.set_unicode_title("Robot 在线跟踪 | flux_vision_3d")
         print("\n" + "=" * 68)
         print(" Robot 在线跟踪 (GUI 已启动, 相机未开启)")
-        print("   顶部工具栏: 相机类型 → 分辨率 → [开启] → [识别] → [确定世界坐标系] → [XY平面▼] → [显示已知Tag] → [识别 Tag 2]")
+        print("   顶部工具栏 (双排, 组间空白分隔): 第一排 相机类型→分辨率→[开启] ‖ [串口▼]→[连接机械臂]→[M84]→[G92]")
+        print("                      第二排 [识别]→[确定世界坐标系]→[XY平面▼]→[显示已知Tag]→[识别 Tag 2]→[跟踪 Tag N]")
         print("   [识别] 一键单帧闭环: 开相机→拍一张→关相机→识别Tag(蓝棱柱)→确定世界坐标系→地图白名单绿棱柱")
         print("   开启相机后为纯预览; [确定世界坐标系] 一键执行: 采样30帧→滤波→求解零点→锁定")
         plane_desc = " ".join(f"Z {z}{self.plane_z_labels.get(z, '').strip()}"
                               for z in self.plane_z_choices)
         print("   [XY平面▼]: 不绘制 / " + plane_desc + " mm 透视网格+三轴, Tag 等高平面附加红色 X 轴")
+        print("   机械臂: [串口▼] 枚举并选择串口 → [连接机械臂] 拨号 | [M84] 释放电机 | [G92] 当前位置设为零点")
         print("   快捷键: [S] 一键识别 | [P] XY平面下拉 | [A] 显示已知Tag | [R] 识别Tag2 | [L] 确定/解除世界坐标系 | [C] 连接机械臂 | [T] 跟踪 | [X] 退出")
+        print("   窗口: 拖拽边框自由缩放 (自动记忆) | Ctrl+滚轮/Ctrl+加减 矢量缩放 | Ctrl+0 复位")
         print("=" * 68 + "\n")
 
         try:
@@ -740,10 +836,9 @@ class RobotOnlineTracker:
                 if self.camera.pipeline_running:
                     frame = self.camera.read_frame()
                     if frame is None:
-                        canvas = np.full((self.camera.frame_h + TOOLBAR_H, self.camera.frame_w, 3),
-                                         COLOR_BG, dtype=np.uint8)
-                        draw_text(canvas, "取流中...", (self.camera.frame_w // 2 - 60,
-                                                       self.camera.frame_h // 2), 22, COL_YELLOW, True)
+                        canvas = self.renderer.make_canvas()
+                        cw, ch = self.win_mgr.canvas_w, self.win_mgr.canvas_h
+                        draw_text(canvas, "取流中...", (cw // 2 - 60, ch // 2), 22, COL_YELLOW, True)
                     else:
                         # 实时叠加直接画在原始帧上 (帧坐标), 再与工具栏拼合, 保证与画面内容对齐
                         if self.recog_tag2_on or self.show_anchors_on or self.show_xy_plane_on:
@@ -764,9 +859,9 @@ class RobotOnlineTracker:
                     draw_text(canvas, "单帧识别结果 (相机已关闭): 蓝=当帧实测 / 绿=地图理论",
                               (14, TOOLBAR_H + 310), 15, COL_CYAN, True)
                 else:
-                    # 相机未开启: 占位画面 (尺寸跟随所选分辨率, 保证开启前后工具栏视觉一致)
-                    cw, ch = self.camera.frame_w, self.camera.frame_h
-                    canvas = np.full((ch + TOOLBAR_H, cw, 3), COLOR_BG, dtype=np.uint8)
+                    # 相机未开启: 窗口尺寸占位画布 (真矢量, 开启前后工具栏位置严格一致)
+                    canvas = self.renderer.make_canvas()
+                    cw, ch = self.win_mgr.canvas_w, self.win_mgr.canvas_h
                     draw_text(canvas, "相机未开启",
                               (cw // 2 - 120, ch // 2 - 50), 32, COLOR_ACCENT, True)
                     draw_text(canvas, "请先选择相机类型和分辨率，然后点击 [开启] 按钮",
@@ -774,21 +869,18 @@ class RobotOnlineTracker:
 
                 self.renderer.draw_toolbar(canvas)
                 self.renderer.draw_toast(canvas)
-                cv2.imshow(win_name, canvas)
+                cv2.imshow(win_key, canvas)
 
-                # 画布尺寸变化时同步窗口尺寸, 避免工具栏被缩放变小
-                cur_size = (canvas.shape[1], canvas.shape[0])
-                if cur_size != self._last_canvas_size:
-                    cv2.resizeWindow(win_name, cur_size[0], cur_size[1])
-                    self._last_canvas_size = cur_size
-
-                if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
-                    break
                 key = cv2.waitKeyEx(30)
+                poll = self.win_mgr.poll_events(key)
+                if poll.should_quit:
+                    break
+                if poll.toast_msg:
+                    self.set_toast(poll.toast_msg)
                 if key == -1:
                     continue
                 k = chr(key & 0xFF).lower() if (key & 0xFF) < 128 else ""
-                if k in ("x", "q") or key == 27:
+                if k == "x":
                     break
                 elif k == "a":
                     self._handle_action("TOGGLE_ANCHORS", None)

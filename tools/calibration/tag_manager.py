@@ -19,6 +19,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.utils.gui_window_manager import GuiWindowManager
+from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text
 from src.utils.config_guard import load_raw_config
 
@@ -34,21 +35,22 @@ class TagManager:
     """AprilTag 管理器 GUI"""
 
     # —— 工业暗色主题 (与 d435_viewer / gui_launcher 一致) ——
-    COLOR_BG = (15, 17, 21)
-    COLOR_SIDEBAR = (22, 25, 32)
-    COLOR_CARD_BG = (30, 34, 42)
-    COLOR_CARD_SEL = (0, 60, 70)
-    COLOR_BORDER = (40, 45, 55)
-    COLOR_BORDER_SEL = (0, 200, 220)
-    COLOR_TEXT = (230, 230, 240)
-    COLOR_TEXT_SUB = (140, 150, 165)
-    COLOR_ACCENT = (0, 210, 180)
-    COLOR_ACCENT2 = (0, 170, 255)
-    COLOR_OK = (80, 220, 120)
-    COLOR_WARN = (255, 180, 40)
-    COLOR_ERR = (255, 80, 80)
-    COLOR_TAG_ON = (0, 160, 140)       # 白名单内 Tag (青绿色)
-    COLOR_TAG_OFF = (75, 80, 95)       # 白名单外 Tag
+    # 调色板: 统一取自 GuiTheme 主题单源 (原略有差异的局部色值已归一到全局色板)
+    COLOR_BG = GuiTheme.BG
+    COLOR_SIDEBAR = GuiTheme.CARD_BG
+    COLOR_CARD_BG = GuiTheme.CARD_HOVER
+    COLOR_CARD_SEL = GuiTheme.CARD_SEL
+    COLOR_BORDER = GuiTheme.BORDER
+    COLOR_BORDER_SEL = GuiTheme.BORDER_SEL
+    COLOR_TEXT = GuiTheme.TEXT
+    COLOR_TEXT_SUB = GuiTheme.TEXT_SUB
+    COLOR_ACCENT = GuiTheme.ACCENT
+    COLOR_ACCENT2 = (0, 170, 255)      # 次强调 (橙), 本地保留
+    COLOR_OK = GuiTheme.OK
+    COLOR_WARN = GuiTheme.WARN
+    COLOR_ERR = GuiTheme.ERR
+    COLOR_TAG_ON = (0, 160, 140)       # 白名单内 Tag (青绿色), 本地保留
+    COLOR_TAG_OFF = (75, 80, 95)       # 白名单外 Tag, 本地保留
 
     # 布局常量
     SIDEBAR_W = 220

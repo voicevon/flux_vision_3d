@@ -141,13 +141,15 @@ class GuiWindowManager:
                 except Exception:
                     root_data = {}
 
-            # 更新当前应用配置节点
-            root_data[self.app_id] = {
-                "scale_pct": self.scale_pct,
-                "canvas_w": self.canvas_w,
-                "canvas_h": self.canvas_h,
-                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
-            }
+            # 更新当前应用配置节点 (合并写入, 保留同节点下其他应用数据如 viewer_state)
+            node = root_data.get(self.app_id)
+            if not isinstance(node, dict):
+                node = {}
+                root_data[self.app_id] = node
+            node["scale_pct"] = self.scale_pct
+            node["canvas_w"] = self.canvas_w
+            node["canvas_h"] = self.canvas_h
+            node["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
             with open(self.settings_file, "w", encoding="utf-8") as f:
                 json.dump(root_data, f, indent=2, ensure_ascii=False)
@@ -213,7 +215,7 @@ class GuiWindowManager:
 
         self.save_settings()
         if reset:
-            return True, "已复位为 100% 标准分辨率 (1280×720)"
+            return True, f"已复位为 100% 标准分辨率 ({self.base_w}×{self.base_h})"
         return True, f"矢量放大镜: {self.scale_pct}%  (已自动记忆大小，Ctrl+0 复位)"
 
     def poll_hardware_zoom(self) -> Tuple[bool, Optional[str]]:

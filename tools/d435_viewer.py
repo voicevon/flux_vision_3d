@@ -37,6 +37,7 @@ except ImportError:
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.vision.asparagus_analyzer import AsparagusAnalyzer, AsparagusTarget
 from src.utils.gui_window_manager import GuiWindowManager
+from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
 from src.utils.logger import get_logger
 
@@ -44,19 +45,19 @@ log = get_logger(__name__)
 
 
 class D435Viewer:
-    # --- 工业暗色主题色板 (与 gui_launcher 一致) ---
-    COLOR_BG = (15, 17, 21)
-    COLOR_CARD_BG = (22, 26, 33)
-    COLOR_CARD_HOVER = (30, 38, 50)
-    COLOR_CARD_SEL = (28, 44, 58)
-    COLOR_BORDER = (38, 46, 58)
-    COLOR_BORDER_HOVER = (0, 220, 180)
-    COLOR_BORDER_SEL = (0, 240, 200)
-    COLOR_TEXT_TITLE = (242, 245, 248)
-    COLOR_TEXT_SUB = (155, 170, 185)
-    COLOR_TEXT_MUTED = (115, 130, 145)
-    COLOR_ACCENT = (0, 210, 180)
-    COLOR_GOLD = (210, 175, 60)
+    # 调色板: 统一取自 GuiTheme 主题单源
+    COLOR_BG = GuiTheme.BG
+    COLOR_CARD_BG = GuiTheme.CARD_BG
+    COLOR_CARD_HOVER = GuiTheme.CARD_HOVER
+    COLOR_CARD_SEL = GuiTheme.CARD_SEL
+    COLOR_BORDER = GuiTheme.BORDER
+    COLOR_BORDER_HOVER = GuiTheme.BORDER_HOVER
+    COLOR_BORDER_SEL = GuiTheme.BORDER_SEL
+    COLOR_TEXT_TITLE = GuiTheme.TEXT
+    COLOR_TEXT_SUB = GuiTheme.TEXT_SUB
+    COLOR_TEXT_MUTED = GuiTheme.TEXT_MUTED
+    COLOR_ACCENT = GuiTheme.ACCENT
+    COLOR_GOLD = GuiTheme.GOLD
 
     TOOLBAR_H = 44  # 工具栏高度
 

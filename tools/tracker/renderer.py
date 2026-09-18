@@ -30,6 +30,7 @@ class TrackerRenderer:
         self._camera_type_rect = None
         self._resolution_rect = None
         self._plane_z_rect = None
+        self._port_rect = None
 
     # ------------------------------ 鼠标辅助 ------------------------------
     def on_mouse_move(self, x, y):
@@ -42,6 +43,12 @@ class TrackerRenderer:
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return btn_id, payload
         return None
+
+    def _is_hover(self, rect):
+        """鼠标是否悬停在 rect 上 (与 _draw_dropdown_button 的 hover 判定一致)"""
+        x1, y1, x2, y2 = rect
+        mx, my = self.mouse_pos
+        return x1 <= mx <= x2 and y1 <= my <= y2
 
     # ------------------------------ 工具栏 ------------------------------
     def _draw_dropdown_button(self, canvas, rect, label, is_open):
@@ -85,16 +92,22 @@ class TrackerRenderer:
             self.buttons.append((f"{btn_prefix}{i}", (pop_x1 + 2, iy1, pop_x2 - 2, iy2), key))
 
     def draw_toolbar(self, canvas):
-        """顶部工具栏: 相机类型 ▼ | 分辨率 ▼ | 开启/关闭 | 识别 | 确定世界坐标系 | XY平面 ▼ | 显示已知Tag | 识别 Tag 2 | 连接机械臂 | 跟踪 | 退出 X"""
+        """顶部双排工具栏 (组间以空白分隔):
+        第一排: 相机类型 ▼ | 分辨率 ▼ | 开启/关闭 ‖ 串口 ▼ | 连接机械臂 | M84 | G92 ... 退出 X
+        第二排: 识别 | 确定世界坐标系 | XY平面 ▼ | 显示已知Tag | 识别 Tag 2 | 跟踪 Tag N
+        """
         tr = self.tr
         tw = canvas.shape[1]
         self.buttons = []
         cv2.rectangle(canvas, (0, 0), (tw, TOOLBAR_H), COLOR_BG, -1)
         cv2.line(canvas, (0, TOOLBAR_H - 1), (tw, TOOLBAR_H - 1), COLOR_BORDER, 1)
 
-        y1, btn_h = 6, TOOLBAR_H - 12
-        y2 = y1 + btn_h
+        y1, y2 = 6, 38       # 第一排按钮
+        u1, u2 = 44, 76      # 第二排按钮
         gap = 6
+        group_gap = 220      # 组间空白分隔 (RealSense 组 | 机械臂组)
+
+        # ============ 第一排 · RealSense 组 ============
 
         # 1. 相机类型下拉 (最左)
         cam_x1, cam_x2 = 8, 8 + 150
@@ -121,11 +134,74 @@ class TrackerRenderer:
             sw_bg, sw_border, sw_txt, sw_label = (30, 50, 40), (0, 200, 120), (80, 230, 160), "开启"
         cv2.rectangle(canvas, (sw_x1, y1), (sw_x2, y2), sw_bg, -1)
         cv2.rectangle(canvas, (sw_x1, y1), (sw_x2, y2), sw_border, 1)
-        draw_text(canvas, sw_label, (sw_x1 + 22, y1 + (btn_h - 16) // 2 - 1), 15, sw_txt, True)
+        draw_text(canvas, sw_label, (sw_x1 + 22, y1 + (y2 - y1 - 16) // 2 - 1), 15, sw_txt, True)
         self.buttons.append(("TOGGLE_CAMERA", (sw_x1, y1, sw_x2, y2), None))
 
-        # 4. "识别" 一键单帧闭环按钮: 开相机→拍一张→关相机→识别Tag→定世界系→蓝/绿棱柱
-        rc_x1 = sw_x2 + gap
+        # ============ 第一排 · 机械臂组 (与 RealSense 组以空白分隔) ============
+
+        # 4. 机械臂串口下拉: 枚举系统串口, 选择后经 [连接机械臂] 拨号
+        pt_x1 = sw_x2 + group_gap
+        pt_x2 = pt_x1 + 100
+        self._draw_dropdown_button(canvas, (pt_x1, y1, pt_x2, y2), tr.robot.port or "串口",
+                                   is_open=(tr.active_dropdown == "PORT_DROPDOWN"))
+        self.buttons.append(("TOGGLE_PORT_DD", (pt_x1, y1, pt_x2, y2), "PORT_DROPDOWN"))
+        self._port_rect = (pt_x1, y1, pt_x2, y2)
+
+        # 5. 机械臂连接按钮 (三态: 连接机械臂 → 正在连接... → 断开机械臂; 悬停高亮)
+        rb_x1 = pt_x2 + gap
+        rb_x2 = rb_x1 + 110
+        connected = tr.robot.is_connected
+        rb_hover = self._is_hover((rb_x1, y1, rb_x2, y2))
+        if tr.robot_connecting:
+            rb_bg, rb_border, rb_txt, rb_label, rb_bold = \
+                COLOR_CARD_BG, (255, 160, 40), (255, 200, 80), "正在连接...", True
+        elif connected:
+            rb_bg, rb_border, rb_txt, rb_label, rb_bold = \
+                COLOR_CARD_SEL, (0, 200, 255) if rb_hover else COLOR_BORDER_SEL, \
+                COLOR_ACCENT, "断开机械臂", True
+        else:
+            rb_bg, rb_border, rb_txt, rb_label, rb_bold = \
+                (48, 56, 72) if rb_hover else COLOR_CARD_BG, \
+                (0, 180, 220) if rb_hover else COLOR_BORDER, \
+                COL_WHITE if rb_hover else COLOR_TEXT_SUB, "连接机械臂", False
+        cv2.rectangle(canvas, (rb_x1, y1), (rb_x2, y2), rb_bg, -1)
+        cv2.rectangle(canvas, (rb_x1, y1), (rb_x2, y2), rb_border, 1)
+        draw_text(canvas, rb_label, (rb_x1 + 20, y1 + (y2 - y1 - 16) // 2 - 1), 14, rb_txt, rb_bold)
+        self.buttons.append(("TOGGLE_ROBOT", (rb_x1, y1, rb_x2, y2), None))
+
+        # 6. M84 释放电机 / G92 设当前零点 (未连接置灰; 悬停高亮, 点击仍有 Toast 提示)
+        for i, (bid, label) in enumerate((("ROBOT_M84", "M84"), ("ROBOT_G92", "G92"))):
+            cx1 = rb_x2 + gap + i * (60 + gap)
+            cx2 = cx1 + 60
+            m_hover = self._is_hover((cx1, y1, cx2, y2))
+            m_bg = COLOR_CARD_SEL if connected else COLOR_CARD_BG
+            m_border = COLOR_BORDER_SEL if connected else COLOR_BORDER
+            m_txt = COLOR_ACCENT if connected else (108, 116, 128)
+            if m_hover:
+                m_bg = (52, 60, 76) if connected else (48, 56, 72)
+                m_border = (0, 200, 255) if connected else (0, 180, 220)
+                m_txt = COL_WHITE if not connected else m_txt
+            cv2.rectangle(canvas, (cx1, y1), (cx2, y2), m_bg, -1)
+            cv2.rectangle(canvas, (cx1, y1), (cx2, y2), m_border, 1)
+            draw_text(canvas, label, (cx1 + 17, y1 + (y2 - y1 - 16) // 2 - 1), 14,
+                      m_txt, connected)
+            self.buttons.append((bid, (cx1, y1, cx2, y2), None))
+
+        # 7. 退出按钮 (第一排最右, 悬停高亮)
+        exit_x1, exit_x2 = tw - 90, tw - 8
+        q_hover = self._is_hover((exit_x1, y1, exit_x2, y2))
+        cv2.rectangle(canvas, (exit_x1, y1), (exit_x2, y2),
+                      (48, 56, 72) if q_hover else COLOR_CARD_BG, -1)
+        cv2.rectangle(canvas, (exit_x1, y1), (exit_x2, y2),
+                      (0, 180, 220) if q_hover else (60, 60, 80), 1)
+        draw_text(canvas, "退出 X", (exit_x1 + 14, y1 + (y2 - y1 - 16) // 2 - 1), 14,
+                  COL_WHITE if q_hover else (190, 190, 200), True)
+        self.buttons.append(("QUIT", (exit_x1, y1, exit_x2, y2), None))
+
+        # ============ 第二排: 识别与世界坐标系/目标跟踪 ============
+
+        # 8. "识别" 一键单帧闭环按钮 (第二排首位): 开相机→拍一张→关相机→识别Tag→定世界系→蓝/绿棱柱
+        rc_x1 = 8
         rc_x2 = rc_x1 + 76
         if tr.recognizing:
             rc_label = tr.recog_stage or "识别中..."
@@ -136,14 +212,14 @@ class TrackerRenderer:
         else:
             rc_label = "识别"
             rc_bg, rc_border, rc_txt = COLOR_CARD_BG, COLOR_BORDER, COLOR_TEXT_SUB
-        cv2.rectangle(canvas, (rc_x1, y1), (rc_x2, y2), rc_bg, -1)
-        cv2.rectangle(canvas, (rc_x1, y1), (rc_x2, y2), rc_border, 1)
+        cv2.rectangle(canvas, (rc_x1, u1), (rc_x2, u2), rc_bg, -1)
+        cv2.rectangle(canvas, (rc_x1, u1), (rc_x2, u2), rc_border, 1)
         draw_text(canvas, rc_label,
-                  (rc_x1 + (8 if tr.recognizing else 20), y1 + (btn_h - 16) // 2 - 1),
+                  (rc_x1 + (8 if tr.recognizing else 20), u1 + (u2 - u1 - 16) // 2 - 1),
                   14, rc_txt, True)
-        self.buttons.append(("TRIGGER_RECOG", (rc_x1, y1, rc_x2, y2), None))
+        self.buttons.append(("TRIGGER_RECOG", (rc_x1, u1, rc_x2, u2), None))
 
-        # 5. "确定世界坐标系" 一键流程按钮 (FR-12.5)
+        # 9. "确定世界坐标系" 一键流程按钮 (FR-12.5)
         lk_x1 = rc_x2 + gap
         lk_x2 = lk_x1 + 130
         if tr.sampling:
@@ -152,73 +228,52 @@ class TrackerRenderer:
             lk_label, lk_border, lk_txt = "解除锁定", COLOR_BORDER_SEL, COLOR_ACCENT
         else:
             lk_label, lk_border, lk_txt = "确定世界坐标系", COLOR_BORDER, COLOR_TEXT_SUB
-        cv2.rectangle(canvas, (lk_x1, y1), (lk_x2, y2), COLOR_CARD_SEL if tr.world_locked else COLOR_CARD_BG, -1)
-        cv2.rectangle(canvas, (lk_x1, y1), (lk_x2, y2), lk_border, 1)
-        draw_text(canvas, lk_label, (lk_x1 + 8, y1 + (btn_h - 16) // 2 - 1), 14, lk_txt, True)
-        self.buttons.append(("TOGGLE_LOCK", (lk_x1, y1, lk_x2, y2), None))
+        cv2.rectangle(canvas, (lk_x1, u1), (lk_x2, u2), COLOR_CARD_SEL if tr.world_locked else COLOR_CARD_BG, -1)
+        cv2.rectangle(canvas, (lk_x1, u1), (lk_x2, u2), lk_border, 1)
+        draw_text(canvas, lk_label, (lk_x1 + 8, u1 + (u2 - u1 - 16) // 2 - 1), 14, lk_txt, True)
+        self.buttons.append(("TOGGLE_LOCK", (lk_x1, u1, lk_x2, u2), None))
 
-        # 6. "XY平面" 下拉框: 合并原[绘制XY平面]开关与[Z高度]下拉, 最高项"不绘制", 其余为绘制高度
+        # 10. "XY平面" 下拉框: 合并原[绘制XY平面]开关与[Z高度]下拉, 最高项"不绘制", 其余为绘制高度
         pl_x1 = lk_x2 + gap
-        pl_x2 = pl_x1 + 110
+        pl_x2 = pl_x1 + 116
         pl_label = f"Z={tr.plane_z}" if tr.show_xy_plane_on else "XY平面"
-        self._draw_dropdown_button(canvas, (pl_x1, y1, pl_x2, y2), pl_label,
+        self._draw_dropdown_button(canvas, (pl_x1, u1, pl_x2, u2), pl_label,
                                    is_open=(tr.active_dropdown == "PLANE_DROPDOWN"))
-        self.buttons.append(("TOGGLE_PLANE_DD", (pl_x1, y1, pl_x2, y2), "PLANE_DROPDOWN"))
-        self._plane_z_rect = (pl_x1, y1, pl_x2, y2)
+        self.buttons.append(("TOGGLE_PLANE_DD", (pl_x1, u1, pl_x2, u2), "PLANE_DROPDOWN"))
+        self._plane_z_rect = (pl_x1, u1, pl_x2, u2)
 
-        # 7. "显示已知 Tag" 乒乓开关 (绿色=BA理论位置 / 蓝色=当帧实测位置)
+        # 11. "显示已知 Tag" 乒乓开关 (绿色=BA理论位置 / 蓝色=当帧实测位置)
         an_x1 = pl_x2 + gap
         an_x2 = an_x1 + 120
-        cv2.rectangle(canvas, (an_x1, y1), (an_x2, y2),
+        cv2.rectangle(canvas, (an_x1, u1), (an_x2, u2),
                       (30, 50, 40) if tr.show_anchors_on else COLOR_CARD_BG, -1)
-        cv2.rectangle(canvas, (an_x1, y1), (an_x2, y2),
+        cv2.rectangle(canvas, (an_x1, u1), (an_x2, u2),
                       (0, 200, 120) if tr.show_anchors_on else COLOR_BORDER, 1)
-        draw_text(canvas, "显示已知Tag", (an_x1 + 12, y1 + (btn_h - 16) // 2 - 1), 14,
+        draw_text(canvas, "显示已知Tag", (an_x1 + 12, u1 + (u2 - u1 - 16) // 2 - 1), 14,
                   (80, 230, 160) if tr.show_anchors_on else COLOR_TEXT_SUB, tr.show_anchors_on)
-        self.buttons.append(("TOGGLE_ANCHORS", (an_x1, y1, an_x2, y2), None))
+        self.buttons.append(("TOGGLE_ANCHORS", (an_x1, u1, an_x2, u2), None))
 
-        # 8. "识别 Tag 2" 乒乓开关 (默认关, FR-12.6)
+        # 12. "识别 Tag 2" 乒乓开关 (默认关, FR-12.6)
         rg_x1 = an_x2 + gap
         rg_x2 = rg_x1 + 110
-        cv2.rectangle(canvas, (rg_x1, y1), (rg_x2, y2),
+        cv2.rectangle(canvas, (rg_x1, u1), (rg_x2, u2),
                       (30, 50, 40) if tr.recog_tag2_on else COLOR_CARD_BG, -1)
-        cv2.rectangle(canvas, (rg_x1, y1), (rg_x2, y2),
+        cv2.rectangle(canvas, (rg_x1, u1), (rg_x2, u2),
                       (0, 200, 120) if tr.recog_tag2_on else COLOR_BORDER, 1)
-        draw_text(canvas, "识别 Tag 2", (rg_x1 + 14, y1 + (btn_h - 16) // 2 - 1), 14,
+        draw_text(canvas, "识别 Tag 2", (rg_x1 + 14, u1 + (u2 - u1 - 16) // 2 - 1), 14,
                   (80, 230, 160) if tr.recog_tag2_on else COLOR_TEXT_SUB, tr.recog_tag2_on)
-        self.buttons.append(("TOGGLE_RECOG", (rg_x1, y1, rg_x2, y2), None))
+        self.buttons.append(("TOGGLE_RECOG", (rg_x1, u1, rg_x2, u2), None))
 
-        # 9. 机械臂按钮
-        rb_x1 = rg_x2 + gap
-        rb_x2 = rb_x1 + 110
-        connected = tr.robot.is_connected
-        rb_bg = COLOR_CARD_SEL if connected else COLOR_CARD_BG
-        rb_border = COLOR_BORDER_SEL if connected else COLOR_BORDER
-        rb_txt = COLOR_ACCENT if connected else COLOR_TEXT_SUB
-        cv2.rectangle(canvas, (rb_x1, y1), (rb_x2, y2), rb_bg, -1)
-        cv2.rectangle(canvas, (rb_x1, y1), (rb_x2, y2), rb_border, 1)
-        draw_text(canvas, "断开机械臂" if connected else "连接机械臂",
-                  (rb_x1 + 8, y1 + (btn_h - 16) // 2 - 1), 14, rb_txt, connected)
-        self.buttons.append(("TOGGLE_ROBOT", (rb_x1, y1, rb_x2, y2), None))
-
-        # 10. 跟踪按钮
-        tk_x1 = rb_x2 + gap
-        tk_x2 = tk_x1 + 90
+        # 13. 跟踪按钮
+        tk_x1 = rg_x2 + gap
+        tk_x2 = tk_x1 + 100
         busy = tr.tracking
-        cv2.rectangle(canvas, (tk_x1, y1), (tk_x2, y2), COLOR_CARD_SEL if busy else COLOR_CARD_BG, -1)
-        cv2.rectangle(canvas, (tk_x1, y1), (tk_x2, y2), (255, 160, 40) if busy else COLOR_BORDER, 1)
+        cv2.rectangle(canvas, (tk_x1, u1), (tk_x2, u2), COLOR_CARD_SEL if busy else COLOR_CARD_BG, -1)
+        cv2.rectangle(canvas, (tk_x1, u1), (tk_x2, u2), (255, 160, 40) if busy else COLOR_BORDER, 1)
         draw_text(canvas, "跟踪中..." if busy else f"跟踪 Tag {tr.target_tag_id}",
-                  (tk_x1 + 8, y1 + (btn_h - 16) // 2 - 1), 14,
+                  (tk_x1 + 8, u1 + (u2 - u1 - 16) // 2 - 1), 14,
                   (255, 200, 80) if busy else COL_GREEN, True)
-        self.buttons.append(("TRIGGER_TRACK", (tk_x1, y1, tk_x2, y2), None))
-
-        # 11. 退出按钮 (最右)
-        exit_x1, exit_x2 = tw - 90, tw - 8
-        cv2.rectangle(canvas, (exit_x1, y1), (exit_x2, y2), COLOR_CARD_BG, -1)
-        cv2.rectangle(canvas, (exit_x1, y1), (exit_x2, y2), (60, 60, 80), 1)
-        draw_text(canvas, "退出 X", (exit_x1 + 14, y1 + (btn_h - 16) // 2 - 1), 14,
-                  (190, 190, 200), True)
-        self.buttons.append(("QUIT", (exit_x1, y1, exit_x2, y2), None))
+        self.buttons.append(("TRIGGER_TRACK", (tk_x1, u1, tk_x2, u2), None))
 
         # 展开的下拉浮层
         if tr.active_dropdown == "CAMERA_TYPE_DROPDOWN" and self._camera_type_rect:
@@ -231,6 +286,11 @@ class TrackerRenderer:
             self._render_dropdown_popup(canvas, self._plane_z_rect,
                                         tr.plane_options,
                                         tr.plane_z if tr.show_xy_plane_on else None, "DD_PLANE_")
+        elif tr.active_dropdown == "PORT_DROPDOWN" and self._port_rect:
+            port_opts = [(p, p) for p in tr.port_options] or [("", "(无可用串口, 请检查 USB)")]
+            self._render_dropdown_popup(canvas, self._port_rect, port_opts,
+                                        tr.robot.port if tr.robot.port in tr.port_options else None,
+                                        "DD_PORT_")
 
     # ------------------------------ 棱柱与叠加层 ------------------------------
     def _draw_studio_prism(self, canvas, rvec, tvec, is_theory, is_target=False):
@@ -522,9 +582,25 @@ class TrackerRenderer:
             cv2.addWeighted(overlay, 0.72, canvas, 0.28, 0, canvas)
             draw_text(canvas, tr.toast, (tx, ty), 16, col)
 
+    def make_canvas(self):
+        """按当前窗口物理尺寸生成底板画布 (imshow 严格 1:1, 鼠标坐标零偏移)"""
+        cw = self.tr.win_mgr.canvas_w
+        ch = self.tr.win_mgr.canvas_h
+        return np.full((ch, cw, 3), COLOR_BG, dtype=np.uint8)
+
     def compose_canvas(self, frame):
-        """视频帧 + 顶部工具栏拼合 (工具栏独立于画面, 不遮挡视频内容)"""
+        """窗口尺寸底板 + 顶部工具栏区 + 视频帧等比缩放居中 (真矢量模式, 无整画布信箱缩放)"""
+        cw = self.tr.win_mgr.canvas_w
+        ch = self.tr.win_mgr.canvas_h
+        canvas = np.full((ch, cw, 3), COLOR_BG, dtype=np.uint8)
+
+        # 视频帧等比 contain 缩放到工具栏下方区域并居中 (不裁剪, 保证 Tag 不出画)
+        area_h = ch - TOOLBAR_H
         fh, fw = frame.shape[:2]
-        tool_area = np.full((TOOLBAR_H, fw, 3), COLOR_BG, dtype=np.uint8)
-        full = np.vstack((tool_area, frame))
-        return full
+        scale = min(cw / fw, area_h / fh)
+        nw, nh = max(1, int(fw * scale)), max(1, int(fh * scale))
+        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+        frame2 = cv2.resize(frame, (nw, nh), interpolation=interp)
+        x0, y0 = (cw - nw) // 2, TOOLBAR_H + (area_h - nh) // 2
+        canvas[y0:y0 + nh, x0:x0 + nw] = frame2
+        return canvas

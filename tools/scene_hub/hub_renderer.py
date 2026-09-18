@@ -15,6 +15,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text, put_text
 from tools.scene_hub.hub_state import HubState
 
@@ -26,16 +27,16 @@ class HubRenderer:
         self.canvas_w = 1280
         self.canvas_h = 720
 
-        # 调色板定义 (深色科技风)
-        self.COLOR_BG = (18, 20, 24)           # 全局底色
-        self.COLOR_PANEL = (24, 28, 36)        # 侧边栏/卡片底色
-        self.COLOR_CARD_ACTIVE = (38, 48, 64)  # 选中卡片底色
-        self.COLOR_BORDER = (45, 52, 68)       # 普通线框
-        self.COLOR_ACTIVE_BORDER = (0, 240, 120)  # 选中项荧光绿
+        # 调色板: 结构色统一取自 GuiTheme 主题单源, 品牌色 (青/金/暗灰) 本地保留
+        self.COLOR_BG = GuiTheme.BG             # 全局底色
+        self.COLOR_PANEL = GuiTheme.CARD_BG     # 侧边栏/卡片底色
+        self.COLOR_CARD_ACTIVE = GuiTheme.CARD_SEL  # 选中卡片底色
+        self.COLOR_BORDER = GuiTheme.BORDER     # 普通线框
+        self.COLOR_ACTIVE_BORDER = GuiTheme.BORDER_SEL  # 选中项高亮描边
         self.COLOR_CYAN = (230, 200, 0)        # 科技青 (BGR: 0, 200, 230)
         self.COLOR_GOLD = (50, 190, 255)       # 金黄色 (BGR)
-        self.COLOR_WHITE = (240, 240, 240)
-        self.COLOR_GRAY = (140, 145, 155)
+        self.COLOR_WHITE = GuiTheme.WHITE
+        self.COLOR_GRAY = GuiTheme.GRAY
         self.COLOR_DARK_GRAY = (70, 75, 85)
 
         # 帧级极速缓存 (毫秒级响应 Hover 交互)

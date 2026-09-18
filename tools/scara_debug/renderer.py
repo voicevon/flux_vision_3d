@@ -15,28 +15,29 @@ from typing import List, Tuple
 import cv2
 import numpy as np
 
+from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text
 
 # 逻辑画布尺寸
 LOGIC_W = 1280
 LOGIC_H = 800
 
-# 调色板 (与 Suite Dashboard 一致的低饱和冷色系)
-COL_BG = (15, 17, 21)
-COL_PANEL = (22, 26, 33)
-COL_PANEL_HOVER = (30, 38, 50)
-COL_BORDER = (38, 46, 58)
-COL_ACCENT = (0, 210, 180)
-COL_TEXT = (242, 245, 248)
-COL_SUB = (155, 170, 185)
-COL_MUTED = (115, 130, 145)
-COL_BTN = (28, 34, 44)
-COL_BTN_BORDER = (52, 64, 80)
-COL_BTN_HOVER = (40, 52, 66)
-COL_OK = (80, 190, 115)
-COL_WARN = (220, 145, 60)
-COL_ERR = (210, 80, 80)
-COL_GOLD = (210, 175, 60)
+# 调色板: 统一取自 GuiTheme 主题单源
+COL_BG = GuiTheme.BG
+COL_PANEL = GuiTheme.CARD_BG
+COL_PANEL_HOVER = GuiTheme.CARD_HOVER
+COL_BORDER = GuiTheme.BORDER
+COL_ACCENT = GuiTheme.ACCENT
+COL_TEXT = GuiTheme.TEXT
+COL_SUB = GuiTheme.TEXT_SUB
+COL_MUTED = GuiTheme.TEXT_MUTED
+COL_BTN = GuiTheme.BTN
+COL_BTN_BORDER = GuiTheme.BTN_BORDER
+COL_BTN_HOVER = GuiTheme.BTN_HOVER
+COL_OK = GuiTheme.OK
+COL_WARN = GuiTheme.WARN
+COL_ERR = GuiTheme.ERR
+COL_GOLD = GuiTheme.GOLD
 
 Btn = Tuple[str, int, int, int, int]  # (btn_id, x, y, w, h)
 
