@@ -32,6 +32,7 @@ from src.utils.gui_window_manager import GuiWindowManager
 from src.utils.text_rendering import draw_text, measure_text
 from src.utils.logger import get_logger
 from src.vision.asparagus_analyzer import AsparagusAnalyzer
+from src.calibration.workspace_manager import WorkspaceManager
 
 WINDOW_KEY = "AsparagusOffline"   # cv2 窗口内部 key (纯 ASCII, 中文标题经 SetWindowTextW 注入)
 APP_ID = "asparagus_offline"
@@ -126,7 +127,6 @@ class AsparagusOfflineApp:
                                         min_w=900, min_h=600)
 
         # 工位管理器感知
-        from src.calibration.workspace_manager import WorkspaceManager
         self.workspace_mgr = WorkspaceManager()
         cur_ws = self.workspace_mgr.get_current_workspace()
         self.current_workspace_id = cur_ws.workspace_id if cur_ws else ""
@@ -204,8 +204,15 @@ class AsparagusOfflineApp:
         return ws.name if ws else "默认工位"
 
     def switch_workspace(self, workspace_key: str):
-        """动态切换标靶立体地图并重新解算当前样本"""
+        """动态切换标靶立体地图并重新解算当前样本 (自动持久化到 .active_workspace)"""
         self.current_workspace_id = workspace_key
+        self.workspace_mgr.set_active_workspace(workspace_key)
+
+        ws = self.workspace_mgr.get_workspace_by_id(workspace_key)
+        if ws and os.path.exists(ws.prod_raw_images_dir) and glob.glob(os.path.join(ws.prod_raw_images_dir, "*.png")):
+            self.sample_dir = ws.prod_raw_images_dir
+            self.rescan(auto_load=True)
+
         self._init_localizer()
         if self.tag_localizer:
             tag_cnt = len(getattr(self.tag_localizer, "tag_poses", {}))

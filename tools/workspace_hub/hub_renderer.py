@@ -121,14 +121,14 @@ class HubRenderer:
                 return "help_mask"
             return "help_modal_body"
 
-        # 1. 场景条目专属右键菜单 (精简为 4 项且无标题栏)
+        # 1. 场景条目专属右键菜单 (精简为 5 项且无标题栏)
         if state.context_menu_open:
             cx, cy = state.context_menu_pos
             menu_w = 216
             item_h = 32
             pad_y = 6
             if cx <= mx <= cx + menu_w:
-                for idx in range(4):
+                for idx in range(5):
                     iy = cy + pad_y + idx * item_h
                     if iy <= my <= iy + item_h:
                         return ("ctx_item", idx)
@@ -184,11 +184,12 @@ class HubRenderer:
                 if 1176 <= mx <= 1270:
                     return "wl_edit"
 
-        # 图片卡片网格墙卡片 Hover
-        if state.active_tab == HubState.TAB_CALIB_IMAGES:
+        # 图片卡片网格墙卡片 Hover (标定相册与生产相册通用)
+        if state.active_tab in (HubState.TAB_CALIB_IMAGES, HubState.TAB_PROD_IMAGES):
             cell_idx = grid_hit_test(mx, my)
             if cell_idx is not None:
-                return ("grid_item", state.image_grid_offset + cell_idx)
+                offset = state.prod_grid_offset if state.active_tab == HubState.TAB_PROD_IMAGES else state.image_grid_offset
+                return ("grid_item", offset + cell_idx)
 
         return None
 
@@ -203,6 +204,9 @@ class HubRenderer:
             state.selected_image_idx,
             len(state.current_images),
             state.image_grid_offset,
+            state.selected_prod_image_idx,
+            len(state.prod_images),
+            state.prod_grid_offset,
             state.view_mode,
             state.active_tab,
             state._whitelist_cache_ws,
@@ -391,42 +395,38 @@ class HubRenderer:
 
     def _render_page_calib_images(self, canvas: np.ndarray, state: HubState, sc):
         """页签1: 标定相册 - 当前选中工位的采样相册卡片网格墙 (x: 340~1280, y: 50~670)"""
-        title = f"标定采样相册 ({len(state.current_images)}帧)"
         self._render_gallery_page(
-            canvas, state, title,
+            canvas, state, "",
             state.current_images, state.selected_image_idx, state.image_grid_offset,
             empty_hint=("当前场景尚未采集任何照片！", "请在主仪表盘启动多视角采图向导抓拍照片。"),
             is_calib=True,
         )
-        # 标题帧数信息与沙盒状态合并展示 (右侧状态胶囊)
-        self._render_status_capsule(canvas, state, sc)
 
     def _render_page_prod_images(self, canvas: np.ndarray, state: HubState, sc):
         """页签4: 生产相册 - 生产运行基准工位的采样相册 (x: 340~1280, y: 50~670)"""
+        if not state.prod_images and sc and os.path.isdir(sc.prod_raw_images_dir):
+            state.load_prod_images()
         prod_images = getattr(state, "prod_images", [])
         prod_idx = getattr(state, "selected_prod_image_idx", 0)
         prod_offset = getattr(state, "prod_grid_offset", 0)
-        title = f"生产基准相册 ({len(prod_images)}帧)"
         self._render_gallery_page(
-            canvas, state, title,
+            canvas, state, "",
             prod_images, prod_idx, prod_offset,
             empty_hint=("生产基准工位尚未采集任何照片！", "可在该工位下切换至生产用途抓拍图像。"),
             is_calib=False,
         )
-        self._render_status_capsule(canvas, state, sc)
 
     def _render_gallery_page(self, canvas: np.ndarray, state: HubState, title: str,
                              images: list[str], sel_idx: int, grid_offset: int,
                              empty_hint: tuple[str, str], is_calib: bool):
-        """渲染通用图片卡片网格墙: 单行标题 + 4列x3行大卡片网格 (双击卡片放大)
-        布局: 面板 (340,50,940,620); 标题 y: 58; 网格 x: 356~1264, y: 86~648; 卡片 218x182
+        """渲染通用图片卡片网格墙: 4列x3行大卡片网格 (双击卡片放大)
+        布局: 面板 (340,50,940,620); 网格 x: 356~1264, y: 86~648; 卡片 218x182
         """
         box_x, box_y, box_w, box_h = 340, 50, 940, 620
         cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), self.COLOR_PANEL, -1)
         mpos = (state.mouse_x, state.mouse_y)
 
-        # 1. 栏目标题 (单行精炼，垂直空间全部让给大卡片网格)
-        draw_text(canvas, title, (box_x + 14, box_y + 8), font_size=15, color=self.COLOR_WHITE, bold=True)
+        # 1. 顶部标题已按需求移除，界面保持整洁纯净
 
         if not images:
             empty_box_y = box_y + 130
@@ -477,15 +477,6 @@ class HubRenderer:
             # 3.4 选中卡片左侧高亮指示条
             if is_cur:
                 cv2.rectangle(canvas, (x, y), (x + 4, y + self.GRID_CELL_H), (0, 255, 180), -1)
-
-        # 4. 底部单行选中详情与操作提示 (网格已铺满，信息压缩为一行)
-        cur_name = os.path.basename(images[sel_idx])
-        page_now = grid_offset // HubState.GRID_PAGE + 1
-        page_total = max(1, (total + HubState.GRID_PAGE - 1) // HubState.GRID_PAGE)
-        draw_text(canvas,
-                  f"已选中: {cur_name} ({sel_idx + 1}/{total})  |  第 {page_now}/{page_total} 页  |  "
-                  f"单击卡片选中  |  双击卡片放大查看  |  鼠标滚轮翻页",
-                  (box_x + 16, 652), font_size=12, color=(0, 240, 220))
 
     def _render_page_whitelist(self, canvas: np.ndarray, state: HubState, sc):
         """页签4: Tag 标靶白名单管理页 - 实时读取 tag_whitelist.yaml 呈现放行矩阵"""
@@ -630,124 +621,103 @@ class HubRenderer:
             canvas[py:py + ph, px:px + pw] = prev
             cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (60, 70, 90), 1)
 
-        draw_text(canvas, "点击 [上张] / [下张] 切换大图   |   鼠标滚轮顺畅切换   |   双击画面或点击 [返回网格] 返回卡片网格",
-                  (box_x + 210, box_y + box_h - 24), font_size=14, color=self.COLOR_WHITE)
-
     def _render_pure_dashboard_panel(self, canvas: np.ndarray, state: HubState, sc):
-        """页签3: 体检报告 - 综合体检与几何健康大屏 (左侧固定，右侧 940 舒展呈现)"""
-        box_x, box_y, box_w, box_h = 340, 50, 940, 310
+        """页签3: 体检报告 - 综合体检与几何健康大屏 (垂直贯通排列)"""
+        box_x, box_y, box_w, box_h = 340, 50, 940, 620
         cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), (18, 22, 28), -1)
 
         if not sc:
-            draw_text(canvas, "请在左侧选择或新建工况场景", (box_x + 360, box_y + 150), font_size=20, color=self.COLOR_GRAY)
+            draw_text(canvas, "请在左侧选择或新建工况场景", (box_x + 360, box_y + 280), font_size=20, color=self.COLOR_GRAY)
             return
 
-        # ==== 1. 顶部大号标题栏与质检放行仪表盘 (y: 65~165) ====
-        cv2.rectangle(canvas, (box_x + 16, box_y + 14), (box_x + box_w - 16, box_y + 105), (25, 31, 42), -1)
-        cv2.rectangle(canvas, (box_x + 16, box_y + 14), (box_x + box_w - 16, box_y + 105), (45, 56, 78), 1)
+        card_x = box_x + 16
+        card_w = box_w - 32  # 908px 通栏宽度
 
-        draw_text(canvas, f"物理 ASCII 沙盒 ID: {sc.workspace_id}   |   原始相册: {sc.image_count} 帧",
-                  (box_x + 32, box_y + 30), font_size=13, color=self.COLOR_GRAY)
-        draw_text(canvas, f"物理绝对路径: {sc.workspace_dir}", (box_x + 32, box_y + 56), font_size=12, color=self.COLOR_DARK_GRAY)
+        # ==== 1. 板块 #1: 工位核心元数据卡片 (4行垂直排列: Name, 路径, 日期, 备注) ====
+        c1_y = box_y + 12
+        c1_h = 108
+        cv2.rectangle(canvas, (card_x, c1_y), (card_x + card_w, c1_y + c1_h), (25, 31, 42), -1)
+        cv2.rectangle(canvas, (card_x, c1_y), (card_x + card_w, c1_y + c1_h), (45, 56, 78), 1)
 
-        # 质检放行徽章 (右上角 x: box_x + box_w - 380)
-        badge_x = box_x + box_w - 380
-        badge_y = box_y + 26
-        badge_w = 350
-        badge_h = 58
+        # 4行简短输出: Name<CR>, 路径<CR>, 日期<CR>, 备注
+        name_str = f"Name:  【{sc.name}】 ({sc.workspace_id})"
+        draw_text(canvas, name_str, (card_x + 18, c1_y + 10), font_size=13, color=(0, 240, 220), bold=True)
+
+        path_str = f"路径:  {sc.workspace_dir}"
+        draw_text(canvas, path_str, (card_x + 18, c1_y + 34), font_size=12, color=self.COLOR_GRAY)
+
+        date_str = f"日期:  {sc.created_at or '未知'}"
+        draw_text(canvas, date_str, (card_x + 18, c1_y + 58), font_size=12, color=self.COLOR_DARK_GRAY)
+
+        desc_text = getattr(sc, "description", "") or "暂无备注"
+        desc_str = f"备注:  {desc_text}"
+        draw_text(canvas, desc_str, (card_x + 18, c1_y + 82), font_size=12, color=(240, 215, 140))
+
+        # ==== 2. 板块 #2: 质检放行仪表盘卡片 (通栏横幅) ====
+        c2_y = c1_y + c1_h + 10
+        c2_h = 60
         if sc.ba_solved:
             if sc.global_rmse_px < 0.8:
-                cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h), (20, 48, 32), -1)
-                draw_text(canvas, "✔ 工业高精质检合格 · 地图可用", (badge_x + 18, badge_y + 10),
+                cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (20, 48, 32), -1)
+                cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (0, 255, 160), 1)
+                draw_text(canvas, "✔ 工业高精质检合格 · 地图可用", (card_x + 18, c2_y + 10),
                           font_size=14, color=(0, 255, 180), bold=True)
-                draw_text(canvas, f"全局 RMSE 重投影误差: {sc.global_rmse_px:.3f} px (优于 0.8px)",
-                          (badge_x + 18, badge_y + 34), font_size=12, color=(140, 240, 180))
+                draw_text(canvas, f"全局 RMSE 重投影误差: {sc.global_rmse_px:.3f} px (优于 0.8px)   |   精度等级: 优良",
+                          (card_x + 18, c2_y + 33), font_size=12, color=(140, 240, 180))
             else:
-                cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h), (48, 36, 20), -1)
-                cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h), (0, 180, 255), 2)
-                draw_text(canvas, "⚠ 精度轻微超标 · 建议剔除粗差点", (badge_x + 18, badge_y + 10),
+                cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (48, 36, 20), -1)
+                cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (0, 180, 255), 1)
+                draw_text(canvas, "⚠ 精度轻微超标 · 建议剔除粗差点", (card_x + 18, c2_y + 10),
                           font_size=14, color=self.COLOR_GOLD, bold=True)
-                draw_text(canvas, f"全局 RMSE 重投影误差: {sc.global_rmse_px:.3f} px (需低于 0.8px)",
-                          (badge_x + 18, badge_y + 34), font_size=12, color=(240, 220, 140))
+                draw_text(canvas, f"全局 RMSE 重投影误差: {sc.global_rmse_px:.3f} px (需低于 0.8px)   |   建议核查多视角重叠度与角点清晰度",
+                          (card_x + 18, c2_y + 33), font_size=12, color=(240, 220, 140))
         else:
-            cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h), (34, 38, 48), -1)
-            cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h), (70, 80, 100), 1)
-            draw_text(canvas, "● 尚未执行 BA 平差 · 几何真值未定", (badge_x + 18, badge_y + 10),
+            cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (34, 38, 48), -1)
+            cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (70, 80, 100), 1)
+            draw_text(canvas, "● 尚未执行 BA 平差 · 几何真值未定", (card_x + 18, c2_y + 10),
                       font_size=14, color=self.COLOR_GRAY, bold=True)
-            draw_text(canvas, "在主仪表盘启动空间建图工作站开展两阶段深度求解", (badge_x + 18, badge_y + 34),
+            draw_text(canvas, "在主仪表盘启动空间建图工作站开展两阶段深度求解", (card_x + 18, c2_y + 33),
                       font_size=12, color=self.COLOR_DARK_GRAY)
 
-        # ==== 2. 中层：左右双排 4 块核心指标卡片 (y: 120~300) ====
-        card_y = box_y + 120
-        card_w = 444
-        card_h = 170
-
-        # 左卡：采样与有效性分析
-        c1_x = box_x + 16
-        cv2.rectangle(canvas, (c1_x, card_y), (c1_x + card_w, card_y + card_h), (22, 26, 36), -1)
-        cv2.rectangle(canvas, (c1_x, card_y), (c1_x + card_w, card_y + card_h), (40, 48, 66), 1)
-        draw_text(canvas, "样本采样与观测有效性 (Observations)", (c1_x + 18, card_y + 12), font_size=15, color=self.COLOR_WHITE, bold=True)
-        cv2.line(canvas, (c1_x + 16, card_y + 38), (c1_x + card_w - 16, card_y + 38), self.COLOR_BORDER, 1)
+        # ==== 3. 板块 #3: 样本采样与观测有效性 (Observations) 通栏卡片 ====
+        c3_y = c2_y + c2_h + 10
+        c3_h = 175
+        cv2.rectangle(canvas, (card_x, c3_y), (card_x + card_w, c3_y + c3_h), (22, 26, 36), -1)
+        cv2.rectangle(canvas, (card_x, c3_y), (card_x + card_w, c3_y + c3_h), (40, 48, 66), 1)
+        draw_text(canvas, "样本采样与观测有效性 (Observations)", (card_x + 18, c3_y + 12), font_size=15, color=self.COLOR_WHITE, bold=True)
+        cv2.line(canvas, (card_x + 16, c3_y + 38), (card_x + card_w - 16, c3_y + 38), self.COLOR_BORDER, 1)
 
         valid_ratio = (sc.active_image_count / max(1, sc.image_count)) * 100.0 if sc.image_count > 0 else 0.0
-        draw_text(canvas, f"• 场景物理原始照片总数 : {sc.image_count} 帧", (c1_x + 20, card_y + 50), font_size=13, color=self.COLOR_GRAY)
+        draw_text(canvas, f"• 场景物理原始照片总数 : {sc.image_count} 帧", (card_x + 20, c3_y + 50), font_size=13, color=self.COLOR_GRAY)
         draw_text(canvas, f"• 参与平差有效样本帧数 : {sc.active_image_count} 帧 (放行率 {valid_ratio:.1f}%)",
-                  (c1_x + 20, card_y + 78), font_size=13, color=(0, 240, 180) if valid_ratio > 80 else self.COLOR_GOLD)
-        draw_text(canvas, f"• 场景覆盖标靶标签总数 : {len(sc.valid_tag_ids)} 个唯一 AprilTag", (c1_x + 20, card_y + 106), font_size=13, color=self.COLOR_CYAN)
+                  (card_x + 20, c3_y + 78), font_size=13, color=(0, 240, 180) if valid_ratio > 80 else self.COLOR_GOLD)
+        draw_text(canvas, f"• 场景覆盖标靶标签总数 : {len(sc.valid_tag_ids)} 个唯一 AprilTag", (card_x + 20, c3_y + 106), font_size=13, color=self.COLOR_CYAN)
         draw_text(canvas, f"• 生产用途采样照片总数 : {sc.prod_image_count} 帧 (工位内隔离存放)",
-                  (c1_x + 20, card_y + 134), font_size=13, color=self.COLOR_GRAY)
+                  (card_x + 20, c3_y + 134), font_size=13, color=self.COLOR_GRAY)
 
-        # 右卡：空间 3D 几何健康度
-        c2_x = box_x + 16 + card_w + 20
-        cv2.rectangle(canvas, (c2_x, card_y), (c2_x + card_w, card_y + card_h), (22, 26, 36), -1)
-        cv2.rectangle(canvas, (c2_x, card_y), (c2_x + card_w, card_y + card_h), (40, 48, 66), 1)
-        draw_text(canvas, "3D 空间拓扑与几何网络健康度 (Geometry)", (c2_x + 18, card_y + 12), font_size=15, color=self.COLOR_WHITE, bold=True)
-        cv2.line(canvas, (c2_x + 16, card_y + 38), (c2_x + card_w - 16, card_y + 38), self.COLOR_BORDER, 1)
+        # ==== 4. 板块 #4: 3D 空间拓扑与几何网络健康度 (Geometry) 通栏卡片 ====
+        c4_y = c3_y + c3_h + 10
+        c4_h = 175
+        cv2.rectangle(canvas, (card_x, c4_y), (card_x + card_w, c4_y + c4_h), (22, 26, 36), -1)
+        cv2.rectangle(canvas, (card_x, c4_y), (card_x + card_w, c4_y + c4_h), (40, 48, 66), 1)
+        draw_text(canvas, "3D 空间拓扑与几何网络健康度 (Geometry)", (card_x + 18, c4_y + 12), font_size=15, color=self.COLOR_WHITE, bold=True)
+        cv2.line(canvas, (card_x + 16, c4_y + 38), (card_x + card_w - 16, c4_y + 38), self.COLOR_BORDER, 1)
 
         span_mm = getattr(sc, "spatial_span_mm", 685.0 if sc.ba_solved else 0.0)
         loop_cnt = getattr(sc, "loop_closures", max(15, sc.image_count * 3) if sc.ba_solved else 0)
-        draw_text(canvas, f"• 空间基线物理最大跨度 : {span_mm:.1f} mm (立体视野覆盖)", (c2_x + 20, card_y + 50), font_size=13, color=self.COLOR_GRAY)
-        draw_text(canvas, f"• 空间闭环刚性几何约束 : {loop_cnt} 条跨视角闭环", (c2_x + 20, card_y + 78), font_size=13, color=(0, 240, 180) if loop_cnt >= 10 else self.COLOR_GOLD)
-        draw_text(canvas, f"• 标定核心求解器算法   : Ceres/Levenberg-Marquardt 两阶段", (c2_x + 20, card_y + 106), font_size=13, color=self.COLOR_CYAN)
-        draw_text(canvas, f"• 粗差点自动剪枝状态   : 启用 (Huber Loss 稳健核函数)", (c2_x + 20, card_y + 134), font_size=13, color=(0, 220, 255))
+        draw_text(canvas, f"• 空间基线物理最大跨度 : {span_mm:.1f} mm (立体视野覆盖)", (card_x + 20, c4_y + 50), font_size=13, color=self.COLOR_GRAY)
+        draw_text(canvas, f"• 空间闭环刚性几何约束 : {loop_cnt} 条跨视角闭环", (card_x + 20, c4_y + 78), font_size=13, color=(0, 240, 180) if loop_cnt >= 10 else self.COLOR_GOLD)
+        draw_text(canvas, f"• 标定核心求解器算法   : Ceres/Levenberg-Marquardt 两阶段优化", (card_x + 20, c4_y + 106), font_size=13, color=self.COLOR_CYAN)
+        draw_text(canvas, f"• 粗差点自动剪枝状态   : 启用 (Huber Loss 稳健核函数)", (card_x + 20, c4_y + 134), font_size=13, color=(0, 220, 255))
 
     def _render_footer(self, canvas: np.ndarray, state: HubState):
-        """渲染底部状态提示栏 (670~720px)
-        (快捷键提示行与 SANDBOX 状态胶囊已移除: 状态已合并至图片页签右上角状态胶囊)
-        """
+        """渲染底部暗色底栏 (670~720px) - 保持纯净留白，无冗余干扰文本"""
         cv2.rectangle(canvas, (0, 670), (self.canvas_w, 720), (12, 14, 18), -1)
         cv2.line(canvas, (0, 670), (self.canvas_w, 670), self.COLOR_BORDER, 1)
 
-        # 系统反馈 Toast 与说明窗提示 (无内容时保持纯净留白)
-        now = time.time()
-        if state.toast_time > now:
-            draw_text(canvas, f"[系统反馈] {state.toast_msg}", (20, 684), font_size=16, color=(0, 255, 200), bold=True)
-
     def _render_status_capsule(self, canvas: np.ndarray, state: HubState, sc):
-        """在图片页签右上角渲染【沙盒状态胶囊】 (由底部 Footer 迁移并与页面帧数信息合并展示)
-        x: 1010~1264, y: 54~82 (与单行标题同一行, 不遮挡下方卡片网格)
-        """
-        if not sc:
-            return
-        cx, cy, cw, ch = 1010, 54, 254, 28
-
-        if sc.ba_solved:
-            status_text = f"SANDBOX: 已平差 {sc.global_rmse_px:.2f}px"
-            lamp_color = (0, 255, 140)
-            bg_box, border_box = (16, 32, 24), (20, 80, 50)
-        else:
-            status_text = "SANDBOX: 草稿沙盒"
-            lamp_color = (140, 180, 220)
-            bg_box, border_box = (20, 24, 34), (35, 48, 68)
-
-        cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), bg_box, -1)
-        cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), border_box, 1)
-
-        # 状态指示圆点与外发光环
-        cv2.circle(canvas, (cx + 18, cy + ch // 2), 5, lamp_color, -1)
-        cv2.circle(canvas, (cx + 18, cy + ch // 2), 8, lamp_color, 1)
-
-        draw_text(canvas, status_text, (cx + 34, cy + 5), font_size=13, color=lamp_color, bold=True)
+        """右上角沙盒状态胶囊已移除，在所有页签保持纯净"""
+        return
 
     def _render_context_menu(self, canvas: np.ndarray, state: HubState):
         """渲染场景卡片专属的右键上下文菜单 (Context Menu)"""
@@ -766,6 +736,7 @@ class HubRenderer:
         menu_text_col = GuiTheme.BTN_TEXT  # 全部条目统一常态文字色，悬停态由下方逻辑高亮
         menu_items = [
             ("rename", "重命名友好别名", menu_text_col, ""),
+            ("remark", "修改工位备注", menu_text_col, ""),
             ("clone", "克隆此 Workspace", menu_text_col, ""),
             ("folder", "打开物理目录", menu_text_col, ""),
             ("delete", "删除此 Workspace", menu_text_col, ""),

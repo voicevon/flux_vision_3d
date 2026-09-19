@@ -461,6 +461,17 @@ class WorkspaceManager:
         self._cached_workspaces[ws_id] = ws
         return True
 
+    def update_workspace_description(self, ws_id: str, new_desc: str) -> bool:
+        """修改指定工位的备注说明文本并持久化至元数据"""
+        target_dir = os.path.join(self.workspaces_dir, ws_id)
+        ws = Workspace.load(target_dir)
+        if not ws:
+            return False
+        ws.description = new_desc.strip()
+        ws.save_meta()
+        self._cached_workspaces[ws_id] = ws
+        return True
+
     def delete_workspace(self, ws_id: str) -> Tuple[bool, str]:
         """物理删除指定工位"""
         ws_dir = os.path.join(self.workspaces_dir, ws_id)

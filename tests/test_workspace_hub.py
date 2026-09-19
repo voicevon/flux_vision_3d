@@ -489,6 +489,60 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertIn("workspace_id", cfg)
         self.assertEqual(cfg["workspace_id"], ws.workspace_id)
 
+    def test_workspace_description_update(self):
+        """测试工位备注(description)更新并原子持久化"""
+        state = HubState(self.workspace_mgr, force_mock=True)
+        cur_ws = state.get_selected_workspace()
+        self.assertIsNotNone(cur_ws)
+
+        new_desc = "工位专属备注: 机器人3号位垂直测试"
+        ok = state.update_current_workspace_description(new_desc)
+        self.assertTrue(ok)
+        self.assertEqual(cur_ws.description, new_desc)
+
+        # 重新从磁盘载入验证持久化
+        reloaded_ws = self.workspace_mgr.get_workspace_by_id(cur_ws.workspace_id, force_refresh=True)
+        self.assertIsNotNone(reloaded_ws)
+        self.assertEqual(reloaded_ws.description, new_desc)
+
+    def test_context_menu_remark_and_hit_test(self):
+        """测试右键菜单 5 项排布与 hit_test 判定"""
+        state = HubState(self.workspace_mgr, force_mock=True)
+        renderer = HubRenderer()
+
+        # 打开上下文菜单在 (100, 100)
+        state.open_context_menu(100, 100, 0)
+        self.assertTrue(state.context_menu_open)
+
+        # 检查 5 个菜单项的 hit_test (每个 item 高 32, pad_y 6)
+        # item 0: rename (y: 106 ~ 138)
+        # item 1: remark (y: 138 ~ 170)
+        # item 2: clone  (y: 170 ~ 202)
+        # item 3: folder (y: 202 ~ 234)
+        # item 4: delete (y: 234 ~ 266)
+        hit_item_0 = renderer.hit_test(150, 120, state)
+        self.assertEqual(hit_item_0, ("ctx_item", 0))
+
+        hit_item_1 = renderer.hit_test(150, 150, state)
+        self.assertEqual(hit_item_1, ("ctx_item", 1))
+
+        hit_item_4 = renderer.hit_test(150, 250, state)
+        self.assertEqual(hit_item_4, ("ctx_item", 4))
+
+    def test_report_panel_vertical_rendering(self):
+        """测试体检报告页签垂直排列面板的渲染"""
+        state = HubState(self.workspace_mgr, force_mock=True)
+        state.active_tab = HubState.TAB_REPORT
+        cur_ws = state.get_selected_workspace()
+        cur_ws.description = "产线高精度工位备注"
+        cur_ws.ba_solved = True
+        cur_ws.global_rmse_px = 0.45
+
+        renderer = HubRenderer()
+        rendered = renderer.render(state)
+        self.assertIsNotNone(rendered)
+        self.assertEqual(rendered.shape, (720, 1280, 3))
+
 
 if __name__ == "__main__":
     unittest.main()

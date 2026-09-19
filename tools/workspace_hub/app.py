@@ -184,7 +184,7 @@ class WorkspaceHubApp:
             menu_w = 216
             item_h = 32
             pad_y = 6
-            menu_items_count = 4
+            menu_items_count = 5
             menu_h = pad_y * 2 + menu_items_count * item_h
             mx, my = self.state.context_menu_pos
 
@@ -198,17 +198,19 @@ class WorkspaceHubApp:
             if my < 50:
                 my = 50
 
-            # 判定是否点击在具体菜单项上 (4项纯操作菜单)
+            # 判定是否点击在具体菜单项上 (5项纯操作菜单)
             if mx <= x <= mx + menu_w and (my + pad_y) <= y <= (my + pad_y + menu_items_count * item_h):
                 item_idx = (y - (my + pad_y)) // item_h
                 self.state.close_context_menu()
                 if item_idx == 0:
                     self._handle_rename_workspace()
                 elif item_idx == 1:
-                    self._handle_clone_workspace()
+                    self._handle_edit_description()
                 elif item_idx == 2:
-                    self._handle_open_directory()
+                    self._handle_clone_workspace()
                 elif item_idx == 3:
+                    self._handle_open_directory()
+                elif item_idx == 4:
                     self._handle_delete_workspace()
                 return
 
@@ -458,6 +460,21 @@ class WorkspaceHubApp:
         )
         if new_name and new_name != ws.name:
             self.state.rename_current_workspace(new_name)
+
+    def _handle_edit_description(self):
+        """修改 Workspace 备注说明 (支持中文单行文本)"""
+        ws = self.state.get_selected_workspace()
+        if not ws:
+            return
+
+        cur_desc = getattr(ws, "description", "") or ""
+        new_desc = prompt_input_text(
+            "修改工位备注",
+            f"请输入工位【{ws.name}】的备注信息 (单行文本):",
+            initial=cur_desc
+        )
+        if new_desc is not None:
+            self.state.update_current_workspace_description(new_desc.strip())
 
     def _handle_create_workspace(self):
         """新建 Workspace (支持中文名称弹窗)"""

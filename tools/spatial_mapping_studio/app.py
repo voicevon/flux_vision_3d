@@ -60,6 +60,7 @@ from src.utils.viewport_manager import (
 from src.utils.logger import get_logger
 from tools.spatial_mapping_studio.mapping_events import MappingEventMixin
 from tools.spatial_mapping_studio.mapping_workflows import MappingWorkflowMixin
+from src.calibration.workspace_manager import WorkspaceManager
 
 try:
     from tools.window_helper import force_window_focus
@@ -74,17 +75,10 @@ except ImportError:
 
 log = get_logger(__name__)
 
-try:
-    from src.calibration.workspace_manager import WorkspaceManager
-    _cur_ws = WorkspaceManager().get_current_workspace()
-    CALIB_IMAGES_DIR = _cur_ws.calib_raw_images_dir
-    DEFAULT_MAP_PATH = _cur_ws.map_path
-    MANIFEST_PATH = _cur_ws.calib_manifest_path
-except Exception:
-    _ws_fallback = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration")
-    CALIB_IMAGES_DIR = os.path.join(_ws_fallback, "raw_images")
-    DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "tags_map.yaml")
-    MANIFEST_PATH = os.path.join(_ws_fallback, "tag_observations.yaml")
+_ws_fallback = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration")
+CALIB_IMAGES_DIR = os.path.join(_ws_fallback, "raw_images")
+DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "tags_map.yaml")
+MANIFEST_PATH = os.path.join(_ws_fallback, "tag_observations.yaml")
 
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
@@ -110,11 +104,10 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
 
         # 工位管理器感知与初始目标工位装配
         try:
-            from src.calibration.workspace_manager import WorkspaceManager
             self.workspace_mgr = WorkspaceManager()
             if workspace_id:
                 ws = self.workspace_mgr.get_workspace_by_id(workspace_id)
-            elif image_dir and image_dir != CALIB_IMAGES_DIR:
+            elif image_dir:
                 norm_target = os.path.normpath(image_dir)
                 ws = next((s for s in self.workspace_mgr.list_workspaces()
                            if os.path.normpath(s.calib_raw_images_dir) == norm_target or os.path.normpath(s.workspace_dir) == norm_target), None)
@@ -125,6 +118,8 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
                 ws = self.workspace_mgr.get_current_workspace()
             self.current_workspace = ws
             self.current_workspace_id = ws.workspace_id if ws else ""
+            if ws:
+                self.workspace_mgr.set_active_workspace(ws.workspace_id)
         except Exception:
             self.workspace_mgr = None
             self.current_workspace = None
@@ -248,7 +243,10 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
         except Exception:
             pass
 
-        # 2. 重新指向新工位
+        # 2. 持久化当前工位选择至系统默认标记
+        self.workspace_mgr.set_active_workspace(target_ws.workspace_id)
+
+        # 3. 重新指向新工位
         self.current_workspace = target_ws
         self.current_workspace_id = target_ws.workspace_id
         self.image_dir = target_ws.calib_raw_images_dir

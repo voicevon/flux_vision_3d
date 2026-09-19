@@ -175,8 +175,14 @@ class HubState:
             self.selected_workspace_idx = idx
             self.selected_image_idx = 0
             self.image_grid_offset = 0
+            self.selected_prod_image_idx = 0
+            self.prod_grid_offset = 0
         self.load_current_workspace_images()
+        self.load_prod_images()
         self.save_selected_workspace()
+        ws = self.get_selected_workspace()
+        if ws:
+            self.workspace_mgr.set_active_workspace(ws.workspace_id)
 
     def refresh_workspaces(self):
         """刷新工位列表"""
@@ -217,7 +223,10 @@ class HubState:
             self.selected_workspace_idx = new_idx
             self.selected_image_idx = 0
             self.image_grid_offset = 0
+            self.selected_prod_image_idx = 0
+            self.prod_grid_offset = 0
             self.load_current_workspace_images()
+            self.load_prod_images()
         self.save_selected_workspace()
 
     def load_current_workspace_images(self):
@@ -283,7 +292,11 @@ class HubState:
             self.prod_grid_offset = 0
             return
 
-        self.prod_images = sorted(glob.glob(os.path.join(ws.prod_raw_images_dir, "*.png")))
+        exts = ("*.png", "*.jpg", "*.jpeg", "*.PNG", "*.JPG", "*.JPEG")
+        imgs = []
+        for ext in exts:
+            imgs.extend(glob.glob(os.path.join(ws.prod_raw_images_dir, ext)))
+        self.prod_images = sorted(list(set(imgs)))
         if self.prod_images:
             self.selected_prod_image_idx = max(0, min(self.selected_prod_image_idx, len(self.prod_images) - 1))
         else:
@@ -527,6 +540,10 @@ class HubState:
         self.view_mode = self.VIEW_STANDARD
         if tab != self.active_tab:
             self.active_tab = tab
+            if tab == self.TAB_PROD_IMAGES:
+                self.load_prod_images()
+            elif tab == self.TAB_CALIB_IMAGES:
+                self.load_current_workspace_images()
             names = {
                 self.TAB_CALIB_IMAGES: "标定相册",
                 self.TAB_PROD_IMAGES: "生产相册",
@@ -548,6 +565,19 @@ class HubState:
             ws.name = clean
             self.refresh_workspaces()
             self.set_toast(f"工位名称已成功修改为: 【{clean}】")
+        return ok
+
+    def update_current_workspace_description(self, new_desc: str) -> bool:
+        """更新当前选中工位的备注说明文本 (支持中文单行文本)"""
+        ws = self.get_selected_workspace()
+        if not ws:
+            return False
+        clean = str(new_desc).strip()
+        ok = self.workspace_mgr.update_workspace_description(ws.workspace_id, clean)
+        if ok:
+            ws.description = clean
+            self.refresh_workspaces()
+            self.set_toast(f"工位备注已成功修改为: 【{clean or '无'}】")
         return ok
 
     def open_context_menu(self, x: int, y: int, ws_idx: int):

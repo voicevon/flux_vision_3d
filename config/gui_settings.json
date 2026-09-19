@@ -7,13 +7,13 @@
     "scale_pct": 110,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-20 00:27:29"
+    "updated_at": "2026-09-20 07:14:39"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-20 00:27:56",
+    "updated_at": "2026-09-20 06:47:41",
     "viewer_state": {
       "workspace_id": "20260916_145246_Home_real",
       "camera_type": "realsense",
@@ -34,11 +34,11 @@
     "scale_pct": 120,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-20 00:26:21",
+    "updated_at": "2026-09-20 07:14:37",
     "hub_state": {
-      "selected_workspace_id": "20260918_220702_Home_real",
-      "selected_workspace_name": "Home_real_对照组",
-      "updated_at": "2026-09-20 00:26:18"
+      "selected_workspace_id": "20260915_bench_default",
+      "selected_workspace_name": "首次测试_Only15",
+      "updated_at": "2026-09-20 07:15:51"
     }
   },
   "hardware_config": {
@@ -51,7 +51,7 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-20 00:26:35",
+    "updated_at": "2026-09-20 06:48:41",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1920x1080",
@@ -62,7 +62,7 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-20 00:27:23"
+    "updated_at": "2026-09-20 06:47:24"
   },
   "d435_viewer": {
     "scale_pct": 100,
