@@ -3,7 +3,7 @@
 ==============================================
 提供现代深色科技风格 GUI 界面：
 - Workspace 画廊管理 (选择、切换、新建、重命名、克隆、删除)
-- 历史采样照片缩略图流与单帧大图自适应视口 (支持 [F] 键全宽放大)
+- 历史采样照片卡片网格墙与全宽大图自适应视口 (双击卡片放大)
 - 几何健康度与两阶段 BA 平差残差看板
 - 数据工作空间与生命周期管理
 - 一键直通标定离线 Studio 深度平差与原子发布至生产环境
@@ -25,7 +25,7 @@ if PROJECT_ROOT not in sys.path:
 from src.calibration.workspace_manager import WorkspaceManager
 from src.utils.gui_window_manager import GuiWindowManager
 from tools.workspace_hub.hub_state import HubState
-from tools.workspace_hub.hub_renderer import HubRenderer, HELP_MODAL_W, HELP_MODAL_H
+from tools.workspace_hub.hub_renderer import HubRenderer, HELP_MODAL_W, HELP_MODAL_H, grid_hit_test
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -59,7 +59,8 @@ class WorkspaceHubApp:
             app_id="workspace_hub",
             base_w=1280,
             base_h=720,
-            settings_file=settings_file
+            settings_file=settings_file,
+            enable_keyboard_zoom=False  # 全鼠标化: 不启用 Ctrl/+/- 键盘缩放热键
         )
         self.workspace_mgr = WorkspaceManager()
         self.state = HubState(self.workspace_mgr, force_mock=force_mock)
@@ -70,7 +71,7 @@ class WorkspaceHubApp:
         self._running = True
 
         if self.win_mgr.scale_pct != 100 or self.win_mgr.canvas_w != 1280 or self.win_mgr.canvas_h != 720:
-            self.state.set_toast(f"已恢复偏好设置：放大镜 {self.win_mgr.scale_pct}%，视窗 {self.win_mgr.canvas_w}×{self.win_mgr.canvas_h} (Ctrl+0 复位)")
+            self.state.set_toast(f"已恢复偏好设置：放大镜 {self.win_mgr.scale_pct}%，视窗 {self.win_mgr.canvas_w}×{self.win_mgr.canvas_h}")
 
     def run(self):
         """主事件循环"""
@@ -108,114 +109,8 @@ class WorkspaceHubApp:
 
             cv2.imshow(self.window_name, present_canvas)
 
-            # 3. 使用 waitKeyEx 兼容 Windows 扩展方向键与业务按键
-            raw_key = cv2.waitKeyEx(15)
-            if raw_key == -1:
-                continue
-
-            # 处理后备键盘缩放 (若未在物理级截获)
-            fb_changed, fb_toast = self.win_mgr.handle_keyboard_fallback(raw_key)
-            if fb_changed and fb_toast:
-                self.state.set_toast(fb_toast)
-                continue
-
-            key = raw_key & 0xFF
-
-            # =================== 场景右键上下文菜单打开时的按键处理 ===================
-            if self.state.context_menu_open:
-                if raw_key in (27, ord('q'), ord('Q')):
-                    self.state.close_context_menu()
-                    self.state.set_toast("已关闭右键菜单。")
-                    continue
-
-            # =================== 生产系统机制 Help 弹窗模式事件 ===================
-            if self.state.is_help_modal_open:
-                # [ESC] / [H] / [Q] / [M]: 关闭 Help 弹窗
-                if raw_key in (27, ord('q'), ord('Q'), ord('h'), ord('H'), ord('m'), ord('M')):
-                    self.state.is_help_modal_open = False
-                    self.state.set_toast("已关闭生产系统机制说明窗。")
-                    continue
-                elif key in (ord('p'), ord('P')):
-                    self.state.is_help_modal_open = False
-                    self._handle_publish_to_production()
-                    continue
-                continue
-
-            # [ESC] 或 [Q] 退出逻辑 (非说明模式)
-            if raw_key in (27, ord('q'), ord('Q')):
-                break
-
-            # [H] 切换生产机制解析说明窗
-            if key in (ord('h'), ord('H')):
-                self.state.toggle_help_modal()
-                continue
-
-            # [C] 启动外部专属多视角交互采图向导
-            if key in (ord('c'), ord('C')):
-                self._launch_capture_wizard()
-                continue
-
-            # [W] 管理当前 Workspace 标靶 ID 白名单 (tag_whitelist.yaml)
-            if key in (ord('w'), ord('W')):
-                self._handle_tag_whitelist()
-                continue
-
-            # =================== 标准看板模式下的事件 (多键位全覆盖) ===================
-            # [↑] 上方向键: Windows waitKeyEx 2490368 / 65362 或 小键盘 8
-            if raw_key in (2490368, 65362, ord('8')) or key in (ord('8'),):
-                self.state.select_workspace_by_offset(-1)
-
-            # [↓] 下方向键: Windows waitKeyEx 2621440 / 65364 或 小键盘 2
-            elif raw_key in (2621440, 65364, ord('2')) or key in (ord('2'),):
-                self.state.select_workspace_by_offset(1)
-
-            # [←] 左方向键: Windows waitKeyEx 2424832 / 65361 或 'a' / 小键盘 4 / 'j'
-            elif raw_key in (2424832, 65361, ord('a'), ord('A'), ord('4'), ord('j'), ord('J')) or key in (ord('a'), ord('A')):
-                self.state.select_image_by_offset(-1)
-
-            # [→] 右方向键: Windows waitKeyEx 2555904 / 65363 或 'd' / 小键盘 6 / 'l'
-            elif raw_key in (2555904, 65363, ord('d'), ord('D'), ord('6'), ord('l'), ord('L')) or key in (ord('d'), ord('D')):
-                self.state.select_image_by_offset(1)
-
-            # [Enter] (回车键: 13, 10): 启动空间建图工作站
-            elif raw_key in (13, 10):
-                self._launch_spatial_mapping_studio()
-
-            # [F] 顺次循环切换三模态视图: 标准三栏 -> 全宽大图 -> 纯净健康大屏
-            elif key in (ord('f'), ord('F')):
-                self.state.cycle_view_mode()
-
-            # [Del] / [Delete] 删除当前选中的照片帧
-            elif raw_key in (3014656, 65535, 127, 8) or key in (127, 8):
-                self.state.delete_selected_image()
-
-            # [R] 重命名当前 Workspace 显示名称 (支持中文)
-            elif key in (ord('r'), ord('R')):
-                self._handle_rename_workspace()
-
-            # [N] 新建 Workspace (支持弹窗输入中文别名)
-            elif key in (ord('n'), ord('N')):
-                self._handle_create_workspace()
-
-            # [O] 或 [S] 启动空间建图工作站
-            elif key in (ord('o'), ord('O'), ord('s'), ord('S')):
-                self._launch_spatial_mapping_studio()
-
-            # [P] 生效为生产运行基准 (原子覆盖生产基准)
-            elif key in (ord('p'), ord('P')):
-                self._handle_publish_to_production()
-
-            # [K] 克隆 Workspace 副本
-            elif key in (ord('k'), ord('K')):
-                self._handle_clone_workspace()
-
-            # [V] 打开本地物理目录
-            elif key in (ord('v'), ord('V')):
-                self._handle_open_directory()
-
-            # [X] 或 [Delete] 删除 Workspace
-            elif raw_key in (ord('x'), ord('X'), 3014656):
-                self._handle_delete_workspace()
+            # 3. waitKeyEx 仅用于驱动窗口消息泵刷新画面 (项目已全面鼠标化, 不响应任何键盘快捷键)
+            cv2.waitKeyEx(15)
 
         # 退出清理
         cv2.destroyAllWindows()
@@ -255,11 +150,11 @@ class WorkspaceHubApp:
 
         # 1.1 鼠标右键点击卡片：弹出 Workspace 专属上下文菜单 (Context Menu)
         if event == cv2.EVENT_RBUTTONDOWN:
-            if 10 <= x <= 330 and 90 <= y <= 480:
+            if 10 <= x <= 330 and 58 <= y <= 520:
                 card_h = 70
                 gap = 8
-                idx_in_view = (y - 90) // (card_h + gap)
-                max_cards = 5
+                idx_in_view = (y - 58) // (card_h + gap)
+                max_cards = 6
                 scroll_start = max(0, self.state.selected_workspace_idx - max_cards + 1)
                 target_idx = scroll_start + idx_in_view
                 if 0 <= target_idx < len(self.state.workspaces):
@@ -270,14 +165,18 @@ class WorkspaceHubApp:
         # 2. 普通滚轮极速翻页/切换 Workspace (未按 Ctrl 时)
         if event == cv2.EVENT_MOUSEWHEEL:
             delta = -1 if flags > 0 else 1
-            if x <= 340 and 80 <= y <= 480:
+            if x <= 340 and 58 <= y <= 520:
                 self.state.select_workspace_by_offset(delta)
-            else:
+            elif self.state.view_mode == HubState.VIEW_EXPANDED:
+                # 全宽大图沉浸模式下滚轮切换大图
                 self.state.select_image_by_offset(delta)
+            else:
+                # 卡片网格墙模式下滚轮翻页
+                self._scroll_grid_for_active_tab(delta)
             return
 
-        # 后续仅处理鼠标左键点击
-        if event != cv2.EVENT_LBUTTONDOWN:
+        # 后续仅处理鼠标左键点击 (单击选中 / 双击放大)
+        if event not in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_LBUTTONDBLCLK):
             return
 
         # =================== 2.5 Workspace 右键上下文菜单处于激活状态下的点击 ===================
@@ -342,28 +241,32 @@ class WorkspaceHubApp:
             return
 
         # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
-        # 4.0 顶部标题栏交互 (仅 [H] 与 [X])
-        # 4.0.1 [H] 生产机制说明按钮 (x: 940~1070, y: 8~42)
-        if 940 <= x <= 1070 and 8 <= y <= 42:
-            self.state.toggle_help_modal()
+        # 4.0 顶部标题栏交互 (右侧动态区四页签 Tab + [退出] 按钮)
+        # 4.0.0 四页签 Tab 胶囊 (x: 360~832, y: 8~42, 每片 112px 宽、间距 8px)
+        if 8 <= y <= 42 and 360 <= x <= 832:
+            tab_idx = (x - 360) // 120
+            if 0 <= tab_idx < 4:
+                self.state.set_tab(HubState.TAB_ORDER[tab_idx])
             return
+
+        # 4.0.1 说明窗按钮已移除 (说明窗改由点击工位卡片徽章呼出)
 
         # 4.0.2 [X] 退出按钮 (x: 1085~1265, y: 8~42)
         if 1085 <= x <= 1265 and 8 <= y <= 42:
             self._running = False
             return
 
-        # 5.1 点击左侧 Workspace 列表卡片 (x: 10~330, y: 90~560, 支持 6 张卡片)
-        if 10 <= x <= 330 and 90 <= y <= 560:
+        # 5.1 点击左侧 Workspace 列表卡片 (x: 10~330, y: 58~520, 支持 6 张卡片)
+        if 10 <= x <= 330 and 58 <= y <= 520:
             card_h = 70
             gap = 8
-            idx_in_view = (y - 90) // (card_h + gap)
+            idx_in_view = (y - 58) // (card_h + gap)
             max_cards = 6
             scroll_start = max(0, self.state.selected_workspace_idx - max_cards + 1)
             target_idx = scroll_start + idx_in_view
             if 0 <= target_idx < len(self.state.workspaces):
                 target_ws = self.state.workspaces[target_idx]
-                card_cy = 90 + idx_in_view * (card_h + gap)
+                card_cy = 58 + idx_in_view * (card_h + gap)
 
                 # 检查是否直接点击了右侧操作胶囊 (x: 226~326, y: card_cy + 18 ~ card_cy + 54)
                 if 226 <= x <= 326 and card_cy + 18 <= y <= card_cy + 54:
@@ -410,58 +313,54 @@ class WorkspaceHubApp:
                     self.state.toggle_expanded_preview()
                     return
 
-            # 点击大图画面本身也可以切换回标准看板
-            if 340 <= x <= 1280 and 96 <= y <= 670:
+            # 双击大图画面返回卡片网格墙 (与卡片墙的双击放大操作对称)
+            if event == cv2.EVENT_LBUTTONDBLCLK and 340 <= x <= 1280 and 96 <= y <= 670:
                 self.state.toggle_expanded_preview()
                 return
 
-        # 5.5 标准三栏看板模式下的右侧相册控制栏交互 (x: 800~1280, y: 56~90)
+        # 5.5 右侧动态区四页签内容交互 (x: 340~1280, y: 50~670)
         if not self.state.expanded_preview_mode:
-            if 56 <= y <= 90:
-                # 5.5.1 三段式视图模式切换 Tab 胶囊 (x: 940~1084)
-                if 940 <= x <= 988:
-                    self.state.set_view_mode(HubState.VIEW_STANDARD)
+            tab = self.state.active_tab
+
+            # 5.5.1 页签顶部操作按钮行 (y: 58~88, 仅 Tag 白名单页签保留按钮)
+            if 58 <= y <= 88 and tab == HubState.TAB_WHITELIST:
+                # Tag 白名单: [↻ 刷新] [W 编辑]
+                if 1092 <= x <= 1170:
+                    self.state.refresh_whitelist_cache()
+                    self.state.set_toast("已刷新 Tag 白名单状态。")
                     return
-                elif 989 <= x <= 1036:
-                    self.state.set_view_mode(HubState.VIEW_EXPANDED)
-                    return
-                elif 1037 <= x <= 1084:
-                    self.state.set_view_mode(HubState.VIEW_DASHBOARD)
+                if 1176 <= x <= 1270:
+                    self._handle_tag_whitelist()
                     return
 
-                # 5.5.2 相册控制实体按钮组: [<] [>] [F] [Del]
-                # [◀] 按钮
-                if 1092 <= x <= 1124:
-                    self.state.select_image_by_offset(-1)
-                    return
-                # [▶] 按钮
-                if 1128 <= x <= 1160:
-                    self.state.select_image_by_offset(1)
-                    return
-                # [F] 全宽放大按钮
-                if 1164 <= x <= 1214:
-                    self.state.toggle_expanded_preview()
-                    return
-                # [Del] 删除选中照片
-                if 1218 <= x <= 1270:
-                    self.state.delete_selected_image()
-                    return
-
-            # 点击缩略图水平滚动带 (x: 816~1260, y: 96~158)
-            if 816 <= x <= 1260 and 96 <= y <= 158:
-                tw = 98
-                pad = 8
-                thumb_idx = (x - 816) // (tw + pad)
-                offset = self.state.image_strip_offset
-                target_img_idx = offset + thumb_idx
-                if 0 <= target_img_idx < len(self.state.current_images):
-                    self.state.selected_image_idx = target_img_idx
+            # 5.5.2 图片卡片网格墙点击: 单击选中卡片, 双击放大查看
+            cell_idx = grid_hit_test(x, y)
+            if cell_idx is not None:
+                if tab == HubState.TAB_CALIB_IMAGES:
+                    target = self.state.image_grid_offset + cell_idx
+                    if 0 <= target < len(self.state.current_images):
+                        self.state.select_image_at_index(target)
+                        if event == cv2.EVENT_LBUTTONDBLCLK:
+                            self.state.toggle_expanded_preview()
+                elif tab == HubState.TAB_PROD_IMAGES:
+                    target = self.state.prod_grid_offset + cell_idx
+                    if 0 <= target < len(self.state.prod_images):
+                        self.state.select_prod_image_at_index(target)
                 return
 
-            # 点击单帧大图视口区域：进入全宽大图模式
-            if 816 <= x <= 1260 and 168 <= y <= 660:
-                self.state.toggle_expanded_preview()
-                return
+    def _select_image_for_active_tab(self, delta: int):
+        """按当前激活页签切换对应的相册照片 (标定相册/生产相册; 其余页签无相册则忽略)"""
+        if self.state.view_mode == HubState.VIEW_EXPANDED or self.state.active_tab == HubState.TAB_CALIB_IMAGES:
+            self.state.select_image_by_offset(delta)
+        elif self.state.active_tab == HubState.TAB_PROD_IMAGES:
+            self.state.select_prod_image_by_offset(delta)
+
+    def _scroll_grid_for_active_tab(self, delta_rows: int):
+        """按当前激活页签滚动卡片网格 (滚轮驱动)"""
+        if self.state.active_tab == HubState.TAB_PROD_IMAGES:
+            self.state.scroll_prod_grid(delta_rows)
+        else:
+            self.state.scroll_image_grid(delta_rows)
 
     def _handle_publish_to_production(self):
         """生效为生产运行地图 (覆盖全局 config/tags_map.yaml)"""
@@ -619,7 +518,7 @@ class WorkspaceHubApp:
                 break
         self.state.selected_workspace_idx = target_idx
         self.state.selected_image_idx = 0
-        self.state.image_strip_offset = 0
+        self.state.image_grid_offset = 0
         self.state.load_current_workspace_images()
         self.state.set_toast(f"已成功新建 Workspace: 【{new_ws.name}】({new_ws.workspace_id})，按 [C] 开始采图！")
 
@@ -650,7 +549,7 @@ class WorkspaceHubApp:
                     break
             self.state.selected_workspace_idx = target_idx
             self.state.selected_image_idx = 0
-            self.state.image_strip_offset = 0
+            self.state.image_grid_offset = 0
             self.state.load_current_workspace_images()
             self.state.set_toast(f"已成功克隆 Workspace: 【{cloned.name}】并定位至新 Workspace！")
         else:

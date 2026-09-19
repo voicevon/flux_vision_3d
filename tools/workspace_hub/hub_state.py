@@ -43,10 +43,22 @@ def imwrite_unicode(filepath: str, img: np.ndarray) -> bool:
 class HubState:
     """工作空间中枢 (Workspace Hub) 统一状态与缓存模型"""
 
-    # 核心视图模式 (标准三栏 / 全宽大图 / 纯净数据看板)
-    VIEW_STANDARD = "standard"    # 模式1: 标准三栏 (左340, 中460, 右480)
-    VIEW_EXPANDED = "expanded"    # 模式2: 全宽大图 (左340, 右940大图铺满)
-    VIEW_DASHBOARD = "dashboard"  # 模式3: 纯净健康看板 (左340固定, 右940大体检看板，无相册无预览)
+    # 右侧动态区页签 (左右两栏布局: 左侧 Workspace 导航固定, 右侧动态内容四页签)
+    TAB_CALIB_IMAGES = "tab_calib_images"   # 页签1: 标定相册 (当前工位采样相册)
+    TAB_PROD_IMAGES = "tab_prod_images"     # 页签2: 生产相册 (生产基准工位相册)
+    TAB_REPORT = "tab_report"               # 页签3: 体检报告 (几何健康大屏)
+    TAB_WHITELIST = "tab_whitelist"         # 页签4: Tag 白名单
+    # 页签展示顺序: 1 标定相册 / 2 Tag白名单 / 3 体检报告 / 4 生产相册
+    TAB_ORDER = (TAB_CALIB_IMAGES, TAB_WHITELIST, TAB_REPORT, TAB_PROD_IMAGES)
+
+    # 视图模式 (全宽大图沉浸预览, 仅在标定相册页签下双击卡片展开)
+    VIEW_STANDARD = "standard"    # 标准: 左栏 + 右侧页签内容
+    VIEW_EXPANDED = "expanded"    # 全宽大图: 右侧区域整体铺满单帧大图
+
+    # 相册卡片网格规格 (与渲染器保持一致): 4 列 x 3 行 = 每页 12 张大卡片
+    GRID_COLS = 4
+    GRID_ROWS = 3
+    GRID_PAGE = 12
 
     def __init__(self, workspace_mgr: WorkspaceManager = None, force_mock: bool = False):
         self.workspace_mgr = workspace_mgr or WorkspaceManager()
@@ -55,10 +67,10 @@ class HubState:
         self.prod_workspace_id = ""
         self.selected_workspace_idx = 0
 
-        # 当前选中工位的照片列表与大图选中项
+        # 当前选中工位的照片列表与卡片网格选中项
         self.current_images: list[str] = []
         self.selected_image_idx = 0
-        self.image_strip_offset = 0
+        self.image_grid_offset = 0   # 卡片网格当前页起始索引 (按整行对齐)
 
         # 内存缩略图与预览图缓存 (有序字典实现 LRU，限制最大 200 张防内存溢出)
         self.thumbnail_cache: OrderedDict[str, np.ndarray] = OrderedDict()
@@ -69,8 +81,21 @@ class HubState:
         self.toast_msg = ""
         self.toast_time = 0.0
 
-        # 当前视图模式 (默认标准三栏，按 F 键或点击顶部 Tab 循环切换)
+        # 当前视图模式 (默认标准; 按 F 键在标定相册页签内进入全宽大图)
         self.view_mode = self.VIEW_STANDARD
+
+        # 右侧动态区当前激活页签 (默认: 标定相册)
+        self.active_tab = self.TAB_CALIB_IMAGES
+
+        # 生产基准工位相册 (生产相册页签数据源)
+        self.prod_images: list[str] = []
+        self.selected_prod_image_idx = 0
+        self.prod_grid_offset = 0
+
+        # Tag 白名单缓存 (按文件 mtime 自动感知外部编辑并刷新)
+        self._whitelist_cache: dict = {}
+        self._whitelist_cache_mtime: float = -1.0
+        self._whitelist_cache_ws: str = ""
 
         # 生产系统生效机制 Help 说明弹层 (按 H 键或点击 [? Help] 呼出)
         self.is_help_modal_open = False
@@ -99,6 +124,7 @@ class HubState:
             self.selected_workspace_idx = max(0, min(self.selected_workspace_idx, len(self.workspaces) - 1))
 
         self.load_current_workspace_images()
+        self.load_prod_images()
 
     def get_production_workspace(self) -> Workspace | None:
         """获取当前发布为生产运行的工位"""
@@ -124,7 +150,7 @@ class HubState:
         if new_idx != self.selected_workspace_idx:
             self.selected_workspace_idx = new_idx
             self.selected_image_idx = 0
-            self.image_strip_offset = 0
+            self.image_grid_offset = 0
             self.load_current_workspace_images()
 
     def publish_selected_to_production(self) -> bool:
@@ -160,17 +186,130 @@ class HubState:
         else:
             self.selected_image_idx = 0
 
+    def _clamp_grid_offset(self, offset: int, total: int) -> int:
+        """将网格分页起始索引按整行对齐并夹紧到合法范围"""
+        aligned = max(0, (offset // self.GRID_COLS) * self.GRID_COLS)
+        max_offset = max(0, ((max(total, 1) - 1) // self.GRID_PAGE) * self.GRID_PAGE)
+        return max(0, min(aligned, max_offset))
+
+    def scroll_image_grid(self, delta_rows: int):
+        """卡片网格按行滚动 (滚轮/翻页按钮驱动)"""
+        self.image_grid_offset = self._clamp_grid_offset(
+            self.image_grid_offset + delta_rows * self.GRID_COLS, len(self.current_images))
+
+    def select_image_at_index(self, idx: int):
+        """直接选中第 idx 张卡片 (自动翻页使其可见)"""
+        if 0 <= idx < len(self.current_images):
+            self.selected_image_idx = idx
+            self._ensure_image_visible()
+
+    def _ensure_image_visible(self):
+        """确保当前选中卡片处于可见页范围内 (自动翻页)"""
+        if not self.current_images:
+            self.image_grid_offset = 0
+            return
+        idx = self.selected_image_idx
+        start = self.image_grid_offset
+        if idx < start:
+            self.image_grid_offset = self._clamp_grid_offset(
+                (idx // self.GRID_COLS) * self.GRID_COLS, len(self.current_images))
+        elif idx >= start + self.GRID_PAGE:
+            target_row = max(0, (idx // self.GRID_COLS) - self.GRID_ROWS + 1)
+            self.image_grid_offset = self._clamp_grid_offset(
+                target_row * self.GRID_COLS, len(self.current_images))
+
     def select_image_by_offset(self, delta: int):
-        """在缩略图流中左右切换选中的单帧图片"""
+        """在卡片网格中前后切换选中的单帧图片 (自动翻页跟随)"""
         if not self.current_images:
             return
         new_idx = max(0, min(self.selected_image_idx + delta, len(self.current_images) - 1))
         self.selected_image_idx = new_idx
-        # 调整横向滚动带偏移量
-        if self.selected_image_idx < self.image_strip_offset:
-            self.image_strip_offset = self.selected_image_idx
-        elif self.selected_image_idx >= self.image_strip_offset + 5:
-            self.image_strip_offset = self.selected_image_idx - 4
+        self._ensure_image_visible()
+
+    def load_prod_images(self):
+        """载入当前生产基准工位的采样相册 (生产相册页签数据源)"""
+        ws = self.get_production_workspace()
+        if not ws or not os.path.exists(ws.calib_raw_images_dir):
+            self.prod_images = []
+            self.selected_prod_image_idx = 0
+            self.prod_grid_offset = 0
+            return
+
+        self.prod_images = sorted(glob.glob(os.path.join(ws.calib_raw_images_dir, "*.png")))
+        if self.prod_images:
+            self.selected_prod_image_idx = max(0, min(self.selected_prod_image_idx, len(self.prod_images) - 1))
+        else:
+            self.selected_prod_image_idx = 0
+
+    def scroll_prod_grid(self, delta_rows: int):
+        """生产相册卡片网格按行滚动"""
+        self.prod_grid_offset = self._clamp_grid_offset(
+            self.prod_grid_offset + delta_rows * self.GRID_COLS, len(self.prod_images))
+
+    def select_prod_image_at_index(self, idx: int):
+        """直接选中生产相册第 idx 张卡片 (自动翻页使其可见)"""
+        if 0 <= idx < len(self.prod_images):
+            self.selected_prod_image_idx = idx
+            self._ensure_prod_visible()
+
+    def _ensure_prod_visible(self):
+        """确保当前选中的生产相册卡片处于可见页范围内"""
+        if not self.prod_images:
+            self.prod_grid_offset = 0
+            return
+        idx = self.selected_prod_image_idx
+        start = self.prod_grid_offset
+        if idx < start:
+            self.prod_grid_offset = self._clamp_grid_offset(
+                (idx // self.GRID_COLS) * self.GRID_COLS, len(self.prod_images))
+        elif idx >= start + self.GRID_PAGE:
+            target_row = max(0, (idx // self.GRID_COLS) - self.GRID_ROWS + 1)
+            self.prod_grid_offset = self._clamp_grid_offset(
+                target_row * self.GRID_COLS, len(self.prod_images))
+
+    def select_prod_image_by_offset(self, delta: int):
+        """在生产相册卡片网格中前后切换选中的单帧图片"""
+        if not self.prod_images:
+            return
+        new_idx = max(0, min(self.selected_prod_image_idx + delta, len(self.prod_images) - 1))
+        self.selected_prod_image_idx = new_idx
+        self._ensure_prod_visible()
+
+    def get_tag_whitelist(self) -> dict:
+        """读取当前选中工位的 tag_whitelist.yaml (基于 mtime 自动感知外部编辑并刷新缓存)"""
+        ws = self.get_selected_workspace()
+        if not ws:
+            return {}
+        path = self.workspace_mgr.get_tag_whitelist_path(ws.workspace_id)
+        if not os.path.exists(path):
+            return {}
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            return {}
+
+        if (self._whitelist_cache_ws == ws.workspace_id
+                and self._whitelist_cache
+                and abs(mtime - self._whitelist_cache_mtime) < 1e-6):
+            return self._whitelist_cache
+
+        try:
+            import yaml
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except Exception:
+            return {}
+
+        self._whitelist_cache = data
+        self._whitelist_cache_mtime = mtime
+        self._whitelist_cache_ws = ws.workspace_id
+        return data
+
+    def refresh_whitelist_cache(self):
+        """强制失效白名单缓存 (外部编辑器保存返回后立即刷新)"""
+        self._whitelist_cache = {}
+        self._whitelist_cache_mtime = -1.0
+        self._whitelist_cache_ws = ""
 
     def delete_selected_image(self) -> bool:
         """删除当前选中的照片帧（物理安全移除、清理缓存，并自适应指向相邻帧）"""
@@ -205,7 +344,7 @@ class HubState:
                 self.selected_image_idx = min(idx, len(self.current_images) - 1)
             else:
                 self.selected_image_idx = 0
-            self.image_strip_offset = max(0, min(self.selected_image_idx, len(self.current_images) - 4))
+            self._ensure_image_visible()
 
             # 同步更新工位对象的 image_count
             ws = self.get_selected_workspace()
@@ -306,35 +445,53 @@ class HubState:
         self.view_mode = self.VIEW_EXPANDED if val else self.VIEW_STANDARD
 
     def set_view_mode(self, mode: str):
-        """显式设定指定视图模式 (支持三段式 Tab 点击)"""
-        if mode in (self.VIEW_STANDARD, self.VIEW_EXPANDED, self.VIEW_DASHBOARD):
+        """显式设定视图模式 (标准页签看板 / 全宽大图沉浸)"""
+        if mode in (self.VIEW_STANDARD, self.VIEW_EXPANDED):
             self.view_mode = mode
             names = {
-                self.VIEW_STANDARD: "标准三栏看板",
+                self.VIEW_STANDARD: "标准页签看板",
                 self.VIEW_EXPANDED: "全宽大图沉浸",
-                self.VIEW_DASHBOARD: "纯净健康大屏 (无相册)",
             }
-            self.set_toast(f"已切换视图模式: 【{names[mode]}】 (按 F 键循环切换)")
+            self.set_toast(f"已切换视图模式: 【{names[mode]}】")
 
     def cycle_view_mode(self):
-        """按 [F] 键顺次循环切换视图模式: 标准 -> 全宽大图 -> 纯净看板 -> 标准..."""
-        modes = [self.VIEW_STANDARD, self.VIEW_EXPANDED, self.VIEW_DASHBOARD]
-        curr_idx = modes.index(self.view_mode) if self.view_mode in modes else 0
-        next_mode = modes[(curr_idx + 1) % len(modes)]
-        self.set_view_mode(next_mode)
-
-    def toggle_expanded_preview(self):
-        """切换全宽大图模式与标准看板模式"""
+        """切换视图模式: 标准页签 <-> 全宽大图 (双击卡片触发)"""
         if self.view_mode == self.VIEW_EXPANDED:
             self.set_view_mode(self.VIEW_STANDARD)
         else:
             self.set_view_mode(self.VIEW_EXPANDED)
 
+    def toggle_expanded_preview(self):
+        """切换全宽大图模式与标准看板模式 (全宽大图仅作用于标定相册页签)"""
+        if self.view_mode == self.VIEW_EXPANDED:
+            self.set_view_mode(self.VIEW_STANDARD)
+        else:
+            self.active_tab = self.TAB_CALIB_IMAGES
+            self.set_view_mode(self.VIEW_EXPANDED)
+
+    def set_tab(self, tab: str):
+        """切换右侧动态区页签 (左栏保持稳定，仅右栏内容动态更新)"""
+        if tab not in self.TAB_ORDER:
+            return
+        if tab == self.active_tab and self.view_mode == self.VIEW_STANDARD:
+            return
+        # 离开全宽大图沉浸模式
+        self.view_mode = self.VIEW_STANDARD
+        if tab != self.active_tab:
+            self.active_tab = tab
+            names = {
+                self.TAB_CALIB_IMAGES: "标定相册",
+                self.TAB_PROD_IMAGES: "生产相册",
+                self.TAB_REPORT: "体检报告",
+                self.TAB_WHITELIST: "Tag 白名单",
+            }
+            self.set_toast(f"已切换页签: 【{names[tab]}】")
+
     def toggle_help_modal(self):
         """打开或关闭生产系统发布机制说明弹窗 (按 H 键或点击 [? Help] 切换)"""
         self.is_help_modal_open = not self.is_help_modal_open
         if self.is_help_modal_open:
-            self.set_toast("已呼出【生效到生产系统】业务说明窗 (按 ESC/H 关闭)")
+            self.set_toast("已呼出【生效到生产系统】业务说明窗 (点击弹窗右上角 [关闭] 或弹窗外部关闭)")
         else:
             self.set_toast("已关闭说明窗。")
 

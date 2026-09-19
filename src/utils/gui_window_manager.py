@@ -54,7 +54,8 @@ class GuiWindowManager:
                  base_h: int = 720,
                  min_w: int = 480,
                  min_h: int = 270,
-                 settings_file: Optional[str] = None):
+                 settings_file: Optional[str] = None,
+                 enable_keyboard_zoom: bool = True):
         """
         :param app_id: 应用唯一标识 (如 'gui_launcher', 'workspace_hub', 'tag_studio')
         :param base_w: 基准窗口宽度 (默认 1280)
@@ -62,6 +63,7 @@ class GuiWindowManager:
         :param min_w: 最小允许宽度 (默认 480)
         :param min_h: 最小允许高度 (默认 270)
         :param settings_file: 偏好持久化文件路径 (默认 config/gui_settings.json)
+        :param enable_keyboard_zoom: 是否启用 Ctrl/+/- 键盘缩放热键 (默认开启; Workspace Hub 已传入 False 关闭)
         """
         self.app_id = app_id
         self.base_w = base_w
@@ -69,6 +71,7 @@ class GuiWindowManager:
         self.min_w = min_w
         self.min_h = min_h
         self.settings_file = settings_file or DEFAULT_GUI_SETTINGS_FILE
+        self.enable_keyboard_zoom: bool = enable_keyboard_zoom
 
         self.scale_pct: int = 100
         self.canvas_w: int = base_w
@@ -216,7 +219,7 @@ class GuiWindowManager:
         self.save_settings()
         if reset:
             return True, f"已复位为 100% 标准分辨率 ({self.base_w}×{self.base_h})"
-        return True, f"矢量放大镜: {self.scale_pct}%  (已自动记忆大小，Ctrl+0 复位)"
+        return True, f"矢量放大镜: {self.scale_pct}%  (已自动记忆大小)"
 
     def poll_hardware_zoom(self) -> Tuple[bool, Optional[str]]:
         """利用 Win32 GetAsyncKeyState 硬件物理检测，彻底绕过输入法拦截"""
@@ -360,9 +363,8 @@ class GuiWindowManager:
         """
         主循环一站式综合事件轮询：
         - 检查窗口存活 (红叉判定)
-        - 轮询硬件级热键
-        - 轮询常规按键
         - 轮询物理尺寸拖拽与防抖落盘
+        - 轮询常规按键 (默认关闭：项目已移除全部键盘快捷键，仅保留鼠标交互)
         """
         res = WindowPollResult(
             scale_pct=self.scale_pct,
@@ -377,15 +379,16 @@ class GuiWindowManager:
             res.should_quit = True
             return res
 
-        # 2. 硬件物理按键探测 (穿透输入法)
-        hw_changed, hw_toast = self.poll_hardware_zoom()
-        if hw_changed:
-            res.changed = True
-            res.scale_pct = self.scale_pct
-            res.scale = self.scale
-            res.canvas_w = self.canvas_w
-            res.canvas_h = self.canvas_h
-            res.toast_msg = hw_toast
+        # 2. 硬件物理缩放热键探测 (项目已移除全部快捷键，默认不启用)
+        if self.enable_keyboard_zoom:
+            hw_changed, hw_toast = self.poll_hardware_zoom()
+            if hw_changed:
+                res.changed = True
+                res.scale_pct = self.scale_pct
+                res.scale = self.scale
+                res.canvas_w = self.canvas_w
+                res.canvas_h = self.canvas_h
+                res.toast_msg = hw_toast
 
         # 3. 动态检测拖拽拉伸尺寸与防抖持久化
         size_changed = self.sync_window_size()

@@ -98,24 +98,35 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertEqual(len(state.current_images), 2)
 
     def test_hub_renderer_canvas(self):
-        """测试 HubRenderer 双缓冲画布在不同视图模式下的渲染输出有效性"""
+        """测试 HubRenderer 双缓冲画布在四页签与全宽大图模式下的渲染输出有效性"""
         state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
-        # 1. 渲染标准三栏视图
-        state.set_view_mode(HubState.VIEW_STANDARD)
-        canvas_std = renderer.render(state)
-        self.assertEqual(canvas_std.shape, (720, 1280, 3))
+        # 1. 渲染标定相册页签 (默认)
+        self.assertEqual(state.active_tab, HubState.TAB_CALIB_IMAGES)
+        canvas_calib = renderer.render(state)
+        self.assertEqual(canvas_calib.shape, (720, 1280, 3))
 
-        # 2. 渲染全宽大图沉浸视图
+        # 2. 渲染生产相册页签
+        state.set_tab(HubState.TAB_PROD_IMAGES)
+        canvas_prod = renderer.render(state)
+        self.assertEqual(canvas_prod.shape, (720, 1280, 3))
+
+        # 3. 渲染体检报告页签
+        state.set_tab(HubState.TAB_REPORT)
+        canvas_report = renderer.render(state)
+        self.assertEqual(canvas_report.shape, (720, 1280, 3))
+
+        # 4. 渲染 Tag 白名单页签
+        state.set_tab(HubState.TAB_WHITELIST)
+        canvas_wl = renderer.render(state)
+        self.assertEqual(canvas_wl.shape, (720, 1280, 3))
+
+        # 5. 渲染全宽大图沉浸视图
+        state.set_tab(HubState.TAB_CALIB_IMAGES)
         state.set_view_mode(HubState.VIEW_EXPANDED)
         canvas_exp = renderer.render(state)
         self.assertEqual(canvas_exp.shape, (720, 1280, 3))
-
-        # 3. 渲染纯净体检健康大屏视图
-        state.set_view_mode(HubState.VIEW_DASHBOARD)
-        canvas_dash = renderer.render(state)
-        self.assertEqual(canvas_dash.shape, (720, 1280, 3))
 
     def test_hub_header_buttons_layout(self):
         """测试 Header 顶部按钮布局及 Help 弹窗交互响应"""
@@ -210,50 +221,67 @@ class TestWorkspaceHub(unittest.TestCase):
         # 验证工位生产运行地图状态
         self.assertIsNotNone(app.state.prod_workspace_id)
 
-    def test_three_view_modes_cycle_and_rendering(self):
-        """测试三模态视图循环切换与各模态画布渲染稳定性"""
+    def test_four_tabs_switch_and_rendering(self):
+        """测试右侧动态区四页签切换与各页签画布渲染稳定性"""
         state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
-        # 1. 初始为标准模式
-        self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
+        # 1. 初始为标定相册页签
+        self.assertEqual(state.active_tab, HubState.TAB_CALIB_IMAGES)
         c1 = renderer.render(state)
         self.assertEqual(c1.shape, (720, 1280, 3))
 
-        # 2. 循环切换至全宽大图模式
-        state.cycle_view_mode()
-        self.assertEqual(state.view_mode, HubState.VIEW_EXPANDED)
-        self.assertTrue(state.expanded_preview_mode)
+        # 2. 切换至 Tab2: Tag 白名单页签
+        state.set_tab(HubState.TAB_WHITELIST)
+        self.assertEqual(state.active_tab, HubState.TAB_WHITELIST)
         c2 = renderer.render(state)
         self.assertEqual(c2.shape, (720, 1280, 3))
 
-        # 3. 循环切换至纯净健康大屏模式
-        state.cycle_view_mode()
-        self.assertEqual(state.view_mode, HubState.VIEW_DASHBOARD)
-        self.assertFalse(state.expanded_preview_mode)
+        # 3. 切换至 Tab3: 体检报告页签
+        state.set_tab(HubState.TAB_REPORT)
+        self.assertEqual(state.active_tab, HubState.TAB_REPORT)
         c3 = renderer.render(state)
         self.assertEqual(c3.shape, (720, 1280, 3))
 
-        # 4. 循环回标准模式
-        state.cycle_view_mode()
+        # 4. 切换至 Tab4: 生产相册页签
+        state.set_tab(HubState.TAB_PROD_IMAGES)
+        self.assertEqual(state.active_tab, HubState.TAB_PROD_IMAGES)
+        c4 = renderer.render(state)
+        self.assertEqual(c4.shape, (720, 1280, 3))
+
+        # 5. 切换页签过程中视图模式始终稳定为标准页签看板
         self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
 
-    def test_three_view_modes_tab_clicks(self):
-        """测试鼠标点击转移至右侧相册栏的三段式 Tab 胶囊直接切换模式"""
+        # 6. 全宽大图沉浸模式下切换页签自动回落到标准看板
+        state.toggle_expanded_preview()
+        self.assertEqual(state.view_mode, HubState.VIEW_EXPANDED)
+        state.set_tab(HubState.TAB_REPORT)
+        self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
+        self.assertEqual(state.active_tab, HubState.TAB_REPORT)
+
+    def test_four_tabs_header_clicks(self):
+        """测试鼠标点击顶部 Header 四页签 Tab 胶囊直接切换页签 (x: 360~832, y: 8~42)"""
         app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
         app.win_mgr.canvas_w = 1280
         app.win_mgr.canvas_h = 720
 
-        # 点击 Tab 3: 纯净看板 (x=1060, y=70)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1060, 70, 0, None)
-        self.assertEqual(app.state.view_mode, HubState.VIEW_DASHBOARD)
+        # 点击 Tab 3: 体检报告 (x=656, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 656, 25, 0, None)
+        self.assertEqual(app.state.active_tab, HubState.TAB_REPORT)
 
-        # 点击 Tab 2: 全宽大图 (x=1010, y=70)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1010, 70, 0, None)
-        self.assertEqual(app.state.view_mode, HubState.VIEW_EXPANDED)
+        # 点击 Tab 4: 生产相册 (x=776, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 776, 25, 0, None)
+        self.assertEqual(app.state.active_tab, HubState.TAB_PROD_IMAGES)
 
-        # 在全宽大图模式下，点击右上角退出全宽按钮 (x=1150, y=70) 返回标准三栏
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1150, 70, 0, None)
+        # 点击 Tab 2: Tag 白名单 (x=536, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 536, 25, 0, None)
+        self.assertEqual(app.state.active_tab, HubState.TAB_WHITELIST)
+
+        # 点击 Tab 1: 标定相册 (x=416, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 416, 25, 0, None)
+        self.assertEqual(app.state.active_tab, HubState.TAB_CALIB_IMAGES)
+
+        # 点击 Header 页签后仍处于标准页签看板 (非全宽大图)
         self.assertEqual(app.state.view_mode, HubState.VIEW_STANDARD)
 
     def test_context_menu_open_and_actions(self):
@@ -371,25 +399,26 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertFalse(state.is_help_modal_open, "1600x900 缩放下点击关闭按钮应同样瞬时关闭")
 
     def test_image_deletion_and_tabs_relocation(self):
-        """测试照片删除功能与三段式Tab转移后的点击交互"""
+        """测试照片删除功能与页签化后的点击交互"""
         clean_cfg = os.path.join(self.test_root, "clean_tabs_settings.json")
         app = WorkspaceHubApp(force_mock=True, settings_file=clean_cfg)
+        # 隔离至测试临时工位沙盒，避免读写真实项目工位数据
+        app.state.workspace_mgr = self.workspace_mgr
+        app.state.refresh_workspaces()
         app.win_mgr.canvas_w = 1280
         app.win_mgr.canvas_h = 720
         state = app.state
 
-        # 1. 创建两张测试图片放入当前选中工位中
+        # 1. 创建 20 张测试图片放入当前选中工位中 (卡片网格 4 列 x 3 行 = 每页 12 张)
         ws = state.get_selected_workspace()
         self.assertIsNotNone(ws)
-        img1 = os.path.join(ws.calib_raw_images_dir, "test_view_01.png")
-        img2 = os.path.join(ws.calib_raw_images_dir, "test_view_02.png")
         dummy = np.zeros((480, 640, 3), dtype=np.uint8)
-        cv2.imwrite(img1, dummy)
-        cv2.imwrite(img2, dummy)
+        for i in range(20):
+            cv2.imwrite(os.path.join(ws.calib_raw_images_dir, f"test_view_{i:02d}.png"), dummy)
         state.load_current_workspace_images()
 
         initial_count = len(state.current_images)
-        self.assertGreaterEqual(initial_count, 2)
+        self.assertGreaterEqual(initial_count, 20)
         state.selected_image_idx = 0
 
         # 2. 测试通过 state.delete_selected_image() 删除首张照片
@@ -400,24 +429,36 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertEqual(len(state.current_images), initial_count - 1)
         self.assertEqual(ws.image_count, initial_count - 1)
 
-        # 3. 测试通过鼠标点击右上角 [Del] 按钮删除 (x: 1240, y: 70)
+        # 3. 图片页签已移除顶部按钮组: 右上角点击不再触发删除, 删除改由 [Del] 键触发
         del_target = state.current_images[0]
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1240, 70, 0, None)
-        self.assertFalse(os.path.exists(del_target), "点击 [Del] 按钮应删除当前照片")
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1240, 73, 0, None)
+        self.assertTrue(os.path.exists(del_target), "图片页签右上角已无按钮, 点击不应删除照片")
+        self.assertEqual(len(state.current_images), initial_count - 1)
+
+        # 4. 键盘 [Del] 对应的状态层删除逻辑
+        self.assertTrue(state.delete_selected_image())
+        self.assertFalse(os.path.exists(del_target), "键盘 [Del] 删除逻辑应移除当前照片")
         self.assertEqual(len(state.current_images), initial_count - 2)
 
-        # 4. 测试点击右侧新位置的 Tab 胶囊切换视图模式
-        # 点击 [▤ 看板] (x: 1060, y: 70)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1060, 70, 0, None)
-        self.assertEqual(state.view_mode, HubState.VIEW_DASHBOARD)
+        # 5. 滚轮在卡片网格中按行滚动 (每格滚动一行, 并夹紧到最后一页起始行)
+        state.image_grid_offset = 0
+        app._on_mouse_event(cv2.EVENT_MOUSEWHEEL, 700, 300, -1, None)
+        self.assertEqual(state.image_grid_offset, HubState.GRID_COLS, "滚轮下翻应前进一行")
+        for _ in range(6):
+            app._on_mouse_event(cv2.EVENT_MOUSEWHEEL, 700, 300, -1, None)
+        self.assertEqual(state.image_grid_offset, HubState.GRID_PAGE, "滚轮下翻应夹紧到最后一页起始行")
+        app._on_mouse_event(cv2.EVENT_MOUSEWHEEL, 700, 300, 1, None)
+        self.assertEqual(state.image_grid_offset, HubState.GRID_PAGE - HubState.GRID_COLS, "滚轮上翻应回退一行")
 
-        # 点击 [⊞ 标准] (x: 960, y: 70)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 960, 70, 0, None)
-        self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
+        # 6. 测试点击 Header 页签 Tab 切换动态区内容 (左栏保持稳定)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 776, 25, 0, None)
+        self.assertEqual(state.active_tab, HubState.TAB_PROD_IMAGES)
 
-        # 点击 [⤢ 大图] (x: 1010, y: 70)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1010, 70, 0, None)
-        self.assertEqual(state.view_mode, HubState.VIEW_EXPANDED)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 656, 25, 0, None)
+        self.assertEqual(state.active_tab, HubState.TAB_REPORT)
+
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 416, 25, 0, None)
+        self.assertEqual(state.active_tab, HubState.TAB_CALIB_IMAGES)
 
     def test_tag_whitelist_creation_and_context_menu(self):
         """测试通过 _handle_tag_whitelist() 自动生成 tag_whitelist.yaml 模板以及右键菜单项"""

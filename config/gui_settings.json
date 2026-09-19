@@ -5,9 +5,9 @@
   "updated_at": "2026-09-18 07:25:11",
   "gui_launcher": {
     "scale_pct": 110,
-    "canvas_w": 1280,
-    "canvas_h": 1000,
-    "updated_at": "2026-09-19 17:29:19"
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-19 20:04:51"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -30,10 +30,10 @@
     "updated_at": "2026-09-19 07:33:36"
   },
   "workspace_hub": {
-    "scale_pct": 60,
+    "scale_pct": 120,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-19 17:21:42"
+    "updated_at": "2026-09-19 20:04:49"
   },
   "hardware_config": {
     "scale_pct": 100,
@@ -45,7 +45,7 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-19 17:27:03",
+    "updated_at": "2026-09-19 18:25:05",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1920x1080",
