@@ -102,8 +102,8 @@ class TestWorkspaceHub(unittest.TestCase):
         state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
-        # 1. 渲染标定相册页签 (默认)
-        self.assertEqual(state.active_tab, HubState.TAB_CALIB_IMAGES)
+        # 1. 渲染体检报告页签 (默认)
+        self.assertEqual(state.active_tab, HubState.TAB_REPORT)
         canvas_calib = renderer.render(state)
         self.assertEqual(canvas_calib.shape, (720, 1280, 3))
 
@@ -226,8 +226,8 @@ class TestWorkspaceHub(unittest.TestCase):
         state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
-        # 1. 初始为标定相册页签
-        self.assertEqual(state.active_tab, HubState.TAB_CALIB_IMAGES)
+        # 1. 初始为体检报告页签
+        self.assertEqual(state.active_tab, HubState.TAB_REPORT)
         c1 = renderer.render(state)
         self.assertEqual(c1.shape, (720, 1280, 3))
 

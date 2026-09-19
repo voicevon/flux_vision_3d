@@ -6,12 +6,20 @@ Workspace Hub 全局状态与数据模型 (HubState)
 
 import os
 import glob
+import json
 import time
 from collections import OrderedDict
 import cv2
 import numpy as np
 
 from src.calibration.workspace_manager import WorkspaceManager, Workspace
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
+APP_ID = "workspace_hub"
 
 
 def imread_unicode(filepath: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
@@ -64,13 +72,17 @@ class HubState:
         self.workspace_mgr = workspace_mgr or WorkspaceManager()
 
         self.workspaces: list[Workspace] = []
-        self.prod_workspace_id = ""
         self.selected_workspace_idx = 0
 
         # 当前选中工位的照片列表与卡片网格选中项
         self.current_images: list[str] = []
         self.selected_image_idx = 0
         self.image_grid_offset = 0   # 卡片网格当前页起始索引 (按整行对齐)
+
+        # 生产相册相关状态 (生产运行基准工位相册)
+        self.prod_images: list[str] = []
+        self.selected_prod_image_idx = 0
+        self.prod_grid_offset = 0
 
         # 内存缩略图与预览图缓存 (有序字典实现 LRU，限制最大 200 张防内存溢出)
         self.thumbnail_cache: OrderedDict[str, np.ndarray] = OrderedDict()
@@ -84,38 +96,100 @@ class HubState:
         # 当前视图模式 (默认标准; 按 F 键在标定相册页签内进入全宽大图)
         self.view_mode = self.VIEW_STANDARD
 
-        # 右侧动态区当前激活页签 (默认: 标定相册)
-        self.active_tab = self.TAB_CALIB_IMAGES
-
-        # 生产基准工位相册 (生产相册页签数据源)
-        self.prod_images: list[str] = []
-        self.selected_prod_image_idx = 0
-        self.prod_grid_offset = 0
+        # 右侧动态区当前激活页签 (默认: 体检报告)
+        self.active_tab = self.TAB_REPORT
 
         # Tag 白名单缓存 (按文件 mtime 自动感知外部编辑并刷新)
         self._whitelist_cache: dict = {}
         self._whitelist_cache_mtime: float = -1.0
         self._whitelist_cache_ws: str = ""
 
-        # 生产系统生效机制 Help 说明弹层 (按 H 键或点击 [? Help] 呼出)
-        self.is_help_modal_open = False
-
         # 工位卡片右键上下文菜单 (Context Menu) 状态
         self.context_menu_open = False
         self.context_menu_pos = (0, 0)
         self.context_menu_ws_idx = -1
 
+        # 生产机制业务说明弹窗状态
+        self.is_help_modal_open = False
+
         # 当前鼠标悬停坐标 (用于按钮 Hover 高亮效果)
         self.mouse_x = -1
         self.mouse_y = -1
 
+        # 左侧激活卡片的持久化 (按 workspace_id 定位, 不受列表排序变化影响)
+        self._saved_workspace_id = self._read_saved_workspace_id()
+        self._selection_restored = False
+
         # 初始加载工位
         self.refresh_workspaces()
 
+    # ------------------------------ 左侧激活卡片持久化 ------------------------------
+    @staticmethod
+    def _read_saved_workspace_id() -> str:
+        """读取上次激活的工位 ID (config/gui_settings.json → workspace_hub.hub_state)"""
+        try:
+            if not os.path.exists(GUI_SETTINGS_FILE):
+                return ""
+            with open(GUI_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                root = json.load(f)
+            return str(((root.get(APP_ID) or {}).get("hub_state") or {})
+                       .get("selected_workspace_id") or "")
+        except Exception as e:
+            log.warning(f"读取 Workspace Hub 激活工位失败: {e}")
+            return ""
+
+    def save_selected_workspace(self):
+        """持久化当前左侧激活的工位卡片 (退出后下次启动自动恢复高亮与相册)"""
+        ws = self.get_selected_workspace()
+        if ws is None:
+            return
+        try:
+            root = {}
+            if os.path.exists(GUI_SETTINGS_FILE):
+                try:
+                    with open(GUI_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                        root = json.load(f)
+                    if not isinstance(root, dict):
+                        root = {}
+                except Exception:
+                    root = {}
+            node = root.setdefault(APP_ID, {})
+            state = node.get("hub_state")
+            if not isinstance(state, dict):
+                state = {}
+            state["selected_workspace_id"] = str(ws.workspace_id)
+            state["selected_workspace_name"] = str(ws.name)
+            state["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            node["hub_state"] = state
+            os.makedirs(os.path.dirname(GUI_SETTINGS_FILE), exist_ok=True)
+            with open(GUI_SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(root, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            log.warning(f"保存 Workspace Hub 激活工位失败: {e}")
+
+    def select_workspace_at_index(self, idx: int):
+        """激活左侧第 idx 张工位卡片 (高亮 → 载入其相册 → 持久化选择)"""
+        if not self.workspaces or not (0 <= idx < len(self.workspaces)):
+            return
+        if idx != self.selected_workspace_idx:
+            self.selected_workspace_idx = idx
+            self.selected_image_idx = 0
+            self.image_grid_offset = 0
+        self.load_current_workspace_images()
+        self.save_selected_workspace()
+
     def refresh_workspaces(self):
-        """刷新工位列表与生产工位标识"""
+        """刷新工位列表"""
         self.workspaces = self.workspace_mgr.list_workspaces()
-        self.prod_workspace_id = self.workspace_mgr.get_production_workspace_id()
+
+        # 首次加载: 恢复上次激活的工位卡片 (按 workspace_id 定位, 索引排序变化无影响)
+        if not self._selection_restored:
+            self._selection_restored = True
+            if self._saved_workspace_id:
+                for i, ws in enumerate(self.workspaces):
+                    if ws.workspace_id == self._saved_workspace_id:
+                        self.selected_workspace_idx = i
+                        break
 
         # 确保选中索引不越界
         if not self.workspaces:
@@ -125,16 +199,8 @@ class HubState:
 
         self.load_current_workspace_images()
         self.load_prod_images()
-
-    def get_production_workspace(self) -> Workspace | None:
-        """获取当前发布为生产运行的工位"""
-        for ws in self.workspaces:
-            if ws.workspace_id == self.prod_workspace_id:
-                return ws
-        for ws in self.workspaces:
-            if ws.is_published:
-                return ws
-        return None
+        # 列表变动 (新建/克隆/重命名/删除) 后同步落盘激活卡片
+        self.save_selected_workspace()
 
     def get_selected_workspace(self) -> Workspace | None:
         """获取当前高亮选中的工位"""
@@ -152,25 +218,7 @@ class HubState:
             self.selected_image_idx = 0
             self.image_grid_offset = 0
             self.load_current_workspace_images()
-
-    def publish_selected_to_production(self) -> bool:
-        """将当前选中的工位发布为全局生产运行地图"""
-        ws = self.get_selected_workspace()
-        if not ws:
-            self.set_toast("未选中有效工位")
-            return False
-        if not ws.ba_solved or not os.path.exists(ws.map_path):
-            self.set_toast("发布失败: 该工位尚未进行 BA 平差解算或地图文件缺失")
-            return False
-        res = self.workspace_mgr.publish_to_production(ws.workspace_id)
-        ok = res[0] if isinstance(res, (tuple, list)) else bool(res)
-        msg = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else ""
-        if ok:
-            self.refresh_workspaces()
-            self.set_toast(f"★ 工位【{ws.name}】已成功发布为全局生产运行地图！")
-        else:
-            self.set_toast(f"发布失败: {msg or '无法写入全局生产地图文件'}")
-        return ok
+        self.save_selected_workspace()
 
     def load_current_workspace_images(self):
         """载入当前选中工位的照片列表"""
@@ -225,6 +273,13 @@ class HubState:
         new_idx = max(0, min(self.selected_image_idx + delta, len(self.current_images) - 1))
         self.selected_image_idx = new_idx
         self._ensure_image_visible()
+
+    def get_production_workspace(self) -> Workspace | None:
+        """获取当前发布为生产运行的工位对象"""
+        for ws in self.workspaces:
+            if ws.is_published:
+                return ws
+        return None
 
     def load_prod_images(self):
         """载入当前生产基准工位的采样相册 (生产相册页签数据源)"""
@@ -487,14 +542,6 @@ class HubState:
             }
             self.set_toast(f"已切换页签: 【{names[tab]}】")
 
-    def toggle_help_modal(self):
-        """打开或关闭生产系统发布机制说明弹窗 (按 H 键或点击 [? Help] 切换)"""
-        self.is_help_modal_open = not self.is_help_modal_open
-        if self.is_help_modal_open:
-            self.set_toast("已呼出【生效到生产系统】业务说明窗 (点击弹窗右上角 [关闭] 或弹窗外部关闭)")
-        else:
-            self.set_toast("已关闭说明窗。")
-
     def rename_current_workspace(self, new_name: str) -> bool:
         """重命名当前选中的工位显示名称 (支持中文)"""
         ws = self.get_selected_workspace()
@@ -516,10 +563,44 @@ class HubState:
             self.context_menu_open = True
             self.context_menu_pos = (x, y)
             self.context_menu_ws_idx = ws_idx
-            self.selected_workspace_idx = ws_idx
-            self.load_current_workspace_images()
+            self.select_workspace_at_index(ws_idx)
 
     def close_context_menu(self):
         """关闭右键上下文菜单"""
         self.context_menu_open = False
         self.context_menu_ws_idx = -1
+
+    @property
+    def prod_workspace_id(self) -> str:
+        """返回当前正式发布的生产运行工位 ID"""
+        for ws in self.workspaces:
+            if ws.is_published:
+                return ws.workspace_id
+        return ""
+
+    def publish_selected_to_production(self) -> bool:
+        """将当前选中的工位发布为全局生产运行地图"""
+        ws = self.get_selected_workspace()
+        if not ws:
+            self.set_toast("未选中有效工位")
+            return False
+        if not ws.ba_solved or not os.path.exists(ws.map_path):
+            self.set_toast("发布失败: 该工位尚未进行 BA 平差解算或地图文件缺失")
+            return False
+        res = self.workspace_mgr.publish_to_production(ws.workspace_id)
+        ok = res[0] if isinstance(res, (tuple, list)) else bool(res)
+        msg = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else ""
+        if ok:
+            self.refresh_workspaces()
+            self.set_toast(f"★ 工位【{ws.name}】已成功发布为全局生产运行地图！")
+        else:
+            self.set_toast(f"发布失败: {msg or '无法写入全局生产地图文件'}")
+        return ok
+
+    def toggle_help_modal(self):
+        """打开或关闭生产系统发布机制说明弹窗 (按 H 键或点击对应入口切换)"""
+        self.is_help_modal_open = not self.is_help_modal_open
+        if self.is_help_modal_open:
+            self.set_toast("已呼出【生效到生产系统】业务说明窗 (按 ESC/H 关闭)")
+        else:
+            self.set_toast("已关闭说明窗。")

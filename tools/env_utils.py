@@ -87,16 +87,13 @@ def check_env_status(force_refresh: bool = False) -> dict:
         status['map_path'] = current_ws.map_path
         status['is_published'] = current_ws.is_published
     else:
-        calib_images = glob.glob(os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "*.png"))
-        status['calib_image_count'] = len(calib_images)
-        map_path = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
-        status['has_tag_map'] = os.path.exists(map_path)
-        manifest_path = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "tag_observations.yaml")
-        status['has_manifest'] = os.path.exists(manifest_path)
-        status['manifest_path'] = manifest_path
-        status['image_dir'] = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
-        status['map_path'] = map_path
-        status['is_published'] = os.path.exists(map_path)
+        status['calib_image_count'] = 0
+        status['has_tag_map'] = False
+        status['has_manifest'] = False
+        status['manifest_path'] = ""
+        status['image_dir'] = ""
+        status['map_path'] = ""
+        status['is_published'] = False
 
     # 生产环境全局地图状态
     prod_map_path = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")

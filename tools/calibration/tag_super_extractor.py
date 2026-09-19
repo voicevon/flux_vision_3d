@@ -35,8 +35,14 @@ if sys.platform == "win32":
     except Exception:
         pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
-DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
-DEFAULT_MANIFEST_PATH = os.path.join(DEFAULT_IMAGE_DIR, "tag_observations.yaml")
+try:
+    from src.calibration.workspace_manager import WorkspaceManager
+    _cur_ws = WorkspaceManager().get_current_workspace()
+    DEFAULT_IMAGE_DIR = _cur_ws.calib_raw_images_dir
+    DEFAULT_MANIFEST_PATH = _cur_ws.calib_manifest_path
+except Exception:
+    DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "raw_images")
+    DEFAULT_MANIFEST_PATH = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "tag_observations.yaml")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 from src.utils.config_guard import load_raw_config

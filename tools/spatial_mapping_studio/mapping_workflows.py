@@ -129,7 +129,11 @@ class MappingWorkflowMixin:
         if self.current_workspace:
             report_dir = self.current_workspace.calib_reports_dir
         else:
-            report_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
+            try:
+                from src.calibration.workspace_manager import WorkspaceManager
+                report_dir = WorkspaceManager().get_current_workspace().calib_reports_dir
+            except Exception:
+                report_dir = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "reports")
         os.makedirs(report_dir, exist_ok=True)
         ts = int(time.time())
         report_path = os.path.join(report_dir, f"spatial_mapping_qa_report_{ts}.md")
@@ -188,7 +192,8 @@ class MappingWorkflowMixin:
 
                         f.write(f"| `{bname}` | {tag_cnt} | " + " | ".join(r_strs) + f" | {drop_str} |\n")
 
-            self.set_toast("全景质检报告已成功导出至 data/tag_calibration_verification/！")
+            rel_dir = os.path.relpath(report_dir, PROJECT_ROOT).replace("\\", "/")
+            self.set_toast(f"全景质检报告已成功导出至 {rel_dir}/！")
             log.info(f"[OK] 质检报告导出成功: {report_path}")
         except Exception as e:
             self.set_toast(f"导出质检报告失败: {e}")

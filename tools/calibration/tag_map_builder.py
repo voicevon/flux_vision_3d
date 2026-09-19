@@ -337,7 +337,7 @@ class TagMapBuilder:
 
     def export_observations_manifest(self, 
                                      image_paths: List[str], 
-                                     manifest_path: str = "data/tag_calibration_images/tag_observations.yaml",
+                                     manifest_path: Optional[str] = None,
                                      generate_visualized: bool = True) -> str:
         """
         两阶段建图流水线 - 阶段一：
@@ -350,7 +350,7 @@ class TagMapBuilder:
             generate_visualized=generate_visualized
         )
 
-    def load_observations_manifest(self, manifest_path: str = "data/tag_calibration_images/tag_observations.yaml") -> Tuple[List[Dict[int, np.ndarray]], List[str], Dict[str, Any]]:
+    def load_observations_manifest(self, manifest_path: Optional[str] = None) -> Tuple[List[Dict[int, np.ndarray]], List[str], Dict[str, Any]]:
         """
         两阶段建图流水线 - 阶段二：
         从审核清单中加载已审核的标靶观测数据，并过滤掉 keep: false 的坏样本。
@@ -404,13 +404,13 @@ class TagMapBuilder:
         return self.ba_optimizer.compute_3d_uncertainties(jacobian, static_tags, base_id, sigma_res_px)
 
     def export_diagnostic_report(self,
-                                 final_tags_map: Dict[str, Any],
+                                 final_tags_map: Dict[int, np.ndarray],
                                  detailed_obs_res: List[Dict[str, Any]],
                                  active_frame_names: List[str],
                                  tag_uncertainties: Dict[int, Dict[str, float]],
                                  outliers_detected: Set[Tuple[int, int]],
                                  rmse_px: float,
-                                 report_dir: str = "data/tag_calibration_verification") -> str:
+                                 report_dir: Optional[str] = None) -> str:
         """委托生成 2D 像面 Quiver 残差矢量场并输出 Markdown 诊断报告"""
         return self.ba_optimizer.export_diagnostic_report(
             final_tags_map=final_tags_map,
@@ -423,7 +423,7 @@ class TagMapBuilder:
         )
 
     def build_map_from_manifest(self, 
-                                manifest_path: str = "data/tag_calibration_images/tag_observations.yaml",
+                                manifest_path: Optional[str] = None,
                                 origin_tag_id: int = 0,
                                 x_align_tag_id: int = 1,
                                 baseline_pair: Optional[Tuple[int, int, float]] = None) -> Dict[str, Any]:
@@ -454,7 +454,7 @@ class TagMapBuilder:
                               origin_tag_id: int = 0,
                               x_align_tag_id: int = 1,
                               baseline_pair: Optional[Tuple[int, int, float]] = None,
-                              manifest_path: str = "data/tag_calibration_images/tag_observations.yaml",
+                              manifest_path: Optional[str] = None,
                               use_manifest: bool = True) -> Dict[str, Any]:
         """
         从一组多视角图像构建标靶全局地图并进行 BA 全局平差优化

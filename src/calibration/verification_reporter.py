@@ -19,12 +19,23 @@ from src.utils.logger import get_logger
 log = get_logger(__name__)
 
 
+def get_default_report_dir() -> str:
+    """获取当前激活工位的标定报告输出目录"""
+    try:
+        from src.calibration.workspace_manager import WorkspaceManager
+        return WorkspaceManager().get_current_workspace().calib_reports_dir
+    except Exception:
+        return os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "data", "workspaces", "default", "calibration", "reports")
+        )
+
+
 class VerificationReporter:
     """标定验证报表生成与统计分析器 (纯领域计算与格式化，零 GUI 依赖)"""
 
-    DEFAULT_OUTPUT_DIR = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "data", "tag_calibration_verification")
-    )
+    @classmethod
+    def get_output_dir(cls) -> str:
+        return get_default_report_dir()
 
     @staticmethod
     def aggregate_statistics(all_results: List[Dict]) -> Dict[str, Any]:
@@ -160,8 +171,9 @@ class VerificationReporter:
         输出完整 Markdown 精度体检报告至文件。
         """
         if out_path is None:
-            os.makedirs(cls.DEFAULT_OUTPUT_DIR, exist_ok=True)
-            report_path = os.path.join(cls.DEFAULT_OUTPUT_DIR, "offline_verification_report.md")
+            out_dir = cls.get_output_dir()
+            os.makedirs(out_dir, exist_ok=True)
+            report_path = os.path.join(out_dir, "offline_verification_report.md")
         else:
             os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
             report_path = out_path

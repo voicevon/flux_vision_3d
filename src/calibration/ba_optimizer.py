@@ -526,7 +526,7 @@ class BundleAdjustmentOptimizer:
                                  tag_uncertainties: Dict[int, Dict[str, float]],
                                  outliers_detected: Set[Tuple[int, int]],
                                  rmse_px: float,
-                                 report_dir: str = "data/tag_calibration_verification") -> str:
+                                 report_dir: Optional[str] = None) -> str:
         """Quiver 残差矢量场与 Markdown 精度体检报告生成（委托 ba_report 纯函数实现）"""
         return export_diagnostic_report(
             final_tags_map=final_tags_map,

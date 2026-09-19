@@ -32,6 +32,7 @@ class TrackerRenderer:
         self.tr = tracker               # 主控制器状态引用 (只读)
         self.buttons = []               # [(btn_id, (x1,y1,x2,y2), payload), ...] 每帧重建
         self.mouse_pos = (-1, -1)
+        self._workspace_rect = None
         self._camera_type_rect = None
         self._resolution_rect = None
         self._plane_z_rect = None
@@ -142,10 +143,20 @@ class TrackerRenderer:
         gap = 6
         group_gap = 220      # 组间空白分隔 (RealSense 组 | 机械臂组)
 
+        # ============ 第一排 · 工作空间组 ============
+
+        # 0. 工作空间下拉 (最左上角): 选择工位 → 加载其世界坐标地图 (★=已发布生产工位)
+        ws_x1, ws_x2 = 8, 8 + 150
+        self._draw_dropdown_button(canvas, (ws_x1, y1, ws_x2, y2), tr.workspace_label,
+                                   is_open=(tr.active_dropdown == "WORKSPACE_DROPDOWN"))
+        self.buttons.append(("TOGGLE_WS_DD", (ws_x1, y1, ws_x2, y2), "WORKSPACE_DROPDOWN"))
+        self._workspace_rect = (ws_x1, y1, ws_x2, y2)
+
         # ============ 第一排 · RealSense 组 ============
 
-        # 1. 相机类型下拉 (最左)
-        cam_x1, cam_x2 = 8, 8 + 150
+        # 1. 相机类型下拉
+        cam_x1 = ws_x2 + gap
+        cam_x2 = cam_x1 + 150
         cam_label = dict(tr.camera.camera_options).get(tr.camera.camera_type, tr.camera.camera_type)
         self._draw_dropdown_button(canvas, (cam_x1, y1, cam_x2, y2), cam_label,
                                    is_open=(tr.active_dropdown == "CAMERA_TYPE_DROPDOWN"))
@@ -388,7 +399,11 @@ class TrackerRenderer:
         self._track_group_rect = (t1_x1, u1, t2_x2, u2)  # 消息面板锚点 (按钮组正下方)
 
         # 展开的下拉浮层
-        if tr.active_dropdown == "CAMERA_TYPE_DROPDOWN" and self._camera_type_rect:
+        if tr.active_dropdown == "WORKSPACE_DROPDOWN" and self._workspace_rect:
+            ws_opts = tr.workspace_options or [("", "(无可用工作空间)")]
+            self._render_dropdown_popup(canvas, self._workspace_rect, ws_opts,
+                                        tr.workspace_id or None, "DD_WS_")
+        elif tr.active_dropdown == "CAMERA_TYPE_DROPDOWN" and self._camera_type_rect:
             self._render_dropdown_popup(canvas, self._camera_type_rect,
                                         tr.camera.camera_options, tr.camera.camera_type, "DD_CAM_")
         elif tr.active_dropdown == "RES_DROPDOWN" and self._resolution_rect:

@@ -25,6 +25,15 @@ log = get_logger(__name__)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 
 
+def get_default_manifest_path() -> str:
+    """获取当前激活工位的标定观测清单绝对路径"""
+    try:
+        from src.calibration.workspace_manager import WorkspaceManager
+        return WorkspaceManager().get_current_workspace().calib_manifest_path
+    except Exception:
+        return os.path.join(PROJECT_ROOT, "config", "tag_observations.yaml")
+
+
 class ManifestRepository:
     """
     标靶观测清单与地图文件仓储类
@@ -39,7 +48,7 @@ class ManifestRepository:
 
     def export_manifest(self, 
                         image_paths: List[str], 
-                        manifest_path: str = "data/tag_calibration_images/tag_observations.yaml",
+                        manifest_path: Optional[str] = None,
                         generate_visualized: bool = True) -> str:
         """
         两阶段建图流水线 - 阶段一：
@@ -48,6 +57,9 @@ class ManifestRepository:
         - 自动输出单元方格分辨率 (Cell: WxH px)、中心坐标与面积
         - 支持同步生成高清图示化标注图片至 visualized/ 目录
         """
+        if manifest_path is None:
+            manifest_path = get_default_manifest_path()
+
         existing_prefs = {}
         existing_enabled = {}
         if os.path.exists(manifest_path):
@@ -163,12 +175,15 @@ class ManifestRepository:
         return manifest_path
 
     def load_manifest(self, 
-                      manifest_path: str = "data/tag_calibration_images/tag_observations.yaml") -> Tuple[List[Dict[int, np.ndarray]], List[str], Dict[str, Any]]:
+                      manifest_path: Optional[str] = None) -> Tuple[List[Dict[int, np.ndarray]], List[str], Dict[str, Any]]:
         """
         两阶段建图流水线 - 阶段二：
         从审核清单中加载已审核的标靶观测数据，并过滤掉 keep: false 的坏样本。
         :return: (frame_detections, valid_frame_names, stats)
         """
+        if manifest_path is None:
+            manifest_path = get_default_manifest_path()
+
         if not os.path.exists(manifest_path):
             raise FileNotFoundError(f"未找到观测清单文件: {manifest_path}")
 
@@ -179,8 +194,15 @@ class ManifestRepository:
         manifest_dir = os.path.dirname(os.path.abspath(manifest_path))
         disk_files = sorted(glob.glob(os.path.join(manifest_dir, "view_*.png")))
         if not disk_files:
+            disk_files = sorted(glob.glob(os.path.join(manifest_dir, "raw_images", "view_*.png")))
+        if not disk_files:
             disk_files = sorted([
                 p for p in glob.glob(os.path.join(manifest_dir, "*.png"))
+                if not p.endswith("_annotated.png") and not p.endswith("_quiver.png")
+            ])
+        if not disk_files:
+            disk_files = sorted([
+                p for p in glob.glob(os.path.join(manifest_dir, "raw_images", "*.png"))
                 if not p.endswith("_annotated.png") and not p.endswith("_quiver.png")
             ])
         existing_imgs = data.get("images", {})
@@ -223,10 +245,18 @@ class ManifestRepository:
                 continue
 
             tags_in_frame = {}
-            # 探测原图是否存在以执行实时亚像素精修
+            # 探测原图是否存在以执行实时亚像素精修 (优先记录路径，其次当前目录及 raw_images 目录)
             raw_img_path = img_info.get("image_path", os.path.join(manifest_dir, img_name))
             if not os.path.isabs(raw_img_path):
                 raw_img_path = os.path.join(PROJECT_ROOT, raw_img_path)
+            if not os.path.exists(raw_img_path):
+                for candidate in [
+                    os.path.join(manifest_dir, "raw_images", img_name),
+                    os.path.join(manifest_dir, img_name),
+                ]:
+                    if os.path.exists(candidate):
+                        raw_img_path = candidate
+                        break
             gray_for_refine = None
             if os.path.exists(raw_img_path):
                 raw_img = cv2.imread(raw_img_path)

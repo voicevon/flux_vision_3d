@@ -7,7 +7,6 @@
    - calibration/ (标定专区: raw_images/, tag_observations.yaml, reports/, visualized/)
    - production/  (生产与模拟生产专区: raw_images/, reports/, results/)
 3. 命名与检索：YYYYMMDD_<alias> 规范化目录生成与元数据持久化
-4. 生产环境发布：将经过平差验证的工位顶层地图安全原子发布至 config/tags_map.yaml 与 config.yaml
 """
 
 import os
@@ -26,7 +25,6 @@ log = get_logger(__name__)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_WORKSPACES_DIR = os.path.join(PROJECT_ROOT, "data", "workspaces")
 DEFAULT_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
-DEFAULT_PROD_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
 
 
 @dataclass
@@ -49,7 +47,7 @@ class Workspace:
     active_image_count: int = 0            # 标定有效帧数
     ba_solved: bool = False
     global_rmse_px: float = 0.0
-    is_published: bool = False
+    is_published: bool = False             # 是否已发布为生产环境运行地图
 
     # ------------------------------ 顶层核心资产路径 ------------------------------
     @property
@@ -197,18 +195,6 @@ class Workspace:
             self.ba_solved = False
             self.global_rmse_px = 0.0
 
-        # 5. 检查是否为生产发布地图
-        if os.path.exists(DEFAULT_CONFIG_PATH):
-            try:
-                with open(DEFAULT_CONFIG_PATH, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
-                prod_ws_id = cfg.get("calibration", {}).get("prod_workspace_id", "")
-                self.is_published = (prod_ws_id == self.workspace_id)
-            except Exception:
-                self.is_published = False
-        else:
-            self.is_published = False
-
         self.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
 
     def save_meta(self):
@@ -267,7 +253,7 @@ class Workspace:
         active_image_count = status.get("active_image_count", 0)
         ba_solved = status.get("ba_solved", False)
         global_rmse_px = status.get("global_rmse_px", 0.0)
-        is_published = status.get("is_published", False)
+        is_published = bool(status.get("is_published", False))
 
         ws = cls(
             workspace_id=ws_id,
@@ -299,16 +285,27 @@ class WorkspaceManager:
         self,
         workspaces_dir: str = DEFAULT_WORKSPACES_DIR,
         config_path: str = DEFAULT_CONFIG_PATH,
-        prod_map_path: str = DEFAULT_PROD_MAP_PATH
+        prod_map_path: Optional[str] = None
     ):
         self.workspaces_dir = os.path.abspath(workspaces_dir)
         self.config_path = os.path.abspath(config_path)
-        self.prod_map_path = os.path.abspath(prod_map_path)
+        self.prod_map_path = os.path.abspath(prod_map_path) if prod_map_path else os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
         self.active_marker_file = os.path.join(self.workspaces_dir, ".active_workspace")
         self._cached_active_ws: Optional[Workspace] = None
         self._cached_workspaces: Dict[str, Workspace] = {}
 
         os.makedirs(self.workspaces_dir, exist_ok=True)
+
+    def get_prod_workspace_id(self) -> str:
+        """从 config.yaml 中获取当前正式发布运行的生产工位 ID"""
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+                return str((cfg.get("calibration") or {}).get("prod_workspace_id") or "").strip()
+            except Exception:
+                pass
+        return ""
 
     def list_workspaces(self) -> List[Workspace]:
         """枚举所有有效工位，按创建时间降序"""
@@ -328,30 +325,14 @@ class WorkspaceManager:
                 except Exception as e:
                     log.warning(f"[WARN] 加载工位异常 {item}: {e}")
 
+        # 如果全局配置存在正式发布的工位 ID，精准同步其 is_published 标记
+        prod_ws_id = self.get_prod_workspace_id()
+        if prod_ws_id:
+            for ws in workspaces:
+                ws.is_published = (ws.workspace_id == prod_ws_id)
+
         workspaces.sort(key=lambda s: (s.created_at, s.workspace_id), reverse=True)
         return workspaces
-
-    def get_production_workspace_id(self) -> str:
-        """获取当前发布为生产运行的工位 ID"""
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
-                prod_id = cfg.get("calibration", {}).get("prod_workspace_id", "")
-                if prod_id and os.path.isdir(os.path.join(self.workspaces_dir, prod_id)):
-                    return prod_id
-            except Exception:
-                pass
-
-        for ws in self.list_workspaces():
-            if ws.is_published:
-                return ws.workspace_id
-        return ""
-
-    def get_production_workspace(self) -> Optional[Workspace]:
-        """获取当前发布为生产运行的工位对象"""
-        pid = self.get_production_workspace_id()
-        return self.get_workspace_by_id(pid) if pid else None
 
     def get_workspace_by_id(self, ws_id: str, force_refresh: bool = False) -> Optional[Workspace]:
         """根据工位 ID 检索 Workspace 对象"""
@@ -372,11 +353,7 @@ class WorkspaceManager:
         return os.path.join(self.workspaces_dir, workspace_id, "tag_whitelist.yaml")
 
     def get_current_workspace_id(self) -> str:
-        """获取当前默认工位 ID (优先生产工位，次优活动标记，兜底最新工位)"""
-        prod_id = self.get_production_workspace_id()
-        if prod_id:
-            return prod_id
-
+        """获取当前默认工位 ID (优先活动标记，兜底最新工位)"""
         # 检查 .active_workspace 标记
         if os.path.exists(self.active_marker_file):
             try:

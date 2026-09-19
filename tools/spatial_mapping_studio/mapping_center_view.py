@@ -29,7 +29,7 @@ class MappingCenterViewMixin:
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (14, 15, 18), -1)
 
         if not app.image_files:
-            put_text(canvas, "未扫描到采图图像 (data/tag_calibration_images/ 为空)", (x + 100, y + h // 2),
+            put_text(canvas, "未扫描到采图图像 (当前工位 raw_images/ 为空)", (x + 100, y + h // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (140, 140, 140), 1, cv2.LINE_AA)
             return
 

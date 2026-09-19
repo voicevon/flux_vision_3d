@@ -11,7 +11,7 @@ BundleAdjustmentOptimizer 类内保留同名委托方法，外部接口不变。
 
 import os
 from datetime import datetime
-from typing import Dict, List, Tuple, Any, Set
+from typing import Dict, List, Tuple, Any, Set, Optional
 import numpy as np
 import cv2
 
@@ -66,12 +66,25 @@ def export_diagnostic_report(final_tags_map: Dict[str, Any],
                              tag_uncertainties: Dict[int, Dict[str, float]],
                              outliers_detected: Set[Tuple[int, int]],
                              rmse_px: float,
-                             report_dir: str = "data/tag_calibration_verification") -> str:
+                             report_dir: Optional[str] = None) -> str:
     """
     生成 2D 像面 Quiver 残差矢量场并输出详尽的 Markdown 精度体检报告
     """
+    cur_ws = None
+    try:
+        from src.calibration.workspace_manager import WorkspaceManager
+        cur_ws = WorkspaceManager().get_current_workspace()
+    except Exception:
+        pass
+
+    if report_dir is None:
+        report_dir = cur_ws.calib_reports_dir if cur_ws else os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
     os.makedirs(report_dir, exist_ok=True)
-    vis_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", "visualized")
+
+    if cur_ws:
+        vis_dir = cur_ws.calib_visualized_dir
+    else:
+        vis_dir = os.path.join(os.path.dirname(report_dir), "visualized")
     os.makedirs(vis_dir, exist_ok=True)
 
     # 1. 针对每张图绘制 2D 像面 Quiver 矢量场分析图
@@ -79,9 +92,21 @@ def export_diagnostic_report(final_tags_map: Dict[str, Any],
     for item in detailed_obs_res:
         frame_grouped.setdefault(item["frame_name"], []).append(item)
 
+    calib_raw_dir = cur_ws.calib_raw_images_dir if cur_ws else ""
     for f_name, obs_items in frame_grouped.items():
-        img_path = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images", f_name)
-        if not os.path.exists(img_path):
+        img_path = ""
+        candidates = [
+            os.path.join(calib_raw_dir, f_name) if calib_raw_dir else "",
+            os.path.join(os.path.dirname(report_dir), "raw_images", f_name),
+            os.path.join(os.path.dirname(report_dir), f_name),
+            f_name,
+        ]
+        for cand in candidates:
+            if cand and os.path.exists(cand):
+                img_path = cand
+                break
+
+        if not img_path or not os.path.exists(img_path):
             continue
         base_img = cv2.imread(img_path)
         if base_img is None:
@@ -166,9 +191,10 @@ def export_diagnostic_report(final_tags_map: Dict[str, Any],
         status_str = "PASS" if f_mean <= 0.8 else "WARN"
         lines.append(f"| {f_name:15s} | {len(obs_items):2d} 个 | {f_mean:6.2f} px | {max_str:20s} | {status_str} |")
 
+    rel_vis = os.path.relpath(vis_dir, PROJECT_ROOT).replace("\\", "/")
     lines.extend([
         "\n## 4. 2D 残差矢量场 (Quiver Plot) 说明",
-        "- 分析图像已输出至目录: `data/tag_calibration_images/visualized/*_quiver.png`；",
+        f"- 分析图像已输出至目录: `{rel_vis}/*_quiver.png`；",
         "- 红色箭头代表角点残差矢量 (已统一放大 20 倍)，用于辨识相机内参畸变是否完全对称消除；",
         "- 若箭头呈完全各向同性发散，说明系统误差已被彻底吸收，剩余均为传感器随机白噪声。"
     ])

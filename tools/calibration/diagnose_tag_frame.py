@@ -35,8 +35,14 @@ if sys.platform == "win32":
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
-CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
-DIAGNOSTICS_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_diagnostics")
+try:
+    from src.calibration.workspace_manager import WorkspaceManager
+    _cur_ws = WorkspaceManager().get_current_workspace()
+    CALIB_IMAGES_DIR = _cur_ws.calib_raw_images_dir
+    DIAGNOSTICS_DIR = os.path.join(_cur_ws.calibration_dir, "diagnostics")
+except Exception:
+    CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "raw_images")
+    DIAGNOSTICS_DIR = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "diagnostics")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 from src.utils.config_guard import load_raw_config

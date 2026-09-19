@@ -221,8 +221,8 @@ def main():
     except Exception as e:
         log.warning(f"读取 config.yaml 默认标靶配置失败，使用内置默认值: {e}")
 
-    def_image_dir = "data/tag_calibration_images"
-    def_manifest = "data/tag_calibration_images/tag_observations.yaml"
+    def_image_dir = ""
+    def_manifest = ""
     def_output = "config/tags_map.yaml"
     try:
         from src.calibration.workspace_manager import WorkspaceManager
@@ -231,7 +231,7 @@ def main():
         def_manifest = current_ws.calib_manifest_path
         def_output = current_ws.map_path
     except Exception as e:
-        log.warning(f"获取当前工位失败，使用默认路径: {e}")
+        log.warning(f"获取当前工位失败: {e}")
 
     parser.add_argument("--image_dir", type=str, default=def_image_dir, help="多视角标定图片目录")
     parser.add_argument("--manifest", type=str, default=def_manifest, help="观测数据审核清单路径")

@@ -81,9 +81,10 @@ try:
     DEFAULT_MAP_PATH = _cur_ws.map_path
     MANIFEST_PATH = _cur_ws.calib_manifest_path
 except Exception:
-    CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
-    DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
-    MANIFEST_PATH = os.path.join(CALIB_IMAGES_DIR, "tag_observations.yaml")
+    _ws_fallback = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration")
+    CALIB_IMAGES_DIR = os.path.join(_ws_fallback, "raw_images")
+    DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "tags_map.yaml")
+    MANIFEST_PATH = os.path.join(_ws_fallback, "tag_observations.yaml")
 
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 

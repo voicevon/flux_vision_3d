@@ -7,18 +7,19 @@
     "scale_pct": 110,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-19 20:04:51"
+    "updated_at": "2026-09-19 23:45:01"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-19 17:25:07",
+    "updated_at": "2026-09-19 23:11:54",
     "viewer_state": {
+      "workspace_id": "20260916_145246_Home_real",
       "camera_type": "realsense",
       "resolution": "1920x1080",
       "show_plane": true,
-      "plane_z": 0,
+      "plane_z": 196,
       "target_kind": "tag",
       "robot_port": "COM11"
     }
@@ -33,7 +34,12 @@
     "scale_pct": 120,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-19 20:04:49"
+    "updated_at": "2026-09-19 23:44:59",
+    "hub_state": {
+      "selected_workspace_id": "20260916_145246_Home_real",
+      "selected_workspace_name": "Home_real",
+      "updated_at": "2026-09-19 23:45:36"
+    }
   },
   "hardware_config": {
     "scale_pct": 100,
@@ -56,13 +62,13 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-19 17:29:00"
+    "updated_at": "2026-09-19 21:37:02"
   },
   "d435_viewer": {
     "scale_pct": 100,
-    "canvas_w": 1920,
-    "canvas_h": 1017,
-    "updated_at": "2026-09-18 21:14:22",
+    "canvas_w": 1024,
+    "canvas_h": 620,
+    "updated_at": "2026-09-19 22:26:42",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1280x720",

@@ -186,8 +186,11 @@ class TestSpatialMappingStudioApp(unittest.TestCase):
     def test_export_verification_report(self):
         """测试全景质检报告导出"""
         self.studio.export_verification_report()
-        report_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
-        reports = glob.glob(os.path.join(report_dir, "studio_qa_report_*.md"))
+        if self.studio.current_workspace:
+            report_dir = self.studio.current_workspace.calib_reports_dir
+        else:
+            report_dir = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "reports")
+        reports = glob.glob(os.path.join(report_dir, "*qa_report_*.md"))
         self.assertGreater(len(reports), 0, "应成功生成质检报告 Markdown 文件")
 
     def test_viewport_zoom_and_pan(self):

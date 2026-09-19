@@ -60,7 +60,7 @@ log = get_logger(__name__)
 
 class TagManifestReviewer:
     def __init__(self, 
-                 manifest_path: str = "data/tag_calibration_images/tag_observations.yaml",
+                 manifest_path: Optional[str] = None,
                  builder: Optional[Any] = None,
                  focus_tag_id: Optional[int] = None,
                  initial_frame: Optional[str] = None):
@@ -71,7 +71,13 @@ class TagManifestReviewer:
         :param focus_tag_id: 指定靶向排查的标靶 ID (如盲测出现较大误差的 Tag 编号)
         :param initial_frame: 初始跳转定位的图像文件名 (如 'view_0016.png')
         """
-        self.manifest_path = manifest_path
+        if manifest_path is None:
+            try:
+                from src.calibration.workspace_manager import WorkspaceManager
+                manifest_path = WorkspaceManager().get_current_workspace().calib_manifest_path
+            except Exception:
+                manifest_path = ""
+        self.manifest_path = manifest_path or ""
         if not os.path.exists(self.manifest_path):
             raise FileNotFoundError(f"未找到观测清单文件: {self.manifest_path}，请先执行扫描导出！")
 
@@ -1201,8 +1207,8 @@ class TagManifestReviewer:
 
 def main():
     parser = argparse.ArgumentParser(description="AprilTag 观测样本交互式审核画板")
-    parser.add_argument("--manifest", type=str, default="data/tag_calibration_images/tag_observations.yaml",
-                        help="观测清单 tag_observations.yaml 路径")
+    parser.add_argument("--manifest", type=str, default=None,
+                        help="观测清单 tag_observations.yaml 路径 (默认自动对接当前工位)")
     parser.add_argument("--frame", type=str, default=None, help="初始定位图像名 (如 view_0016.png)")
     parser.add_argument("--focus_tag", type=int, default=None, help="指定定向靶向排查的标靶 ID")
     args = parser.parse_args()

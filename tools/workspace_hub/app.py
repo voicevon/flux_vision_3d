@@ -183,8 +183,9 @@ class WorkspaceHubApp:
         if self.state.context_menu_open:
             menu_w = 216
             item_h = 32
-            menu_items_count = 6
-            menu_h = 34 + menu_items_count * item_h + 6
+            pad_y = 6
+            menu_items_count = 4
+            menu_h = pad_y * 2 + menu_items_count * item_h
             mx, my = self.state.context_menu_pos
 
             # 自适应防超出屏幕边界 (与 hub_renderer 保持一致)
@@ -197,21 +198,17 @@ class WorkspaceHubApp:
             if my < 50:
                 my = 50
 
-            # 判定是否点击在具体菜单项上
-            if mx <= x <= mx + menu_w and (my + 32) <= y <= (my + 32 + menu_items_count * item_h):
-                item_idx = (y - (my + 32)) // item_h
+            # 判定是否点击在具体菜单项上 (4项纯操作菜单)
+            if mx <= x <= mx + menu_w and (my + pad_y) <= y <= (my + pad_y + menu_items_count * item_h):
+                item_idx = (y - (my + pad_y)) // item_h
                 self.state.close_context_menu()
                 if item_idx == 0:
-                    self._handle_publish_to_production()
-                elif item_idx == 1:
-                    self._handle_tag_whitelist()
-                elif item_idx == 2:
                     self._handle_rename_workspace()
-                elif item_idx == 3:
+                elif item_idx == 1:
                     self._handle_clone_workspace()
-                elif item_idx == 4:
+                elif item_idx == 2:
                     self._handle_open_directory()
-                elif item_idx == 5:
+                elif item_idx == 3:
                     self._handle_delete_workspace()
                 return
 
@@ -270,7 +267,7 @@ class WorkspaceHubApp:
 
                 # 检查是否直接点击了右侧操作胶囊 (x: 226~326, y: card_cy + 18 ~ card_cy + 54)
                 if 226 <= x <= 326 and card_cy + 18 <= y <= card_cy + 54:
-                    self.state.selected_workspace_idx = target_idx
+                    self.state.select_workspace_at_index(target_idx)
                     if not target_ws.is_published and target_ws.ba_solved:
                         self._handle_publish_to_production()
                     elif target_ws.is_published:
@@ -278,18 +275,13 @@ class WorkspaceHubApp:
                     return
 
                 # 点击卡片其余区域：选中该 Workspace 并载入图像
-                self.state.selected_workspace_idx = target_idx
-                self.state.load_current_workspace_images()
+                self.state.select_workspace_at_index(target_idx)
             return
 
         # 5.2 点击左侧通用全局 Workspace 管理按钮 (y: 614~654)
-        # 按钮 1: 新建 Workspace [N] (x: 10~165, y: 614~654)
-        if 10 <= x <= 165 and 614 <= y <= 654:
+        # 单一大按钮: 新建 Workspace (x: 10~330, y: 614~654)
+        if 10 <= x <= 330 and 614 <= y <= 654:
             self._handle_create_workspace()
-            return
-        # 按钮 2: 打开 Workspace 物理总目录 [V] (x: 175~330, y: 614~654)
-        if 175 <= x <= 330 and 614 <= y <= 654:
-            self._handle_open_directory()
             return
 
         # 5.4 全宽大图预览模式下的右上角按钮交互 (x: 340~1280)
@@ -516,10 +508,7 @@ class WorkspaceHubApp:
             if s.workspace_id == new_ws.workspace_id:
                 target_idx = i
                 break
-        self.state.selected_workspace_idx = target_idx
-        self.state.selected_image_idx = 0
-        self.state.image_grid_offset = 0
-        self.state.load_current_workspace_images()
+        self.state.select_workspace_at_index(target_idx)
         self.state.set_toast(f"已成功新建 Workspace: 【{new_ws.name}】({new_ws.workspace_id})，按 [C] 开始采图！")
 
     def _handle_clone_workspace(self):
@@ -547,10 +536,7 @@ class WorkspaceHubApp:
                 if s.workspace_id == cloned.workspace_id:
                     target_idx = i
                     break
-            self.state.selected_workspace_idx = target_idx
-            self.state.selected_image_idx = 0
-            self.state.image_grid_offset = 0
-            self.state.load_current_workspace_images()
+            self.state.select_workspace_at_index(target_idx)
             self.state.set_toast(f"已成功克隆 Workspace: 【{cloned.name}】并定位至新 Workspace！")
         else:
             self.state.set_toast("克隆 Workspace 失败，请检查源目录！")

@@ -16,7 +16,8 @@ Dashboard 第 5 张卡片「Robot 在线跟踪」的主工具：
   - 到位后 M114 回读末端实际坐标，与视觉解算世界坐标同屏对比偏差 (FR-12.4 相机位置校准)。
 
 工具栏 (双排, 组间空白分隔):
-  第一排: [相机类型 ▼] [分辨率 ▼] [开启/关闭] | [串口 ▼] [连接机械臂] [M84+G92] [Park] ... [退出 X]
+  第一排: [工作空间 ▼] [相机类型 ▼] [分辨率 ▼] [开启/关闭] | [串口 ▼] [连接机械臂] [M84+G92] [Park] ... [退出 X]
+          (工作空间下拉: 切换工位并加载其世界坐标地图, 选择持久化于 config/gui_settings.json)
   第二排 (第一组居左, 第二组跟踪居右):
     第一组: [一次性建立世界坐标系] [确定世界坐标系] | [XY平面 ▼] [√显示已知Tag] | [目标 ▼] [识别目标·单次] [√连续识别]
     第二组: [跟踪目标·单次] [√连续跟踪]
@@ -93,7 +94,12 @@ class RobotOnlineTracker:
 
     def __init__(self, map_path=None, target_tag_id=2, port=None, baudrate=0):
         self.target_tag_id = int(target_tag_id)
-        self.map_path = map_path or self._default_map_path()
+
+        # 0. 工位工作空间下拉 (最左上角): 先恢复上次选择再加载对应地图 (持久化)
+        self.workspace_id = ""         # 当前选中的工位 ID (空=全局回退地图)
+        self.workspace_options = []    # 工位下拉选项 [(ws_id, label), ...] (打开下拉时刷新)
+        self._load_workspace_selection()
+        self.map_path = map_path or self._workspace_map_path()
 
         # 1. 世界坐标地图与计算引擎 (内参待相机开启后按实际分辨率刷新)
         self.engine = None
@@ -111,7 +117,7 @@ class RobotOnlineTracker:
         self.camera = CameraController(self.engine)
 
         # 4. 工具栏状态 (借鉴 d435_viewer: 相机类型 → 分辨率 → 开关; 绘制由 TrackerRenderer 负责)
-        self.active_dropdown = None     # "CAMERA_TYPE_DROPDOWN" | "RES_DROPDOWN" | "PLANE_DROPDOWN" | "TARGET_DROPDOWN" | "PORT_DROPDOWN" | None
+        self.active_dropdown = None     # "WORKSPACE_DROPDOWN" | "CAMERA_TYPE_DROPDOWN" | "RES_DROPDOWN" | "PLANE_DROPDOWN" | "TARGET_DROPDOWN" | "PORT_DROPDOWN" | None
         self.plane_z = 0                # XY 平面绘制高度 (mm, 下拉框选择)
         # XY 平面高度选项与标注: 锚点档位/标注从世界坐标地图动态生成, 基础档位为固定梯度
         self.anchor_z_labels = {int(round(pos[2])): f" (Tag {tid})"
@@ -175,15 +181,129 @@ class RobotOnlineTracker:
         # 7. 持久化恢复工具栏状态
         self._load_viewer_state()
 
-    # ------------------------------ 初始化 ------------------------------
-    @staticmethod
-    def _default_map_path() -> str:
-        """默认地图: 优先当前工况场景地图, 回退全局 config/tags_map.yaml"""
+    # ------------------------------ 工作空间选择 (最左上角下拉) ------------------------------
+    def _load_workspace_selection(self):
+        """初始化工作空间管理器并恢复上次选中的工位 (持久化于 config/gui_settings.json)"""
+        try:
+            from src.calibration.workspace_manager import WorkspaceManager
+            self.ws_manager = WorkspaceManager()
+        except Exception as e:
+            log.warning(f"WorkspaceManager 初始化失败, 工作空间下拉不可用: {e}")
+            self.ws_manager = None
+            return
+        # 恢复持久化选择; 无记录或已失效时回退当前默认工位
+        saved = ""
+        try:
+            if os.path.exists(GUI_SETTINGS_FILE):
+                with open(GUI_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    root = json.load(f)
+                saved = str(((root.get(APP_ID) or {}).get("viewer_state") or {})
+                            .get("workspace_id") or "")
+        except Exception:
+            saved = ""
+        ws_ids = [ws.workspace_id for ws in self.ws_manager.list_workspaces()]
+        if saved and saved in ws_ids:
+            self.workspace_id = saved
+        else:
+            try:
+                self.workspace_id = self.ws_manager.get_current_workspace_id()
+            except Exception:
+                self.workspace_id = ws_ids[0] if ws_ids else ""
+
+    def _workspace_map_path(self) -> str:
+        """当前工位的地图路径: 选中工位优先 (无有效地图回退全局 config/tags_map.yaml)"""
+        if self.ws_manager is not None and self.workspace_id:
+            ws = self.ws_manager.get_workspace_by_id(self.workspace_id)
+            if ws and os.path.exists(ws.map_path) and os.path.getsize(ws.map_path) > 50:
+                return ws.map_path
         try:
             from src.calibration.workspace_manager import WorkspaceManager
             return WorkspaceManager().get_current_workspace().map_path
         except Exception:
             return os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
+
+    @property
+    def workspace_label(self) -> str:
+        """工具栏工作空间下拉的显示文本 (★=已发布为生产工位)"""
+        if self.ws_manager is not None and self.workspace_id:
+            ws = self.ws_manager.get_workspace_by_id(self.workspace_id)
+            if ws:
+                return ("★" if ws.is_published else "") + ws.name
+        return self.workspace_id or "工作空间"
+
+    def refresh_workspace_options(self):
+        """刷新工位下拉选项 (打开下拉时调用, 保证新建/删除工位后列表最新)"""
+        if self.ws_manager is None:
+            self.workspace_options = []
+            return
+        opts = [(ws.workspace_id, ("★" if ws.is_published else "") + ws.name)
+                for ws in self.ws_manager.list_workspaces()]
+        # 当前地图不在工位列表 (全局回退地图) 时追加占位项, 保证选中态可见
+        if self.workspace_id and all(k != self.workspace_id for k, _ in opts):
+            opts.insert(0, (self.workspace_id, self.workspace_id))
+        self.workspace_options = opts
+
+    def select_workspace(self, ws_id):
+        """工作空间下拉选择: 切换工位 → 加载其世界坐标地图 → 旧解算状态全部作废 (持久化)"""
+        if not ws_id or self.ws_manager is None or ws_id == self.workspace_id:
+            return
+        if self.sampling or self.tracking or self.recognizing:
+            self.set_toast("任务执行中, 禁止切换工作空间", True)
+            return
+        ws = self.ws_manager.get_workspace_by_id(ws_id, force_refresh=True)
+        if ws is None:
+            self.set_toast(f"工位不存在: {ws_id}", True)
+            return
+        if not os.path.exists(ws.map_path) or os.path.getsize(ws.map_path) < 50:
+            self.set_toast(f"工位 [{ws.name}] 尚无有效地图, 请先在标定流程中平差生成", True)
+            return
+        self.ws_manager.set_active_workspace(ws_id)
+        old_map = self.map_path
+        self.workspace_id = ws_id
+        self.map_path = ws.map_path
+        try:
+            self._load_engine()
+        except Exception as e:
+            # 加载失败回滚到旧地图
+            self.workspace_id = ""
+            for w in self.ws_manager.list_workspaces():
+                if os.path.normpath(w.map_path) == os.path.normpath(old_map):
+                    self.workspace_id = w.workspace_id
+                    break
+            self.map_path = old_map
+            try:
+                self._load_engine()
+            except Exception:
+                pass
+            self.set_toast(f"加载工位地图失败: {e}", True)
+            return
+        # 旧地图的相机取流/世界系锁定/解算结果全部作废
+        if self.camera.pipeline_running:
+            self._toggle_camera(force_off=True)
+        self._release_world_lock(silent=True)
+        self.static_frame = None
+        self.static_det = None
+        self.measured = None
+        self.measured_r = None
+        self.support_ids = []
+        self.rmse = None
+        # XY 平面高度档位/标注按新地图锚点重建
+        self.anchor_z_labels = {int(round(pos[2])): f" (Tag {tid})"
+                                for tid, pos in self.anchor_positions.items()}
+        self.plane_z_labels = {**self.PLANE_Z_STATIC_LABELS, **self.anchor_z_labels}
+        self.plane_z_choices = tuple(sorted(
+            set(self.PLANE_Z_BASE_CHOICES) | set(self.anchor_z_labels), reverse=True))
+        self.plane_options = [
+            (None, "不绘制 XY 平面")
+        ] + [
+            (z, f"Z {z} mm" + self.plane_z_labels.get(z, ""))
+            for z in self.plane_z_choices
+        ]
+        if self.show_xy_plane_on and self.plane_z not in self.plane_z_choices:
+            self.show_xy_plane_on = False
+            self.plane_z = 0
+        self._save_viewer_state()
+        self.set_toast(f"工作空间已切换: {ws.name} | 地图 {os.path.basename(ws.map_path)}")
 
     def _load_engine(self):
         """加载世界坐标地图并构建纯几何计算引擎 (相机内参以 config.yaml 默认值初始化)"""
@@ -224,7 +344,7 @@ class RobotOnlineTracker:
 
     # ------------------------------ 工具栏状态持久化 ------------------------------
     def _load_viewer_state(self):
-        """从 config/gui_settings.json 恢复上次退出时的下拉选择 (相机/分辨率/XY平面/目标类型/串口)"""
+        """从 config/gui_settings.json 恢复上次退出时的下拉选择 (工作空间/相机/分辨率/XY平面/目标类型/串口)"""
         try:
             if not os.path.exists(GUI_SETTINGS_FILE):
                 return
@@ -264,6 +384,7 @@ class RobotOnlineTracker:
                     root = {}
             node = root.setdefault(APP_ID, {})
             node["viewer_state"] = {
+                "workspace_id": str(self.workspace_id or ""),
                 "camera_type": self.camera.camera_type,
                 "resolution": self.camera.resolution,
                 "show_plane": bool(self.show_xy_plane_on),
@@ -1026,7 +1147,14 @@ class RobotOnlineTracker:
 
     def _handle_action(self, btn_id, payload):
         """工具栏按钮动作分发"""
-        if btn_id == "TOGGLE_CAM_DD":
+        if btn_id == "TOGGLE_WS_DD":
+            self.refresh_workspace_options()   # 打开时刷新枚举, 保证工位列表最新
+            self.active_dropdown = None if self.active_dropdown == "WORKSPACE_DROPDOWN" \
+                else "WORKSPACE_DROPDOWN"
+        elif btn_id.startswith("DD_WS_"):
+            self.active_dropdown = None
+            self.select_workspace(payload)
+        elif btn_id == "TOGGLE_CAM_DD":
             self.active_dropdown = None if self.active_dropdown == "CAMERA_TYPE_DROPDOWN" \
                 else "CAMERA_TYPE_DROPDOWN"
         elif btn_id == "TOGGLE_RES_DD":

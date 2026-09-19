@@ -101,6 +101,7 @@ calibration:
     - 1.0
   active_scene: 20260916_145246_Home_real
   prod_scene_id: 20260916_145246_Home_real
+  prod_workspace_id: 20260916_145246_Home_real
 robot:
   port: COM3
   baudrate: 115200
