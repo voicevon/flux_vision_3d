@@ -38,21 +38,26 @@ class TestCaptureWizard(unittest.TestCase):
         wiz.renderer.draw_toolbar(canvas)
 
         ids = [btn_id for btn_id, _, _ in wiz.renderer.buttons]
-        for expected in ("TOGGLE_WS_DD", "TOGGLE_PURPOSE_DD", "TOGGLE_CAM_DD", "TOGGLE_RES_DD", "TOGGLE_CAMERA", "QUIT"):
+        for expected in ("TOGGLE_WS_DD", "TOGGLE_PURPOSE_DD", "TOGGLE_CAM_DD", "TOGGLE_RES_DD", "TOGGLE_CAMERA", "CAPTURE", "QUIT"):
             self.assertIn(expected, ids)
 
-        # 命中检测: 工位下拉 (x=8 起)、用途下拉、相机类型下拉按钮 与退出按钮
+        # 命中检测: 第1组工作空间(x=8..203)、用途(x=209..334)、第2组相机类型(x=394..534)、第3组拍照(x=786..901) 与第4组退出
         hit_ws = wiz.renderer.hit_test(20, TOOLBAR_H // 2)
         self.assertIsNotNone(hit_ws)
         self.assertEqual(hit_ws[0], "TOGGLE_WS_DD")
 
-        hit_purpose = wiz.renderer.hit_test(200, TOOLBAR_H // 2)
+        hit_purpose = wiz.renderer.hit_test(250, TOOLBAR_H // 2)
         self.assertIsNotNone(hit_purpose)
         self.assertEqual(hit_purpose[0], "TOGGLE_PURPOSE_DD")
 
-        hit_cam = wiz.renderer.hit_test(330, TOOLBAR_H // 2)
+        hit_cam = wiz.renderer.hit_test(450, TOOLBAR_H // 2)
         self.assertIsNotNone(hit_cam)
         self.assertEqual(hit_cam[0], "TOGGLE_CAM_DD")
+
+        hit_cap = wiz.renderer.hit_test(820, TOOLBAR_H // 2)
+        self.assertIsNotNone(hit_cap)
+        self.assertEqual(hit_cap[0], "CAPTURE")
+
         tw = canvas.shape[1]
         hit_quit = wiz.renderer.hit_test(tw - 40, TOOLBAR_H // 2)
         self.assertIsNotNone(hit_quit)
@@ -162,6 +167,20 @@ class TestCaptureWizard(unittest.TestCase):
         self.assertTrue(os.path.basename(path).startswith("view_0001"))
         # 瘦身后不再产出标注子目录
         self.assertFalse(os.path.exists(os.path.join(wiz.output_dir, "visualized")))
+
+    def test_capture_action_handling(self):
+        """测试点击拍照按钮分发逻辑：无流时 Toast 提示，有帧时成功保存"""
+        wiz = make_wizard()
+        # 1. 相机未开启时点击拍照
+        wiz._handle_action("CAPTURE", None)
+        self.assertIn("相机未开启", wiz.status_toast)
+
+        # 2. 模拟相机运行并拥有最新帧
+        wiz.pipeline_running = True
+        wiz.last_raw_frame = np.full((720, 1280, 3), 100, dtype=np.uint8)
+        wiz._handle_action("CAPTURE", None)
+        self.assertEqual(wiz.image_count, 1)
+
 
 
 if __name__ == "__main__":

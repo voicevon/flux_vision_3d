@@ -119,6 +119,7 @@ class CaptureWizard:
         self.status_toast = ""
         self.status_toast_time = 0.0
         self.color_sensor = None
+        self.last_raw_frame = None
 
     def _update_output_dir(self):
         """根据当前工位与用途，重新计算并确保采图存储路径"""
@@ -374,6 +375,14 @@ class CaptureWizard:
         elif btn_id == "TOGGLE_CAMERA":
             self.active_dropdown = None
             self._toggle_camera()
+        elif btn_id == "CAPTURE":
+            self.active_dropdown = None
+            if self.pipeline_running and self.last_raw_frame is not None:
+                self.save_image(self.last_raw_frame)
+            elif not self.pipeline_running:
+                self.set_toast("相机未开启，请先点击 [开启] 取流！")
+            else:
+                self.set_toast("正在等待有效画面帧...")
         elif btn_id == "QUIT":
             self.is_running = False
 
@@ -381,9 +390,9 @@ class CaptureWizard:
         self.is_running = True
         win_key = "capture_wizard"
         self.win_mgr.setup_window(win_key, mouse_callback=self._on_mouse)
-        self.win_mgr.set_unicode_title("采图向导 (工位与双用途) | flux_vision_3d")
+        self.win_mgr.set_unicode_title("图像采集 (工作空间与双用途) | flux_vision_3d")
 
-        log.info(f"多视角采图向导已启动，工位: {self.current_workspace_name}，用途: {self.purpose}，存储目录: {self.output_dir}")
+        log.info(f"图像采集已启动，工作空间: {self.current_workspace_name}，用途: {self.purpose}，存储目录: {self.output_dir}")
 
         frame_idx = 0
         frames_shown = 0
@@ -394,6 +403,10 @@ class CaptureWizard:
                 if self.pipeline_running:
                     raw_frame = self.get_frame(frame_idx)
                     frame_idx += 1
+                    if raw_frame is not None:
+                        self.last_raw_frame = raw_frame
+                else:
+                    self.last_raw_frame = None
 
                 if raw_frame is not None:
                     if time.time() - self.flash_timer < 0.12:
@@ -412,8 +425,8 @@ class CaptureWizard:
                               (cw // 2 - 120, ch // 2 - 50), 32, COLOR_ACCENT, True)
                     draw_text(canvas, f"归档: 【{self.current_workspace_name}】/【{self.current_purpose_label}】",
                               (cw // 2 - 150, ch // 2 + 10), 20, COL_YELLOW)
-                    draw_text(canvas, "点击 [开启] 预览画面，按 [空格] 拍摄保存无标注原始帧",
-                              (cw // 2 - 250, ch // 2 + 50), 16, COLOR_TEXT_SUB)
+                    draw_text(canvas, "点击 [开启] 预览画面，按 [空格] 或点击 [拍照] 保存无标注原始帧",
+                              (cw // 2 - 270, ch // 2 + 50), 16, COLOR_TEXT_SUB)
 
                 self.renderer.draw_toolbar(canvas)
                 self.renderer.draw_toast(canvas)

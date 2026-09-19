@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Studio 事件交互 Mixin (studio_events.py)
-========================================
-从 app.py 拆分出的事件处理职责模块，由 TagOfflineStudio 以 Mixin 方式继承：
+空间建图工作站 - 事件交互 Mixin (mapping_events.py)
+===================================================
+从主控拆分出的事件处理职责模块，由 SpatialMappingStudioApp 以 Mixin 方式继承：
   - _on_mouse: OpenCV 鼠标事件命中测试 (滚轮缩放/拖拽平移/双击复位/按钮分发/标靶打叉)
   - _handle_button_click: GUI 按钮 ID 统一分发
 无 __init__、无新增实例属性，全部通过宿主 self 与主控制器协作。
@@ -15,7 +15,7 @@ from typing import Any
 import cv2
 
 from src.calibration.manifest_repository import ManifestRepository
-from tools.studio.studio_renderer import (
+from tools.spatial_mapping_studio.mapping_ui_common import (
     VIEW_MODE_OPTIONS,
     FILTER_MODE_OPTIONS,
     SORT_MODE_OPTIONS,
@@ -24,7 +24,7 @@ from tools.studio.studio_renderer import (
 )
 
 
-class StudioEventMixin:
+class MappingEventMixin:
 
     """鼠标事件交互与 GUI 按钮点击分发职责 (无状态，依赖宿主 self 属性)"""
 

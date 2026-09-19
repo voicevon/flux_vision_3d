@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AprilTag 离线标定与建图综合工作站 (Tag Offline Studio)
+AprilTag 空间建图工作站 (Spatial Mapping Studio)
 =====================================================
 旗舰级资产中心化 (Asset-Centric) 离线标定工作台：
   - 100% 装配复用底层核心领域模型：
@@ -14,10 +14,10 @@ AprilTag 离线标定与建图综合工作站 (Tag Offline Studio)
   - 异步 BA 全局平差，前台丝滑响应，求解完成后就地热重载地图并即时刷新全量帧残差数值。
 
 模块拆分结构 (上帝文件拆分)：
-  - 本模块 (app.py): TagOfflineStudio 核心控制器 (装配 / 属性代理 / 数据委托 / 渲染委托 / 主循环)
-  - studio_events.py: StudioEventMixin (鼠标事件命中测试与 GUI 按钮分发)
-  - studio_workflows.py: StudioWorkflowMixin (异步超精提取 / 智能剪枝 / BA 平差 / 发布与质检报告)
-  - studio_app_meta.py: 跨模块共享常量 (PROJECT_ROOT)
+  - 本模块 (app.py): SpatialMappingStudioApp 核心控制器 (装配 / 属性代理 / 数据委托 / 渲染委托 / 主循环)
+  - mapping_events.py: MappingEventMixin (鼠标事件命中测试与 GUI 按钮分发)
+  - mapping_workflows.py: MappingWorkflowMixin (异步超精提取 / 智能剪枝 / BA 平差 / 发布与质检报告)
+  - mapping_app_meta.py: 跨模块共享常量 (PROJECT_ROOT)
 """
 
 import os
@@ -37,12 +37,12 @@ if sys.platform == "win32":
     except Exception:
         pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
-# 共享常量 PROJECT_ROOT 从 studio_app_meta 导入 (Mixin 模块亦引用，避免双处定义不一致)
+# 共享常量 PROJECT_ROOT 从 mapping_app_meta 导入 (Mixin 模块亦引用，避免双处定义不一致)
 try:
-    from tools.studio.studio_app_meta import PROJECT_ROOT
+    from tools.spatial_mapping_studio.mapping_app_meta import PROJECT_ROOT
 except ImportError:
     # 以脚本方式直接运行本文件时的回退导入 (同目录)
-    from studio_app_meta import PROJECT_ROOT
+    from mapping_app_meta import PROJECT_ROOT
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.calibration.manifest_repository import ManifestRepository
@@ -50,18 +50,16 @@ from src.calibration.offline_engine import OfflineVerificationEngine
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.verification_reporter import VerificationReporter
 from src.calibration.verification_visualizer import VerificationVisualizer
-from tools.studio.studio_state import StudioDataManager
-from tools.studio.studio_viewport_interactor import StudioViewportInteractor
-from tools.studio.studio_ba_runner import StudioBARunner
-from tools.studio.studio_renderer import (
-    StudioUIRenderer
-)
+from tools.spatial_mapping_studio.mapping_state import MappingDataManager
+from tools.spatial_mapping_studio.mapping_viewport_interactor import MappingViewportInteractor
+from tools.spatial_mapping_studio.mapping_ba_runner import MappingBARunner
+from tools.spatial_mapping_studio.mapping_renderer import MappingRenderer
 from src.utils.viewport_manager import (
     ViewportManager
 )
 from src.utils.logger import get_logger
-from tools.studio.studio_events import StudioEventMixin
-from tools.studio.studio_workflows import StudioWorkflowMixin
+from tools.spatial_mapping_studio.mapping_events import MappingEventMixin
+from tools.spatial_mapping_studio.mapping_workflows import MappingWorkflowMixin
 
 try:
     from tools.window_helper import force_window_focus
@@ -90,10 +88,10 @@ except Exception:
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 
-class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
+class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
 
-    """AprilTag 离线标定综合工作站 (Offline Studio) 控制器
-    (事件交互职责见 StudioEventMixin，异步工作流职责见 StudioWorkflowMixin)"""
+    """AprilTag 离线标定综合工作站 (Spatial Mapping Studio) 控制器
+    (事件交互职责见 MappingEventMixin，异步工作流职责见 MappingWorkflowMixin)"""
 
     def __init__(
         self,
@@ -162,7 +160,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         )
 
         # 3. 领域与数据状态管理器 (从主类中独立解耦)
-        self.data_mgr = StudioDataManager(
+        self.data_mgr = MappingDataManager(
             map_path=self.map_path,
             image_dir=self.image_dir,
             manifest_path=self.manifest_path,
@@ -183,7 +181,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         self.matrix_view_mode: bool = False
 
         # 5. 异步 BA 全局平差任务调度器
-        self.ba_runner = StudioBARunner(
+        self.ba_runner = MappingBARunner(
             data_mgr=self.data_mgr,
             optimizer=self.optimizer,
             manifest_repo=self.manifest_repo,
@@ -197,7 +195,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         self.show_frame_diagnostics = False
 
         # 7. 浮层通知 (Toast)
-        self.status_toast = "欢迎进入 Offline Studio 离线标定工作站"
+        self.status_toast = "欢迎进入空间建图工作站 (Spatial Mapping Studio)"
         self.status_toast_time = time.time()
 
         # 8. GUI 交互按钮注册表
@@ -206,10 +204,10 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         self.is_running = True
 
         # 9. 视口几何变换与鼠标交互控制器 (Viewport Zoom & Pan)
-        self.viewport = StudioViewportInteractor(win_w=self.win_w, win_h=self.win_h)
+        self.viewport = MappingViewportInteractor(win_w=self.win_w, win_h=self.win_h)
 
         # 10. UI 界面排版与视觉渲染器
-        self.ui_renderer = StudioUIRenderer()
+        self.ui_renderer = MappingRenderer()
 
         # 11. 异步全量超精提取任务状态调度
         self.is_extracting_all: bool = False
@@ -269,7 +267,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         self.ba_runner.manifest_path = self.manifest_path
 
         self.set_toast(f"已热重载切换至场景: 【{target_sc.name}】(共 {len(self.data_mgr.image_files)} 帧)")
-        log.info(f"[STUDIO] 成功切换场景至: {target_sc.name} ({target_sc.workspace_id})")
+        log.info(f"[SPATIAL_MAPPING] 成功切换场景至: {target_sc.name} ({target_sc.workspace_id})")
 
     def reset_viewport_zoom(self):
         """重置中间视口缩放与平移状态为适应屏幕 (1.0x)"""
@@ -625,7 +623,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
     # ===================== 渲染管线 (三栏自适应排版) =====================
 
     def render(self, canvas: np.ndarray):
-        """完整渲染 Offline Studio 的顶栏、左栏列表、中间视口、右栏诊断与底栏"""
+        """完整渲染 Spatial Mapping Studio 的顶栏、左栏列表、中间视口、右栏诊断与底栏"""
         self.ui_renderer.render(self, canvas)
 
     def _render_active_dropdown(self, canvas: np.ndarray):
@@ -679,7 +677,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
             miss_n = len(diag.get("missing_theoretical_tags", []))
             self.set_toast(f"[{bname}] 病因切片: 对比度 {c_g} | 清晰度 {s_g} | 拒检 {rej_n} | 理论漏检 {miss_n}")
             print("\n" + "=" * 70)
-            print(f"[*] [STUDIO DIAGNOSTICS] 图像深度病因切片: {bname}")
+            print(f"[*] [SPATIAL_MAPPING DIAGNOSTICS] 图像深度病因切片: {bname}")
             print(f"    - 对比度 (灰度标准差): {diag.get('contrast', 0.0):.1f} ({c_g})")
             print(f"    - 亮度均值: {diag.get('brightness', 0.0):.1f} ({diag.get('brightness_grade', '')})")
             print(f"    - 图像清晰度 (拉普拉斯梯度): {diag.get('sharpness', 0.0):.1f} ({s_g})")
@@ -692,14 +690,14 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
 
     def launch_robot_online_tracker(self):
         """一键跨工序启动 Robot 在线跟踪 (Tag 世界坐标实时解算 + 机械臂联动)"""
-        log.info("\n[*] [STUDIO] 正在启动 Robot 在线跟踪 (tools/tracker/app.py)...")
+        log.info("\n[*] [SPATIAL_MAPPING] 正在启动 Robot 在线跟踪 (tools/tracker/app.py)...")
         self.set_toast("正在启动 Robot 在线跟踪...")
         import subprocess
         subprocess.Popen([sys.executable, "tools/tracker/app.py"])
 
     def run(self):
-        """进入 Studio 主交互渲染循环"""
-        window_name = "AprilTag Offline Studio (Integrated Edition)"
+        """进入空间建图工作站主交互渲染循环"""
+        window_name = "Spatial Mapping Studio - 空间建图工作站"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_name, self.win_w, self.win_h)
         cv2.setMouseCallback(window_name, self._on_mouse)
@@ -707,7 +705,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         if force_window_focus:
             force_window_focus(window_name)
 
-        log.info(f"AprilTag 离线标定工作站已启动: {len(self.image_files)} 帧图像, 地图: {self.map_path}")
+        log.info(f"空间建图工作站已启动: {len(self.image_files)} 帧图像, 地图: {self.map_path}")
 
         canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
 
@@ -827,20 +825,20 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AprilTag 离线标定与空间建图综合工作站 (Offline Studio)")
+    parser = argparse.ArgumentParser(description="AprilTag 空间建图工作站 (Spatial Mapping Studio)")
     parser.add_argument("--workspace", type=str, default=None, help="目标工位 ID")
     parser.add_argument("--map", type=str, default=None, help="标靶空间立体地图路径")
     parser.add_argument("--images", type=str, default=None, help="标定采图目录")
     parser.add_argument("--marker_size", type=float, default=50.0, help="标靶物理边长 (mm)")
     args = parser.parse_args()
 
-    studio = TagOfflineStudio(
+    app = SpatialMappingStudioApp(
         map_path=args.map,
         image_dir=args.images,
         marker_size_mm=args.marker_size,
         workspace_id=args.workspace
     )
-    studio.run()
+    app.run()
 
 
 if __name__ == "__main__":

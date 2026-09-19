@@ -1,9 +1,9 @@
 """
-AprilTag 离线标定工作站 - 左栏帧列表渲染 Mixin (StudioFrameListMixin)
+空间建图工作站 - 左栏帧列表渲染 Mixin (MappingFrameListMixin)
 ================================================================================
-承载 StudioUIRenderer 的左栏绘制分区：
+承载 MappingRenderer 的左栏绘制分区：
 1. render_left_frame_list: 高信息密度垂直紧凑帧列表 与 逐帧多轮残差演进矩阵宽表
-仅包含纯绘制方法, 不持有任何状态; 通过 self 依赖宿主 StudioUIRenderer 的其他方法,
+仅包含纯绘制方法, 不持有任何状态; 通过 self 依赖宿主 MappingRenderer 的其他方法,
 由 MRO 解析跨分区调用。
 """
 
@@ -15,20 +15,20 @@ import numpy as np
 from src.utils.text_rendering import measure_text, put_text
 from src.utils.viewport_manager import draw_styled_button
 from src.utils.gui_components import draw_dropdown_button
-from tools.studio.studio_ui_common import FILTER_MODE_OPTIONS, SORT_MODE_OPTIONS
+from tools.spatial_mapping_studio.mapping_ui_common import FILTER_MODE_OPTIONS, SORT_MODE_OPTIONS
 
 
-class StudioFrameListMixin:
-    """左栏帧列表渲染 Mixin (由宿主类 StudioUIRenderer 组合)"""
+class MappingFrameListMixin:
+    """左栏帧列表渲染 Mixin (由宿主类 MappingRenderer 组合)"""
 
-    def render_left_frame_list(self, studio: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
+    def render_left_frame_list(self, app: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
         """左栏：高信息密度垂直紧凑帧列表 或 逐帧多轮残差演进矩阵宽表大视图"""
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (22, 24, 30), -1)
         cv2.line(canvas, (x + w, y), (x + w, y + h), (50, 54, 66), 1)
 
-        is_matrix = getattr(studio, "matrix_view_mode", False)
-        headers = getattr(studio.data_mgr, "convergence_headers", [])
-        matrix = getattr(studio.data_mgr, "frame_convergence_matrix", {})
+        is_matrix = getattr(app, "matrix_view_mode", False)
+        headers = getattr(app.data_mgr, "convergence_headers", [])
+        matrix = getattr(app.data_mgr, "frame_convergence_matrix", {})
 
         header_h = 36
         dd_y1 = y + 6
@@ -49,38 +49,38 @@ class StudioFrameListMixin:
         dd2_x2 = dd2_x1 + dd2_w
 
         # 筛选范围下拉框
-        cur_filter_label = dict(FILTER_MODE_OPTIONS).get(studio.filter_mode, "全部帧")
-        is_f_open = (studio.active_dropdown == "FILTER_DROPDOWN")
+        cur_filter_label = dict(FILTER_MODE_OPTIONS).get(app.filter_mode, "全部帧")
+        is_f_open = (app.active_dropdown == "FILTER_DROPDOWN")
         draw_dropdown_button(canvas, (dd1_x1, dd_y1, dd1_x2, dd_y2), cur_filter_label,
-                             is_open=is_f_open, mouse_pos=studio.mouse_pos)
-        studio.dropdown_boxes["FILTER_DROPDOWN"] = {
+                             is_open=is_f_open, mouse_pos=app.mouse_pos)
+        app.dropdown_boxes["FILTER_DROPDOWN"] = {
             "rect": (dd1_x1, dd_y1, dd1_x2, dd_y2),
             "options": FILTER_MODE_OPTIONS,
-            "active_key": studio.filter_mode
+            "active_key": app.filter_mode
         }
-        studio.gui_buttons.append(("TOGGLE_FILTER_DROPDOWN", (dd1_x1, dd_y1, dd1_x2, dd_y2), "FILTER_DROPDOWN"))
+        app.gui_buttons.append(("TOGGLE_FILTER_DROPDOWN", (dd1_x1, dd_y1, dd1_x2, dd_y2), "FILTER_DROPDOWN"))
 
         # 排序方式下拉框
-        cur_sort_label = dict(SORT_MODE_OPTIONS).get(studio.sort_mode, "文件名升序")
+        cur_sort_label = dict(SORT_MODE_OPTIONS).get(app.sort_mode, "文件名升序")
         short_sort = cur_sort_label.split(" ")[0] if "(" in cur_sort_label else cur_sort_label
-        is_s_open = (studio.active_dropdown == "SORT_DROPDOWN")
+        is_s_open = (app.active_dropdown == "SORT_DROPDOWN")
         draw_dropdown_button(canvas, (dd2_x1, dd_y1, dd2_x2, dd_y2), short_sort,
-                             is_open=is_s_open, mouse_pos=studio.mouse_pos)
-        studio.dropdown_boxes["SORT_DROPDOWN"] = {
+                             is_open=is_s_open, mouse_pos=app.mouse_pos)
+        app.dropdown_boxes["SORT_DROPDOWN"] = {
             "rect": (dd2_x1, dd_y1, dd2_x2, dd_y2),
             "options": SORT_MODE_OPTIONS,
-            "active_key": studio.sort_mode
+            "active_key": app.sort_mode
         }
-        studio.gui_buttons.append(("TOGGLE_SORT_DROPDOWN", (dd2_x1, dd_y1, dd2_x2, dd_y2), "SORT_DROPDOWN"))
+        app.gui_buttons.append(("TOGGLE_SORT_DROPDOWN", (dd2_x1, dd_y1, dd2_x2, dd_y2), "SORT_DROPDOWN"))
 
         # 矩阵模式切换按钮 (一键展开/收起 10 轮残差对比大表)
         btn_txt = "⊟ 紧凑 (X)" if is_matrix else "⊞ 矩阵 (X)"
         btn_type = "primary" if is_matrix else "secondary"
         draw_styled_button(canvas, (btn_x1, dd_y1, btn_x2, dd_y2), btn_txt,
-                           mouse_pos=studio.mouse_pos, btn_type=btn_type)
-        studio.gui_buttons.append(("TOGGLE_MATRIX_VIEW", (btn_x1, dd_y1, btn_x2, dd_y2), "TOGGLE_MATRIX_VIEW"))
+                           mouse_pos=app.mouse_pos, btn_type=btn_type)
+        app.gui_buttons.append(("TOGGLE_MATRIX_VIEW", (btn_x1, dd_y1, btn_x2, dd_y2), "TOGGLE_MATRIX_VIEW"))
 
-        filtered_indices = studio._get_filtered_indices()
+        filtered_indices = app._get_filtered_indices()
         if not filtered_indices:
             put_text(canvas, "当前筛选条件下无图像", (x + 60, y + header_h + 45),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.44, (120, 120, 120), 1, cv2.LINE_AA)
@@ -96,7 +96,7 @@ class StudioFrameListMixin:
             item_h = 30
             visible_count = (h - (list_y - y) - 10) // item_h
 
-            studio.scroll_offset = max(0, min(studio.scroll_offset, len(filtered_indices) - visible_count))
+            app.scroll_offset = max(0, min(app.scroll_offset, len(filtered_indices) - visible_count))
 
             # 绘制矩阵表头背景
             cv2.rectangle(canvas, (x + 6, th_y1), (x + w - 6, th_y2), (32, 36, 46), -1)
@@ -128,19 +128,19 @@ class StudioFrameListMixin:
 
             # 绘制逐帧矩阵数据行
             for row_idx in range(visible_count):
-                list_idx = studio.scroll_offset + row_idx
+                list_idx = app.scroll_offset + row_idx
                 if list_idx >= len(filtered_indices):
                     break
 
                 orig_img_idx = filtered_indices[list_idx]
-                p = studio.image_files[orig_img_idx]
+                p = app.image_files[orig_img_idx]
                 bname = os.path.basename(p)
-                meta = studio.frame_metrics_cache.get(bname, {})
+                meta = app.frame_metrics_cache.get(bname, {})
 
                 iy1 = list_y + row_idx * item_h
                 iy2 = iy1 + item_h - 2
-                is_selected = (orig_img_idx == studio.current_img_idx)
-                is_hover = (x + 6 <= studio.mouse_pos[0] <= x + w - 6 and iy1 <= studio.mouse_pos[1] <= iy2)
+                is_selected = (orig_img_idx == app.current_img_idx)
+                is_hover = (x + 6 <= app.mouse_pos[0] <= x + w - 6 and iy1 <= app.mouse_pos[1] <= iy2)
 
                 if is_selected:
                     row_bg = (48, 42, 28)
@@ -156,7 +156,7 @@ class StudioFrameListMixin:
                 cv2.rectangle(canvas, (x + 6, iy1), (x + w - 6, iy2), border_c, 1)
 
                 btn_id = f"SELECT_FRAME_{orig_img_idx}"
-                studio.gui_buttons.append((btn_id, (x + 6, iy1, x + w - 6, iy2), orig_img_idx))
+                app.gui_buttons.append((btn_id, (x + 6, iy1, x + w - 6, iy2), orig_img_idx))
 
                 # 状态小圆点
                 dot_y = iy1 + item_h // 2
@@ -238,22 +238,22 @@ class StudioFrameListMixin:
             item_h = 36
             visible_count = (h - header_h - 16) // item_h
 
-            studio.scroll_offset = max(0, min(studio.scroll_offset, len(filtered_indices) - visible_count))
+            app.scroll_offset = max(0, min(app.scroll_offset, len(filtered_indices) - visible_count))
 
             for row_idx in range(visible_count):
-                list_idx = studio.scroll_offset + row_idx
+                list_idx = app.scroll_offset + row_idx
                 if list_idx >= len(filtered_indices):
                     break
 
                 orig_img_idx = filtered_indices[list_idx]
-                p = studio.image_files[orig_img_idx]
+                p = app.image_files[orig_img_idx]
                 bname = os.path.basename(p)
-                meta = studio.frame_metrics_cache.get(bname, {})
+                meta = app.frame_metrics_cache.get(bname, {})
 
                 iy1 = list_y + row_idx * item_h
                 iy2 = iy1 + item_h - 2
-                is_selected = (orig_img_idx == studio.current_img_idx)
-                is_hover = (x + 4 <= studio.mouse_pos[0] <= x + w - 4 and iy1 <= studio.mouse_pos[1] <= iy2)
+                is_selected = (orig_img_idx == app.current_img_idx)
+                is_hover = (x + 4 <= app.mouse_pos[0] <= x + w - 4 and iy1 <= app.mouse_pos[1] <= iy2)
 
                 if is_selected:
                     row_bg = (48, 42, 28)
@@ -269,7 +269,7 @@ class StudioFrameListMixin:
                 cv2.rectangle(canvas, (x + 6, iy1), (x + w - 6, iy2), border_c, 1)
 
                 btn_id = f"SELECT_FRAME_{orig_img_idx}"
-                studio.gui_buttons.append((btn_id, (x + 6, iy1, x + w - 6, iy2), orig_img_idx))
+                app.gui_buttons.append((btn_id, (x + 6, iy1, x + w - 6, iy2), orig_img_idx))
 
                 # 状态小圆点
                 dot_y = iy1 + item_h // 2

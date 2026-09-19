@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AprilTag 离线标定工作站 - UI 渲染数据视图选项常量 (studio_ui_common)
-================================================================================
-本模块仅保留离线标定工作站特定数据管理与过滤排序常量。
+空间建图工作站 - UI 渲染数据视图选项常量 (mapping_ui_common)
+============================================================
+本模块仅保留空间建图工作站特定数据管理与过滤排序常量。
 通用 UI 交互控件及 3D 棱柱/位姿视觉语言已全面提升至公共基础层：
 - 控件：src.utils.gui_components (draw_dropdown_button, render_dropdown_popup, draw_dashboard_button)
 - 主题与 3D 视觉语言：src.utils.gui_theme (GuiTheme)
@@ -21,14 +21,14 @@ VIEW_MODE_OPTIONS = GuiTheme.VIEW_MODE_OPTIONS
 BA_VIEW_OPTIONS = GuiTheme.BA_VIEW_OPTIONS
 OBS_VIEW_OPTIONS = GuiTheme.OBS_VIEW_OPTIONS
 
-# Studio 专属帧列表筛选模式
+# 空间建图工作站专属帧列表筛选模式
 FILTER_MODE_OPTIONS = [
     ("all", "全部帧"),
     ("warning", "高残差 (>0.5px)"),
     ("excluded", "已剔除帧")
 ]
 
-# Studio 专属帧列表排序模式
+# 空间建图工作站专属帧列表排序模式
 SORT_MODE_OPTIONS = [
     ("name_asc", "文件名升序"),
     ("err_desc", "残差降序 (最差优先 ↓)"),

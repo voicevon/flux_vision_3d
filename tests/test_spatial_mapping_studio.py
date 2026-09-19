@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AprilTag 离线标定综合工作站单元测试 (test_tag_offline_studio.py)
+AprilTag 空间建图工作站单元测试 (test_spatial_mapping_studio.py)
 ============================================================
 覆盖测试用例：
   1. Studio 初始化与领域模型装配校验；
@@ -27,10 +27,10 @@ import yaml
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
 
-from tools.studio.app import TagOfflineStudio
+from tools.spatial_mapping_studio.app import SpatialMappingStudioApp
 
 
-class TestTagOfflineStudio(unittest.TestCase):
+class TestSpatialMappingStudioApp(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         self.image_dir = os.path.join(self.temp_dir, "images")
@@ -73,7 +73,7 @@ class TestTagOfflineStudio(unittest.TestCase):
         with open(self.manifest_path, "w", encoding="utf-8") as f:
             yaml.dump(init_manifest, f)
 
-        self.studio = TagOfflineStudio(
+        self.studio = SpatialMappingStudioApp(
             map_path=self.map_path,
             image_dir=self.image_dir,
             marker_size_mm=50.0,
@@ -362,9 +362,9 @@ class TestTagOfflineStudio(unittest.TestCase):
         self.assertEqual(img_entry["observations"][0]["channel"], "CLAHE_8x8")
         self.assertIn("cell_size_px", img_entry["observations"][0])
 
-        # 核心持久化验证：新建一个 StudioDataManager 从磁盘加载 manifest_path
-        from tools.studio.studio_state import StudioDataManager
-        new_mgr = StudioDataManager(
+        # 核心持久化验证：新建一个 MappingDataManager 从磁盘加载 manifest_path
+        from tools.spatial_mapping_studio.mapping_state import MappingDataManager
+        new_mgr = MappingDataManager(
             map_path=self.map_path,
             image_dir=self.image_dir,
             manifest_path=self.studio.manifest_path,
@@ -613,7 +613,7 @@ class TestTagOfflineStudio(unittest.TestCase):
 
         # 执行视口叠加绘制
         self.studio.ui_renderer.overlay_visual_elements(
-            studio=self.studio,
+            app=self.studio,
             disp_frame=disp_frame,
             observations=observations,
             is_frame_excluded=False,

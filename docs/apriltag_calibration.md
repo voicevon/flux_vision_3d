@@ -223,7 +223,7 @@ tags:
 | **交互采图向导** | `tools/capture/capture_wizard.py` | 工序 2：实时视频流纯预览 + 空格连拍 1080P @ 8fps 原始照片 |
 | **超精重提取引擎** | `tools/calibration/tag_super_extractor.py` | **工序 3（离线超精重提取引擎）**：离线重算，16级致密自适应阈值网格 + 双尺度CLAHE增强 + 2x超分放大 + 正统轮廓拟合解析求交 (CONTOUR)，无损继承历史清洗标注，输出高质量观测清单 |
 | **采图清单画板** | `tools/calibration/tag_manifest_reviewer.py` | **工序 4（交互审核画板）**：原生 GUI 审核画板，鼠标右键上下文菜单（红绿自适应剔除/恢复、局部Refine重算、靶向聚焦）、整帧临时旁路、一键保存并自动触发平差热重载 |
-| **离线标定综合工作站** | `tools/studio/app.py` | **工序 5A（空间建图平差）**：帧序列资产管理、交互审核、两阶段/迭代剪枝 BA 平差、MAD 清洗、Quiver 矢量图与离线精度体检 |
+| **空间建图工作站** | `tools/spatial_mapping_studio/app.py` | **工序 5A（空间建图平差）**：帧序列资产管理、交互审核、两阶段/迭代剪枝 BA 平差、MAD 清洗、Quiver 矢量图与离线精度体检 |
 | **Robot 在线跟踪** | `tools/tracker/app.py` | **工序 5B（在线跟踪与验证）**：真实相机实时解算目标 Tag 世界坐标，机械臂"抬起→平移→下探"安全路径联动跟踪，M114 回读末端实际坐标同屏对比偏差用于相机位置校准 |
 | **在线定位器** | `src/vision/tag_localizer.py` | 运行时每帧毫秒级检测已知标靶，输出相机外参 $T_{cam\_to\_world}$ |
 

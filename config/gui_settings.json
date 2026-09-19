@@ -7,13 +7,13 @@
     "scale_pct": 110,
     "canvas_w": 1280,
     "canvas_h": 1000,
-    "updated_at": "2026-09-19 17:14:57"
+    "updated_at": "2026-09-19 17:29:19"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-19 16:39:31",
+    "updated_at": "2026-09-19 17:25:07",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1920x1080",
@@ -33,7 +33,7 @@
     "scale_pct": 60,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-19 16:34:01"
+    "updated_at": "2026-09-19 17:21:42"
   },
   "hardware_config": {
     "scale_pct": 100,
@@ -43,20 +43,20 @@
   },
   "capture_wizard": {
     "scale_pct": 100,
-    "canvas_w": 1361,
-    "canvas_h": 700,
-    "updated_at": "2026-09-19 16:34:53",
+    "canvas_w": 1920,
+    "canvas_h": 1017,
+    "updated_at": "2026-09-19 17:27:03",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1920x1080",
-      "purpose": "calibration"
+      "purpose": "production"
     }
   },
   "asparagus_offline": {
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-19 16:35:17"
+    "updated_at": "2026-09-19 17:29:00"
   },
   "d435_viewer": {
     "scale_pct": 100,

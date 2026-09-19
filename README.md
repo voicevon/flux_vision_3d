@@ -175,7 +175,7 @@ flowchart TD
 | **顶级 `[G]`** | **芦笋上料自动化 (Dashboard)**<br>`gui_launcher.py` | **1280x1000 工业科技总控大屏**：常驻硬件探针、卡片网格、右侧动态即时说明大屏 (Live Inspector)，统一调度全系统生产、标定与测试任务 |
 | **Dashboard `[1]`** | **工位与数据管理中枢 (Workspace Hub)**<br>`tools/workspace_hub/` | **1280x720 工位与数据总控台**：工位工作空间/数据容器管理、健康体检大屏、相册大图巡检；直接执行 `python -m tools.workspace_hub` 即可启动 |
 | **`[2]`** | **多视角交互采图向导**<br>`capture_wizard.py` | 专职采图工具：GUI 先行纯预览，点[开启]取流，按空格连拍保存，样本自动存入当前场景沙盒 |
-| **`[S]`** | **离线标定工作站 (Studio)**<br>`tools/studio/app.py` | **一站式离线解算工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
+| **`[S]`** | **空间建图工作站 (Spatial Mapping Studio)**<br>`tools/spatial_mapping_studio/` | **一站式空间立体建图与深度平差工作台**：样本审核画板、两阶段非线性 BA 平差、热力覆盖率与体检闭环 |
 | **`[3]`** | **超精重提取引擎**<br>`tag_super_extractor.py` | 16 级阈值网格 + 自适应双尺度 CLAHE + 亚像素级角点精修，极限召回暗光/反光/弱对比度标靶 |
 | **`[4]`** | **静默空间建图求解**<br>`tag_map_builder.py` | 纯计算命令行求解器：图论连通性建模 $\rightarrow$ 两阶段 BA（Cauchy 鲁棒核 + MAD 粗差清洗） |
 | **`[5]`** | **Robot 在线跟踪**<br>`tools/tracker/app.py` | 真实相机实时解算目标 Tag 世界坐标 (世界系=机械臂坐标系)，机械臂"抬起→平移→下探"安全路径联动跟踪，到位后 M114 回读对比偏差用于相机位置校准 |
@@ -229,9 +229,9 @@ flowchart TD
 
 ---
 
-### 离线标定工作站 (Offline Studio)
+### 空间建图工作站 (Spatial Mapping Studio)
 
-离线工作站 (`tools/studio/app.py`) 整合了样本数据清洗、拓扑网络验证与两阶段 BA 空间平差：
+空间建图工作站 (`tools.spatial_mapping_studio`) 整合了样本数据清洗、拓扑网络验证与两阶段 BA 空间平差：
 
 1. **样本画板交互审核**：自由选择样本帧，右键快捷剔除离群样本或整帧旁路；
 2. **两阶段非线性平差 (Two-Stage BA)**：
@@ -314,12 +314,13 @@ flux_vision_3d/
 │   │   ├── app.py                 #      WorkspaceHubApp 核心驱动逻辑
 │   │   ├── hub_state.py           #      工位状态机与数据沙盒模型
 │   │   └── hub_renderer.py        #      1280x720 三模态科技看板渲染引擎
-│   ├── studio/                    #    ★【离线标定工作站·自包含包】(工序S)
-│   │   ├── app.py                 #      TagOfflineStudio 入口: 交互审核 + 两阶段 BA 平差 + 体检闭环
-│   │   ├── studio_ba_runner.py    #      异步两阶段 BA 平差调度器
-│   │   ├── studio_renderer.py     #      工作站看板渲染引擎
-│   │   ├── studio_state.py        #      交互状态与数据沙盒模型
-│   │   └── studio_viewport_interactor.py # 视口交互器
+│   ├── spatial_mapping_studio/    #    ★【空间建图工作站·自包含包】(工序3 / python -m tools.spatial_mapping_studio)
+│   │   ├── __main__.py            #      模块直接执行入口
+│   │   ├── app.py                 #      SpatialMappingStudioApp 入口: 交互审核 + 两阶段 BA 平差 + 体检闭环
+│   │   ├── mapping_ba_runner.py   #      异步两阶段 BA 平差调度器
+│   │   ├── mapping_renderer.py    #      工作站看板渲染引擎
+│   │   ├── mapping_state.py       #      交互状态与数据沙盒模型
+│   │   └── mapping_viewport_interactor.py # 视口交互器
 │   ├── tracker/                   #    ★【Robot 在线跟踪·自包含包】(工序5)
 │   │   ├── app.py                 #      RobotOnlineTracker 入口: Tag 世界坐标解算 + 机械臂联动
 │   │   ├── camera_controller.py   #      相机硬件控制器 (RealSense/USB 取流启停)

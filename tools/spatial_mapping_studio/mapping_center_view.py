@@ -1,10 +1,10 @@
 """
-AprilTag 离线标定工作站 - 中栏视口渲染 Mixin (StudioCenterViewMixin)
+空间建图工作站 - 中栏视口渲染 Mixin (MappingCenterViewMixin)
 ================================================================================
-承载 StudioUIRenderer 的中栏绘制分区：
+承载 MappingRenderer 的中栏绘制分区：
 1. render_center_viewport: 高清工作视口, 等比居中自适应渲染与双下拉控制菜单
 2. overlay_visual_elements: 标靶标注、3D 双棱柱与残差矢量叠加渲染
-仅包含纯绘制方法, 不持有任何状态; 通过 self 依赖宿主 StudioUIRenderer 的其他方法,
+仅包含纯绘制方法, 不持有任何状态; 通过 self 依赖宿主 MappingRenderer 的其他方法,
 由 MRO 解析跨分区调用。
 """
 
@@ -21,19 +21,19 @@ BA_VIEW_OPTIONS = GuiTheme.BA_VIEW_OPTIONS
 OBS_VIEW_OPTIONS = GuiTheme.OBS_VIEW_OPTIONS
 
 
-class StudioCenterViewMixin:
-    """中栏视口渲染 Mixin (由宿主类 StudioUIRenderer 组合)"""
+class MappingCenterViewMixin:
+    """中栏视口渲染 Mixin (由宿主类 MappingRenderer 组合)"""
 
-    def render_center_viewport(self, studio: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
+    def render_center_viewport(self, app: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
         """中栏：高清工作视口，等比居中自适应渲染"""
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (14, 15, 18), -1)
 
-        if not studio.image_files:
+        if not app.image_files:
             put_text(canvas, "未扫描到采图图像 (data/tag_calibration_images/ 为空)", (x + 100, y + h // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (140, 140, 140), 1, cv2.LINE_AA)
             return
 
-        cur_file = studio.image_files[studio.current_img_idx]
+        cur_file = app.image_files[app.current_img_idx]
         bgr = cv2.imread(cur_file)
         if bgr is None:
             put_text(canvas, f"读取图像文件失败: {cur_file}", (x + 100, y + h // 2),
@@ -42,23 +42,23 @@ class StudioCenterViewMixin:
 
         disp_frame = bgr.copy()
         base_name = os.path.basename(cur_file)
-        meta = studio.frame_metrics_cache.get(base_name, {})
+        meta = app.frame_metrics_cache.get(base_name, {})
         obs_list = meta.get("observations", [])
 
         # 叠加标靶与 3D 双棱柱
-        self.overlay_visual_elements(studio, disp_frame, obs_list, meta.get("is_excluded", False), meta=meta,
+        self.overlay_visual_elements(app, disp_frame, obs_list, meta.get("is_excluded", False), meta=meta,
                                      panel_rect=(x, y, w, h))
 
         # 视口等比与平移缩放渲染 (委托给 viewport 控制器)
         frame_h, frame_w = disp_frame.shape[:2]
-        rois = studio.viewport.compute_viewport_render_rois((x, y, w, h), frame_w, frame_h)
+        rois = app.viewport.compute_viewport_render_rois((x, y, w, h), frame_w, frame_h)
         if rois is not None:
             (src_x1, src_y1, src_x2, src_y2), (dst_x1, dst_y1, dst_x2, dst_y2) = rois
             src_roi = disp_frame[src_y1:src_y2, src_x1:src_x2]
             dst_w = dst_x2 - dst_x1
             dst_h = dst_y2 - dst_y1
             if dst_w > 0 and dst_h > 0 and src_roi.size > 0:
-                interp = cv2.INTER_LINEAR if studio.zoom_level > 1.2 else cv2.INTER_AREA
+                interp = cv2.INTER_LINEAR if app.zoom_level > 1.2 else cv2.INTER_AREA
                 resized_roi = cv2.resize(src_roi, (dst_w, dst_h), interpolation=interp)
                 canvas[dst_y1:dst_y2, dst_x1:dst_x2] = resized_roi
 
@@ -70,34 +70,34 @@ class StudioCenterViewMixin:
         ba_y1 = y + 10
         ba_x2 = ba_x1 + 148
         ba_y2 = ba_y1 + 28
-        cur_ba_label = dict(BA_VIEW_OPTIONS).get(studio.ba_view_mode, "3D 翡翠绿棱柱")
-        is_ba_open = (studio.active_dropdown == "BA_VIEW_DROPDOWN")
+        cur_ba_label = dict(BA_VIEW_OPTIONS).get(app.ba_view_mode, "3D 翡翠绿棱柱")
+        is_ba_open = (app.active_dropdown == "BA_VIEW_DROPDOWN")
         draw_dropdown_button(canvas, (ba_x1, ba_y1, ba_x2, ba_y2), cur_ba_label,
-                             is_open=is_ba_open, mouse_pos=studio.mouse_pos, prefix="BA理论: ")
-        studio.dropdown_boxes["BA_VIEW_DROPDOWN"] = {
+                             is_open=is_ba_open, mouse_pos=app.mouse_pos, prefix="BA理论: ")
+        app.dropdown_boxes["BA_VIEW_DROPDOWN"] = {
             "rect": (ba_x1, ba_y1, ba_x2, ba_y2),
             "options": BA_VIEW_OPTIONS,
-            "active_key": studio.ba_view_mode
+            "active_key": app.ba_view_mode
         }
-        studio.gui_buttons.append(("TOGGLE_BA_VIEW_DROPDOWN", (ba_x1, ba_y1, ba_x2, ba_y2), "BA_VIEW_DROPDOWN"))
+        app.gui_buttons.append(("TOGGLE_BA_VIEW_DROPDOWN", (ba_x1, ba_y1, ba_x2, ba_y2), "BA_VIEW_DROPDOWN"))
 
         obs_x1 = ba_x2 + 8
         obs_y1 = y + 10
         obs_x2 = obs_x1 + 148
         obs_y2 = obs_y1 + 28
-        cur_obs_label = dict(OBS_VIEW_OPTIONS).get(studio.obs_view_mode, "3D 科技天蓝棱柱")
-        is_obs_open = (studio.active_dropdown == "OBS_VIEW_DROPDOWN")
+        cur_obs_label = dict(OBS_VIEW_OPTIONS).get(app.obs_view_mode, "3D 科技天蓝棱柱")
+        is_obs_open = (app.active_dropdown == "OBS_VIEW_DROPDOWN")
         draw_dropdown_button(canvas, (obs_x1, obs_y1, obs_x2, obs_y2), cur_obs_label,
-                             is_open=is_obs_open, mouse_pos=studio.mouse_pos, prefix="实测识别: ")
-        studio.dropdown_boxes["OBS_VIEW_DROPDOWN"] = {
+                             is_open=is_obs_open, mouse_pos=app.mouse_pos, prefix="实测识别: ")
+        app.dropdown_boxes["OBS_VIEW_DROPDOWN"] = {
             "rect": (obs_x1, obs_y1, obs_x2, obs_y2),
             "options": OBS_VIEW_OPTIONS,
-            "active_key": studio.obs_view_mode
+            "active_key": app.obs_view_mode
         }
-        studio.gui_buttons.append(("TOGGLE_OBS_VIEW_DROPDOWN", (obs_x1, obs_y1, obs_x2, obs_y2), "OBS_VIEW_DROPDOWN"))
+        app.gui_buttons.append(("TOGGLE_OBS_VIEW_DROPDOWN", (obs_x1, obs_y1, obs_x2, obs_y2), "OBS_VIEW_DROPDOWN"))
 
         # 视口右上角悬浮提示胶囊
-        zoom_badge = f"缩放: {studio.zoom_level:.1f}x | 点击Tag: 剔除/恢复(打叉) | 切换模式: V | 拖拽: 右键/中键 | 双击/Z: 重置"
+        zoom_badge = f"缩放: {app.zoom_level:.1f}x | 点击Tag: 剔除/恢复(打叉) | 切换模式: V | 拖拽: 右键/中键 | 双击/Z: 重置"
         (zw, zh), _ = measure_text(zoom_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
         bx1 = x + w - zw - 24
         by1 = y + 10
@@ -110,7 +110,7 @@ class StudioCenterViewMixin:
 
     def overlay_visual_elements(
         self,
-        studio: Any,
+        app: Any,
         disp_frame: np.ndarray,
         observations: List[Dict[str, Any]],
         is_frame_excluded: bool,
@@ -118,19 +118,19 @@ class StudioCenterViewMixin:
         panel_rect: Optional[Tuple[int, int, int, int]] = None
     ):
         """依据 ba_view_mode 与 obs_view_mode 双独立维度解耦渲染，剔除标靶显著打红叉"""
-        ba_mode = studio.ba_view_mode
-        obs_mode = studio.obs_view_mode
+        ba_mode = app.ba_view_mode
+        obs_mode = app.obs_view_mode
 
         # 画布鼠标坐标 -> 原始帧坐标 (悬停展开标靶详情, 高密度场景防遮挡)
         mouse_frame = None
-        if panel_rect is not None and getattr(studio, "mouse_pos", None):
+        if panel_rect is not None and getattr(app, "mouse_pos", None):
             try:
                 fh, fw = disp_frame.shape[:2]
-                img_rect = studio.viewport.compute_image_rect(panel_rect, fw, fh)
+                img_rect = app.viewport.compute_image_rect(panel_rect, fw, fh)
                 ix1, iy1, ix2, iy2 = img_rect[0], img_rect[1], img_rect[2], img_rect[3]
                 if ix2 > ix1 and iy2 > iy1:
-                    mfx = (studio.mouse_pos[0] - ix1) / float(ix2 - ix1) * fw
-                    mfy = (studio.mouse_pos[1] - iy1) / float(iy2 - iy1) * fh
+                    mfx = (app.mouse_pos[0] - ix1) / float(ix2 - ix1) * fw
+                    mfy = (app.mouse_pos[1] - iy1) / float(iy2 - iy1) * fh
                     if 0 <= mfx < fw and 0 <= mfy < fh:
                         mouse_frame = (mfx, mfy)
             except Exception:
@@ -157,7 +157,7 @@ class StudioCenterViewMixin:
                 put_text(disp_frame, f"Tag #{tid} [EXCL]", (cx - 42, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 0, 240), 2, cv2.LINE_AA)
             else:
                 # 收集参与三维相机位姿解算的已知有效标靶
-                w_c = studio.get_tag_world_corners(tid)
+                w_c = app.get_tag_world_corners(tid)
                 if w_c is not None:
                     obj_pts.append(w_c)
                     img_pts.append(np.array(obs["corners"], dtype=np.float64))
@@ -172,7 +172,7 @@ class StudioCenterViewMixin:
         if len(obj_pts) >= 1:
             obj_flat = np.concatenate(obj_pts, axis=0)
             img_flat = np.concatenate(img_pts, axis=0)
-            rvec, tvec, success = studio.engine.solve_pnp(obj_flat, img_flat)
+            rvec, tvec, success = app.engine.solve_pnp(obj_flat, img_flat)
 
         # 若当前无足够有效点 (如标靶全被剔除)，尝试复用 meta 缓存的相机外参
         if not success and meta is not None:
@@ -197,20 +197,20 @@ class StudioCenterViewMixin:
                 # (b) 如果开启了 ba_mode == "3d"，还包含地图中已建图的其余已知标靶
                 candidate_tids = list(obs_map.keys())
                 if ba_mode == "3d":
-                    tags_dict = getattr(studio, "tags_map_data", {}).get("tags", {})
-                    if not tags_dict and hasattr(studio, "data_mgr"):
-                        tags_dict = studio.data_mgr.tags_map_data.get("tags", {})
+                    tags_dict = getattr(app, "tags_map_data", {}).get("tags", {})
+                    if not tags_dict and hasattr(app, "data_mgr"):
+                        tags_dict = app.data_mgr.tags_map_data.get("tags", {})
                     for m_tid in tags_dict.keys():
                         if m_tid not in obs_map:
                             candidate_tids.append(m_tid)
 
                 h_f, w_f = disp_frame.shape[:2]
                 # FR-9.6 世界系位姿元数据 (平差锚定后每枚标靶的 XYZ 与 RPY)
-                tags_meta = (getattr(studio, "tags_map_data", {}) or {}).get("tags", {})
-                if not tags_meta and hasattr(studio, "data_mgr"):
-                    tags_meta = (getattr(studio.data_mgr, "tags_map_data", {}) or {}).get("tags", {})
+                tags_meta = (getattr(app, "tags_map_data", {}) or {}).get("tags", {})
+                if not tags_meta and hasattr(app, "data_mgr"):
+                    tags_meta = (getattr(app.data_mgr, "tags_map_data", {}) or {}).get("tags", {})
                 for tid in candidate_tids:
-                    T_w_t = studio.get_tag_transform(tid)
+                    T_w_t = app.get_tag_transform(tid)
                     if T_w_t is None:
                         continue
 
@@ -240,7 +240,7 @@ class StudioCenterViewMixin:
                         # 仅在有效保留且 obs_mode=='3d' 下才计算并显示实测蓝色棱柱
                         if is_kept and obs_mode == "3d":
                             # 传入地图理论法向, 消除 IPPE 平面二义性 180° 翻转
-                            succ_single, obs_r, obs_t = studio.engine.solve_single_tag_pnp(
+                            succ_single, obs_r, obs_t = app.engine.solve_single_tag_pnp(
                                 c_arr, expected_z_cam=T_c_t[:3, :3][:, 2])
 
                     # 如果既不画理论绿色棱柱，也不画实测蓝色棱柱，跳过
@@ -249,7 +249,7 @@ class StudioCenterViewMixin:
 
                     # 若当前标靶未检出 (纯理论)，检查理论中心是否在像面可视范围内
                     if obs is None and r_tag is not None:
-                        p_center, _ = cv2.projectPoints(np.array([[0.0, 0.0, 0.0]]), r_tag, t_tag, studio.engine.camera_matrix, studio.engine.dist_coeffs)
+                        p_center, _ = cv2.projectPoints(np.array([[0.0, 0.0, 0.0]]), r_tag, t_tag, app.engine.camera_matrix, app.engine.dist_coeffs)
                         cu, cv = p_center.reshape(-1)
                         if not (-80 <= cu <= w_f + 80 and -80 <= cv <= h_f + 80):
                             continue
@@ -265,7 +265,7 @@ class StudioCenterViewMixin:
                         tag_center_f = (float(np.mean(c_arr[:, 0])), float(np.mean(c_arr[:, 1])))
                     elif r_tag is not None:
                         p_c, _ = cv2.projectPoints(np.array([[0.0, 0.0, 0.0]]), r_tag, t_tag,
-                                                   studio.engine.camera_matrix, studio.engine.dist_coeffs)
+                                                   app.engine.camera_matrix, app.engine.dist_coeffs)
                         tag_center_f = (float(p_c.reshape(-1)[0]), float(p_c.reshape(-1)[1]))
                     is_hovered = (mouse_frame is not None and tag_center_f is not None
                                   and (mouse_frame[0] - tag_center_f[0]) ** 2 + (mouse_frame[1] - tag_center_f[1]) ** 2 < 48.0 ** 2)
@@ -277,7 +277,7 @@ class StudioCenterViewMixin:
                     elif obs is None:
                         status_hint = "[BA理论:未检出/遮挡]"
 
-                    studio.visualizer.render_tag_dual_prisms(
+                    app.visualizer.render_tag_dual_prisms(
                         img=disp_frame,
                         ba_rvec=r_tag if ba_mode == "3d" else None,
                         ba_tvec=t_tag if ba_mode == "3d" else None,
@@ -298,14 +298,14 @@ class StudioCenterViewMixin:
 
             # 4. 2D 理论重投影框与残差矢量
             if ba_mode == "2d" and len(valid_obs) > 0:
-                proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, studio.engine.camera_matrix, studio.engine.dist_coeffs)
+                proj_pts, _ = cv2.projectPoints(obj_flat, rvec, tvec, app.engine.camera_matrix, app.engine.dist_coeffs)
                 proj_flat = proj_pts.reshape((-1, 2))
                 for i in range(len(valid_obs)):
                     p4 = proj_flat[i * 4:(i + 1) * 4].astype(np.int32)
                     cv2.polylines(disp_frame, [p4], isClosed=True, color=(0, 210, 255), thickness=1, lineType=cv2.LINE_AA)
 
-                if obs_mode == "2d" and hasattr(studio.visualizer, "draw_reprojection_vectors"):
-                    studio.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
+                if obs_mode == "2d" and hasattr(app.visualizer, "draw_reprojection_vectors"):
+                    app.visualizer.draw_reprojection_vectors(disp_frame, img_flat, proj_flat, scale_factor=40.0)
 
         # 4. 保底渲染：对所有提取到但未被 3D 棱柱覆盖的有效保留标靶，保底绘制 2D 实测角点多边形与编号标签
         if obs_mode != "off":
@@ -317,14 +317,14 @@ class StudioCenterViewMixin:
                     pts = np.array(obs["corners"], dtype=np.int32).reshape((-1, 2))
                     cv2.polylines(disp_frame, [pts], isClosed=True, color=(0, 230, 80), thickness=2, lineType=cv2.LINE_AA)
                     cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
-                    in_map = (studio.get_tag_world_corners(tid) is not None)
+                    in_map = (app.get_tag_world_corners(tid) is not None)
                     tag_lbl = f"Tag #{tid}" if in_map else f"Tag #{tid} [未入图]"
                     put_text(disp_frame, tag_lbl, (cx - 38, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 230, 80), 2, cv2.LINE_AA)
                     rendered_tids.add(tid)
 
         # 5. 若处于病因切片诊断模式，叠加视野内预测但实测漏检的标靶框 (橙黄色矩形与 Tag 标注)
-        if getattr(studio, "show_frame_diagnostics", False):
-            diag = getattr(studio, "current_diagnostics", {})
+        if getattr(app, "show_frame_diagnostics", False):
+            diag = getattr(app, "current_diagnostics", {})
             missing = diag.get("missing_projected_tags", []) or diag.get("missing_theoretical_tags", [])
             for m in missing:
                 tid = m.get("tag_id")
@@ -337,26 +337,26 @@ class StudioCenterViewMixin:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 2, cv2.LINE_AA)
 
         # 6. 世界 XY 平面透视网格与 Z 轴特殊点辅助线叠加 (移植自在线跟踪)
-        if getattr(studio, "show_xy_plane_on", False) and success and rvec is not None and tvec is not None:
-            self.draw_xy_plane_overlay(studio, disp_frame, rvec, tvec)
+        if getattr(app, "show_xy_plane_on", False) and success and rvec is not None and tvec is not None:
+            self.draw_xy_plane_overlay(app, disp_frame, rvec, tvec)
 
-    def draw_xy_plane_overlay(self, studio: Any, canvas: np.ndarray, rvec: np.ndarray, tvec: np.ndarray):
+    def draw_xy_plane_overlay(self, app: Any, canvas: np.ndarray, rvec: np.ndarray, tvec: np.ndarray):
         """世界 XY 平面透视网格叠加 (移植自在线跟踪):
         支持两组垂直平行线网格 + 三轴加粗高亮 (X红 / Y绿 / Z蓝) + 向上箭头 + 原点标记 + 特殊标靶等高红线
         """
-        if not getattr(studio, "show_xy_plane_on", False):
+        if not getattr(app, "show_xy_plane_on", False):
             return
         if rvec is None or tvec is None:
             return
 
         R, _ = cv2.Rodrigues(rvec)
         t_flat = np.asarray(tvec, dtype=np.float64).reshape(3)
-        K = studio.engine.camera_matrix
+        K = app.engine.camera_matrix
         h_f, w_f = canvas.shape[:2]
-        ext = getattr(studio, "PLANE_EXTENT_MM", 600)
-        step = getattr(studio, "PLANE_STEP_MM", 100)
-        z0 = float(getattr(studio, "plane_z", 0.0))
-        plane_z_max = getattr(studio, "PLANE_Z_MM", 600)
+        ext = getattr(app, "PLANE_EXTENT_MM", 600)
+        step = getattr(app, "PLANE_STEP_MM", 100)
+        z0 = float(getattr(app, "plane_z", 0.0))
+        plane_z_max = getattr(app, "PLANE_Z_MM", 600)
 
         COL_GRAY = (90, 95, 105)
         COL_RED = (60, 60, 245)
@@ -397,9 +397,9 @@ class StudioCenterViewMixin:
 
         # 3. Tag 等高辅助红线: 当平面高度与某已知标靶中心 Z 重合且该标靶不在原点时,
         #    平移一条红色 X 轴穿过该标靶 (如 Z=196 平面过 Tag 1); Tag 0 在原点, 主 X 轴已穿过
-        tags_dict = getattr(studio, "tags_map_data", {}).get("tags", {})
-        if not tags_dict and hasattr(studio, "data_mgr"):
-            tags_dict = studio.data_mgr.tags_map_data.get("tags", {})
+        tags_dict = getattr(app, "tags_map_data", {}).get("tags", {})
+        if not tags_dict and hasattr(app, "data_mgr"):
+            tags_dict = app.data_mgr.tags_map_data.get("tags", {})
 
         for tid, t_info in (tags_dict or {}).items():
             mat = t_info.get("transform_matrix")

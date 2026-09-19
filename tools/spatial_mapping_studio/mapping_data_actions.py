@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Studio 数据变更动作 Mixin (Studio Data Actions)
-================================================
-从 studio_state.py 拆出的变更型动作层 (无状态 Mixin, 不新增实例属性):
+空间建图数据变更动作 Mixin (Mapping Data Actions)
+==============================================
+从 mapping_state.py 拆出的变更型动作层 (无状态 Mixin, 不新增实例属性):
   - 帧/观测保留剔除翻转: toggle_image_exclusion / toggle_observation_keep /
     toggle_current_frame_exclusion / toggle_tag_exclusion_in_current_frame
   - 超精重提取: super_extract_current_frame / super_extract_all_frames
   - 智能剪枝: find_worst_prunable_observations / prune_observations
   - 复位与快照: reset_map / reset_all_keep_status / create_manifest_snapshot / restore_manifest_snapshot
-所有方法通过 self 访问 StudioDataManager 的数据状态与持久化能力，签名与行为与拆分前完全一致。
+所有方法通过 self 访问 MappingDataManager 的数据状态与持久化能力。
 """
 
 import os
@@ -21,8 +21,8 @@ from src.utils.logger import get_logger
 log = get_logger(__name__)
 
 
-class StudioDataActionsMixin:
-    """Offline Studio 数据变更动作 (供 StudioDataManager 继承)"""
+class MappingDataActionsMixin:
+    """空间建图工作站数据变更动作 (供 MappingDataManager 继承)"""
 
     def toggle_image_exclusion(self, base_name: str) -> bool:
         """翻转单张图像的保留/剔除状态并持久化 (双向同步 excluded 与 enabled)"""

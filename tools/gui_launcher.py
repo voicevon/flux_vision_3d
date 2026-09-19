@@ -138,43 +138,43 @@ def build_tools_catalog() -> List[ToolCardMeta]:
         ToolCardMeta(
             key_id="tag_wizard",
             shortcut="2",
-            title="采图向导",
-            subtitle="双用途 (标定/生产) 快速采样",
+            title="图像采集",
+            subtitle="双用途 (标定/生产) 快速采集",
             category="B — 标定建图与生产验证",
             is_gui=True,
             command=[sys.executable, "tools/capture/capture_wizard.py"],
             tag_color=COLOR_B,
-            summary="交互式现场采图助手，提供实时画面预览与标定/生产双用途采图路由。",
+            summary="交互式工业图像采集工作台，提供实时画面预览与标定/生产双用途采集路由。",
             details=[
-                "工位与双用途：顶部自由切换归档工位与用途 (标定 calibration / 生产 production)",
-                "快捷连拍采图：空格键一键拍照并自动归档至对应用途的 raw_images/ 目录",
+                "工作空间与双用途：顶部自由切换归档工作空间与用途 (标定 calibration / 生产 production)",
+                "快捷拍照与连拍：点击 [拍照] 或按空格键一键拍照并自动归档至对应用途的 raw_images/ 目录",
                 "曝光实时调节：支持曝光微调与白闪快门视觉反馈",
-                "中枢自动同步：采集完成后数据自动同步至工位管理中枢"
+                "中枢自动同步：采集完成后数据自动同步至 Workspace 管理中枢"
             ],
             inputs=["RealSense 深度相机或 USB 摄像头"],
             outputs=["当前工位 raw_images/ 原始图集 (标定/生产隔离存储)"],
-            quick_tips="快捷键: [2] 启动 | 预览中 [空格] 拍摄保存 | [ESC]/[Q] 退出"
+            quick_tips="快捷键: [2] 启动 | 预览中点击 [拍照] 或按 [空格] | [ESC]/[Q] 退出"
         ),
 
         ToolCardMeta(
-            key_id="tag_studio",
+            key_id="spatial_mapping_studio",
             shortcut="3",
-            title="Offline Studio",
-            subtitle="深度平差与质量体检工作站",
+            title="空间建图工作站",
+            subtitle="深度平差与空间立体建图",
             category="B — 标定建图与生产验证",
             is_gui=True,
-            command=[sys.executable, "tools/studio/app.py"],
+            command=[sys.executable, "-m", "tools.spatial_mapping_studio"],
             tag_color=COLOR_B,
-            summary="离线标定核心工作站，提供多视角样本交互审核与两阶段 BA 平差求解。",
+            summary="空间立体建图核心工作站，提供多视角图像样本交互审核、两阶段稳健 BA 全局平差与智能残差剪枝。",
             details=[
-                "样本交互审核：多视角图像缩略图快速浏览与启闭",
-                "两阶段 BA 平差：Cauchy 粗平差结合 LM 精平差高精度求解",
-                "智能残差剪枝：自动剔除高残差反光外点，守门拓扑结构",
-                "图谱成果落盘：解算成果直接更新工位顶层 tags_map.yaml"
+                "样本交互审核：多视角图像列表与演进矩阵浏览，支持残差过滤与剔除",
+                "两阶段 BA 平差：Cauchy 粗平差结合 LM 精平差高精度空间解算",
+                "智能残差剪枝：自动剔除高残差反光外点，守门拓扑连通结构",
+                "空间地图落盘：解算成果直接落盘工位顶层 tags_map.yaml 与全景质检单"
             ],
             inputs=["当前工位 calibration/raw_images/、相机内参文件"],
-            outputs=["当前工位顶层 tags_map.yaml、质检评估报告"],
-            quick_tips="快捷键: [3] 启动 | 工作站内 [⏎] 求解 | [P] 剪枝 | [R] 导出报告"
+            outputs=["当前工位顶层 tags_map.yaml、全景精度质检单"],
+            quick_tips="快捷键: [3] 启动 | 工作站内 [B] BA平差 | [A] 剪枝 | [R] 导出报告 | [M] 保存地图"
         ),
 
         ToolCardMeta(
@@ -658,14 +658,13 @@ class GuiLauncherApp:
         key_char = chr(raw_key & 0xFF).lower() if (raw_key & 0xFF) < 128 else ""
 
         shortcut_map = {
-            '1': "workspace_hub",         # A 工位工作空间中枢
-            '2': "tag_manager",           # B AprilTag 图纸与白名单
-            '3': "tag_wizard",            # B 采图向导 (双用途)
-            '4': "tag_studio",            # B Offline Studio 深度平差
-            '5': "asparagus_offline",     # B 芦笋抓取位姿离线解算
-            '6': "robot_online_tracker",  # B Robot 在线跟踪
-            '7': "d435_live",             # D RealSense 诊断
-            '8': "scara_debug",           # D SCARA 机械臂调试
+            '1': "workspace_hub",         # A Workspace 工作空间中枢
+            '2': "tag_wizard",            # B 图像采集 (双用途)
+            '3': "spatial_mapping_studio", # B 空间建图工作站
+            '4': "asparagus_offline",     # B 芦笋抓取位姿离线解算
+            '5': "robot_online_tracker",  # B Robot 在线跟踪
+            '6': "d435_live",             # D RealSense 诊断
+            '7': "scara_debug",           # D SCARA 机械臂调试
             't': "sys_diagnose_tests",
             'p': "pip_install",
         }

@@ -93,44 +93,57 @@ class CaptureRenderer:
 
         y1, y2 = 6, 38
         gap = 6
+        group_gap = 60  # 正常间隔 6px 的 10 倍大间隔，四大功能组视觉明确隔离
 
-        # 0. 工位选择下拉 (最左侧)
-        ws_x1, ws_x2 = 8, 8 + 175
-        ws_label = getattr(wiz, "current_workspace_name", "默认工位")
-        self._draw_dropdown_button(canvas, (ws_x1, y1, ws_x2, y2), f"工位: {ws_label}",
+        # ==================== 第 1 大组：工作空间 与 采集用途 ====================
+        # 1.1 工作空间选择下拉 (文案由"工位"更新为"工作空间")
+        ws_x1 = 8
+        ws_w = 195
+        ws_x2 = ws_x1 + ws_w
+        ws_label = getattr(wiz, "current_workspace_name", "默认")
+        self._draw_dropdown_button(canvas, (ws_x1, y1, ws_x2, y2), f"工作空间: {ws_label}",
                                    is_open=(wiz.active_dropdown == "WS_DROPDOWN"))
         self.buttons.append(("TOGGLE_WS_DD", (ws_x1, y1, ws_x2, y2), "WS_DROPDOWN"))
         self._workspace_rect = (ws_x1, y1, ws_x2, y2)
 
-        # 1. 用途选择下拉 (标定 / 生产)
+        # 1.2 用途选择下拉 (标定 / 生产)
         pur_x1 = ws_x2 + gap
-        pur_x2 = pur_x1 + 125
+        pur_w = 125
+        pur_x2 = pur_x1 + pur_w
         pur_label = getattr(wiz, "current_purpose_label", "标定")
         self._draw_dropdown_button(canvas, (pur_x1, y1, pur_x2, y2), f"用途: {pur_label}",
                                    is_open=(wiz.active_dropdown == "PURPOSE_DROPDOWN"))
         self.buttons.append(("TOGGLE_PURPOSE_DD", (pur_x1, y1, pur_x2, y2), "PURPOSE_DROPDOWN"))
         self._purpose_rect = (pur_x1, y1, pur_x2, y2)
 
-        # 2. 相机类型下拉
-        cam_x1 = pur_x2 + gap
-        cam_x2 = cam_x1 + 140
+        # 组 1 与 组 2 间细微分割线
+        sep1_x = pur_x2 + group_gap // 2
+        cv2.line(canvas, (sep1_x, y1 + 4), (sep1_x, y2 - 4), (50, 56, 68), 1)
+
+        # ==================== 第 2 大组：相机选择、分辨率 与 取流开关 ====================
+        # 2.1 相机类型下拉
+        cam_x1 = pur_x2 + group_gap
+        cam_w = 140
+        cam_x2 = cam_x1 + cam_w
         cam_label = dict(wiz.camera_options).get(wiz.camera_type, wiz.camera_type)
         self._draw_dropdown_button(canvas, (cam_x1, y1, cam_x2, y2), cam_label,
                                    is_open=(wiz.active_dropdown == "CAMERA_TYPE_DROPDOWN"))
         self.buttons.append(("TOGGLE_CAM_DD", (cam_x1, y1, cam_x2, y2), "CAMERA_TYPE_DROPDOWN"))
         self._camera_type_rect = (cam_x1, y1, cam_x2, y2)
 
-        # 3. 分辨率下拉
+        # 2.2 分辨率下拉
         res_x1 = cam_x2 + gap
-        res_x2 = res_x1 + 105
+        res_w = 105
+        res_x2 = res_x1 + res_w
         self._draw_dropdown_button(canvas, (res_x1, y1, res_x2, y2), wiz.resolution,
                                    is_open=(wiz.active_dropdown == "RES_DROPDOWN"))
         self.buttons.append(("TOGGLE_RES_DD", (res_x1, y1, res_x2, y2), "RES_DROPDOWN"))
         self._resolution_rect = (res_x1, y1, res_x2, y2)
 
-        # 4. 开启/关闭乒乓按钮
+        # 2.3 开启/关闭取流乒乓按钮
         sw_x1 = res_x2 + gap
-        sw_x2 = sw_x1 + 65
+        sw_w = 75
+        sw_x2 = sw_x1 + sw_w
         sw_hover = self._is_hover((sw_x1, y1, sw_x2, y2))
         if wiz.pipeline_running:
             sw_bg, sw_border, sw_txt, sw_label = (55, 45, 30), (255, 160, 40), (255, 200, 80), "关闭"
@@ -141,10 +154,37 @@ class CaptureRenderer:
         cv2.rectangle(canvas, (sw_x1, y1), (sw_x2, y2), sw_bg, -1)
         cv2.rectangle(canvas, (sw_x1, y1), (sw_x2, y2), sw_border, 1)
         sw_size, _ = self._hover_text(sw_hover, 15, True)
-        draw_text(canvas, sw_label, (sw_x1 + 22, y1 + (y2 - y1 - 16) // 2 - 1), sw_size, sw_txt, True)
+        draw_text(canvas, sw_label, (sw_x1 + (sw_w - 32) // 2, y1 + (y2 - y1 - 16) // 2 - 1), sw_size, sw_txt, True)
         self.buttons.append(("TOGGLE_CAMERA", (sw_x1, y1, sw_x2, y2), None))
 
-        # 5. 退出按钮 (最右, 悬停高亮)
+        # 组 2 与 组 3 间细微分割线
+        sep2_x = sw_x2 + group_gap // 2
+        cv2.line(canvas, (sep2_x, y1 + 4), (sep2_x, y2 - 4), (50, 56, 68), 1)
+
+        # ==================== 第 3 大组：拍照按钮 (位于中间偏右) ====================
+        cap_x1 = sw_x2 + group_gap
+        cap_w = 115
+        cap_x2 = cap_x1 + cap_w
+        cap_hover = self._is_hover((cap_x1, y1, cap_x2, y2))
+
+        if wiz.pipeline_running:
+            cap_bg = COLOR_BTN_HOVER if cap_hover else (24, 38, 34)
+            cap_border = (0, 255, 180) if cap_hover else (0, 200, 140)
+            cap_txt = (0, 255, 200) if cap_hover else (235, 250, 245)
+            cap_label = "拍照 (空格)"
+        else:
+            cap_bg = COLOR_CARD_BG
+            cap_border = COLOR_BORDER
+            cap_txt = (110, 115, 125)
+            cap_label = "拍照"
+
+        cv2.rectangle(canvas, (cap_x1, y1), (cap_x2, y2), cap_bg, -1)
+        cv2.rectangle(canvas, (cap_x1, y1), (cap_x2, y2), cap_border, 1)
+        cap_size, _ = self._hover_text(cap_hover, 14, True)
+        draw_text(canvas, cap_label, (cap_x1 + 14, y1 + (y2 - y1 - 16) // 2 - 1), cap_size, cap_txt, True)
+        self.buttons.append(("CAPTURE", (cap_x1, y1, cap_x2, y2), None))
+
+        # ==================== 第 4 大组：退出按钮 (最右侧) ====================
         exit_x1, exit_x2 = tw - 90, tw - 8
         q_hover = self._is_hover((exit_x1, y1, exit_x2, y2))
         cv2.rectangle(canvas, (exit_x1, y1), (exit_x2, y2),

@@ -1,5 +1,5 @@
 """
-AprilTag 离线标定工作站 - 视口几何变换与鼠标交互层 (StudioViewportInteractor)
+空间建图工作站 - 视口几何变换与鼠标交互层 (MappingViewportInteractor)
 ================================================================================
 负责工作站中栏核心视口的：
 1. 缩放 (Zoom In / Zoom Out: 0.4x ~ 15.0x, 保持以光标为中心自适应无级缩放)
@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 
-class StudioViewportInteractor:
+class MappingViewportInteractor:
     """视口几何变换与鼠标交互控制器"""
 
     MIN_ZOOM: float = 0.4

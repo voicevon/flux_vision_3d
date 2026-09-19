@@ -177,9 +177,9 @@ class WorkspaceHubApp:
             elif raw_key in (2555904, 65363, ord('d'), ord('D'), ord('6'), ord('l'), ord('L')) or key in (ord('d'), ord('D')):
                 self.state.select_image_by_offset(1)
 
-            # [Enter] (回车键: 13, 10): 启动离线 Studio 深度平差
+            # [Enter] (回车键: 13, 10): 启动空间建图工作站
             elif raw_key in (13, 10):
-                self._launch_offline_studio()
+                self._launch_spatial_mapping_studio()
 
             # [F] 顺次循环切换三模态视图: 标准三栏 -> 全宽大图 -> 纯净健康大屏
             elif key in (ord('f'), ord('F')):
@@ -197,9 +197,9 @@ class WorkspaceHubApp:
             elif key in (ord('n'), ord('N')):
                 self._handle_create_workspace()
 
-            # [O] 或 [S] 启动离线 Studio 深度平差
+            # [O] 或 [S] 启动空间建图工作站
             elif key in (ord('o'), ord('O'), ord('s'), ord('S')):
-                self._launch_offline_studio()
+                self._launch_spatial_mapping_studio()
 
             # [P] 生效为生产运行基准 (原子覆盖生产基准)
             elif key in (ord('p'), ord('P')):
@@ -526,16 +526,16 @@ class WorkspaceHubApp:
         self.state.load_current_workspace_images()
         self.state.set_toast(f"已完成 {desc} 并返回 Workspace 驾驶舱，数据已同步！")
 
-    def _launch_offline_studio(self):
-        """启动 AprilTag 离线 Studio 深度平差"""
+    def _launch_spatial_mapping_studio(self):
+        """启动 AprilTag 空间建图工作站 (Spatial Mapping Studio)"""
         ws = self.state.get_selected_workspace()
         if not ws:
             return
-        cmd = [sys.executable, "tools/studio/app.py",
+        cmd = [sys.executable, "-m", "tools.spatial_mapping_studio",
                "--workspace", ws.workspace_id,
                "--images", ws.calib_raw_images_dir,
                "--map", ws.map_path]
-        self._run_subtool(cmd, "Offline Studio 深度平差工作站")
+        self._run_subtool(cmd, "空间建图工作站 (Spatial Mapping Studio)")
 
     def _launch_image_diagnostics(self):
         """启动标靶单帧漏检病因深度切片与梯度诊断"""

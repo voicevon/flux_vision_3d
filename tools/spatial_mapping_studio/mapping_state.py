@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-StudioDataManager - 离线标定工作站数据管理与指标缓存层
+MappingDataManager - 空间建图工作站数据管理与指标缓存层
 ======================================================
 单一职责：
 1. 采图资产扫描与当前选定帧维护；
 2. 观测清单 (Manifest YAML) 与标靶立体几何地图 (tags_map.yaml) 的持久化与同步；
 3. 全景/单帧重投影误差 (RMSE) 精度体检缓存与实时计算；
 4. 左栏序列过滤筛选 (All / Warning / Excluded) 与四种排序规则。
-变更型动作 (超精提取/剪枝/快照/复位/翻转) 拆分至 studio_data_actions.py (StudioDataActionsMixin)。
+变更型动作 (超精提取/剪枝/快照/复位/翻转) 拆分至 mapping_data_actions.py (MappingDataActionsMixin)。
 """
 
 import os
@@ -20,14 +20,14 @@ import yaml
 
 from src.calibration.manifest_repository import ManifestRepository
 from src.calibration.offline_engine import OfflineVerificationEngine
-from tools.studio.studio_data_actions import StudioDataActionsMixin
+from tools.spatial_mapping_studio.mapping_data_actions import MappingDataActionsMixin
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
 
-class StudioDataManager(StudioDataActionsMixin):
-    """Offline Studio 领域模型与数据状态管理器 (变更型动作见 StudioDataActionsMixin)"""
+class MappingDataManager(MappingDataActionsMixin):
+    """空间建图工作站 (Spatial Mapping Studio) 领域模型与数据状态管理器 (变更型动作见 MappingDataActionsMixin)"""
 
     def __init__(
         self,

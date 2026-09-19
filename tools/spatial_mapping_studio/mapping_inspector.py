@@ -1,11 +1,11 @@
 """
-AprilTag 离线标定工作站 - 右栏检视面板与剪枝浮层卡片渲染 Mixin (StudioInspectorMixin)
+AprilTag 离线标定工作站 - 右栏检视面板与剪枝浮层卡片渲染 Mixin (MappingInspectorMixin)
 ================================================================================
-承载 StudioUIRenderer 的右栏与剪枝浮层绘制分区：
+承载 MappingRenderer 的右栏与剪枝浮层绘制分区：
 1. render_right_inspector: 精简属性面板 / 标靶残差清单 / 单帧病因切片诊断双模面板
 2. render_prune_ba_card: 迭代残差剪枝平差运行中多轮收敛监控卡片
 3. render_prune_settlement_card: 智能剪枝平差结算单对比卡片
-仅包含纯绘制方法, 不持有任何状态; 通过 self 依赖宿主 StudioUIRenderer 的其他方法,
+仅包含纯绘制方法, 不持有任何状态; 通过 self 依赖宿主 MappingRenderer 的其他方法,
 由 MRO 解析跨分区调用。
 """
 
@@ -18,20 +18,20 @@ from src.utils.text_rendering import measure_text, put_text
 from src.utils.viewport_manager import draw_styled_button
 
 
-class StudioInspectorMixin:
-    """右栏检视面板与剪枝浮层卡片渲染 Mixin (由宿主类 StudioUIRenderer 组合)"""
+class MappingInspectorMixin:
+    """右栏检视面板与剪枝浮层卡片渲染 Mixin (由宿主类 MappingRenderer 组合)"""
 
-    def render_right_inspector(self, studio: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
+    def render_right_inspector(self, app: Any, canvas: np.ndarray, x: int, y: int, w: int, h: int):
         """右栏：精简属性与标靶残差清单/病因切片诊断双模面板 (瘦身宽度: 180px)"""
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (22, 24, 30), -1)
         cv2.line(canvas, (x, y), (x, y + h), (50, 54, 66), 1)
 
-        if not studio.image_files:
+        if not app.image_files:
             return
 
-        cur_file = studio.image_files[studio.current_img_idx]
+        cur_file = app.image_files[app.current_img_idx]
         bname = os.path.basename(cur_file)
-        meta = studio.frame_metrics_cache.get(bname, {})
+        meta = app.frame_metrics_cache.get(bname, {})
 
         # 1. 顶部当前帧摘要卡片
         put_text(canvas, bname, (x + 8, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
@@ -41,14 +41,14 @@ class StudioInspectorMixin:
         b_type = "danger" if is_excl else "success"
         b_label = "恢复此帧 (T)" if is_excl else "剔除此帧 (T)"
         draw_styled_button(canvas, (x + 8, y + 30, x + w - 8, y + 54), b_label,
-                           mouse_pos=studio.mouse_pos, btn_type=b_type)
-        studio.gui_buttons.append(("TOGGLE_FRAME_STATUS", (x + 8, y + 30, x + w - 8, y + 54), bname))
+                           mouse_pos=app.mouse_pos, btn_type=b_type)
+        app.gui_buttons.append(("TOGGLE_FRAME_STATUS", (x + 8, y + 30, x + w - 8, y + 54), bname))
 
         # 底部动作区域基准 Y (预留 3 个紧凑按钮: 超精提取、病因诊断/常规面板、Robot 跟踪)
         diag_y = y + h - 88
 
         # 2. 中间区域：根据 show_frame_diagnostics 模式切换
-        is_diag_mode = getattr(studio, "show_frame_diagnostics", False)
+        is_diag_mode = getattr(app, "show_frame_diagnostics", False)
         if is_diag_mode:
             # 渲染【单帧深度切片病因诊断】面板
             diag_top_y = y + 62
@@ -56,7 +56,7 @@ class StudioInspectorMixin:
             put_text(canvas, "单帧病因切片诊断", (x + 8, diag_top_y + 16),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 215, 255), 1, cv2.LINE_AA)
 
-            diag = getattr(studio, "current_diagnostics", {})
+            diag = getattr(app, "current_diagnostics", {})
             cy = diag_top_y + 36
 
             # 指标1：清晰度 Laplace
@@ -99,9 +99,9 @@ class StudioInspectorMixin:
             obs_list = meta.get("observations", [])
             tag_errors = meta.get("tag_errors", {})
             # FR-9.6 世界系坐标 (平差锚定后每枚标靶的 XYZ)
-            tags_meta = (getattr(studio, "tags_map_data", {}) or {}).get("tags", {})
-            if not tags_meta and hasattr(studio, "data_mgr"):
-                tags_meta = (getattr(studio.data_mgr, "tags_map_data", {}) or {}).get("tags", {})
+            tags_meta = (getattr(app, "tags_map_data", {}) or {}).get("tags", {})
+            if not tags_meta and hasattr(app, "data_mgr"):
+                tags_meta = (getattr(app.data_mgr, "tags_map_data", {}) or {}).get("tags", {})
             put_text(canvas, f"标靶残差+世界XYZ ({len(obs_list)}) 降序↓", (x + 8, list_y + 16),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 220, 255), 1, cv2.LINE_AA)
 
@@ -120,11 +120,11 @@ class StudioInspectorMixin:
                 err_val = tag_errors.get(tid, 0.0)
 
                 rx1, ry1, rx2, ry2 = x + 6, row_y, x + w - 6, row_y + row_h - 2
-                is_hover = (rx1 <= studio.mouse_pos[0] <= rx2 and ry1 <= studio.mouse_pos[1] <= ry2)
+                is_hover = (rx1 <= app.mouse_pos[0] <= rx2 and ry1 <= app.mouse_pos[1] <= ry2)
                 bg_col = (34, 38, 48) if is_hover else (26, 28, 36)
                 cv2.rectangle(canvas, (rx1, ry1), (rx2, ry2), bg_col, -1)
                 cv2.rectangle(canvas, (rx1, ry1), (rx2, ry2), (48, 52, 64), 1)
-                studio.gui_buttons.append((f"TOGGLE_TAG_{tid}", (rx1, ry1, rx2, ry2), tid))
+                app.gui_buttons.append((f"TOGGLE_TAG_{tid}", (rx1, ry1, rx2, ry2), tid))
 
                 dot_c = (0, 220, 80) if keep else (0, 0, 220)
                 cv2.circle(canvas, (rx1 + 10, ry1 + 11), 3, dot_c, -1)
@@ -164,22 +164,22 @@ class StudioInspectorMixin:
 
         # 按钮 1: 超精提取 (E)
         draw_styled_button(canvas, (x + 8, diag_y + 4, x + w - 8, diag_y + 28), "超精提取 (E)",
-                           mouse_pos=studio.mouse_pos, btn_type="primary")
-        studio.gui_buttons.append(("SUPER_EXTRACT_FRAME", (x + 8, diag_y + 4, x + w - 8, diag_y + 28), bname))
+                           mouse_pos=app.mouse_pos, btn_type="primary")
+        app.gui_buttons.append(("SUPER_EXTRACT_FRAME", (x + 8, diag_y + 4, x + w - 8, diag_y + 28), bname))
 
         # 按钮 2: 病因诊断 (D) / 常规面板 (D)
         d_lbl = "常规面板 (D)" if is_diag_mode else "病因诊断 (D)"
         d_typ = "normal" if is_diag_mode else "warning"
         draw_styled_button(canvas, (x + 8, diag_y + 32, x + w - 8, diag_y + 56), d_lbl,
-                           mouse_pos=studio.mouse_pos, btn_type=d_typ)
-        studio.gui_buttons.append(("DIAGNOSE_FRAME", (x + 8, diag_y + 32, x + w - 8, diag_y + 56), bname))
+                           mouse_pos=app.mouse_pos, btn_type=d_typ)
+        app.gui_buttons.append(("DIAGNOSE_FRAME", (x + 8, diag_y + 32, x + w - 8, diag_y + 56), bname))
 
         # 按钮 3: Robot 在线跟踪
         draw_styled_button(canvas, (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "Robot 跟踪",
-                           mouse_pos=studio.mouse_pos, btn_type="success")
-        studio.gui_buttons.append(("LAUNCH_TRACKER", (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "LAUNCH_TRACKER"))
+                           mouse_pos=app.mouse_pos, btn_type="success")
+        app.gui_buttons.append(("LAUNCH_TRACKER", (x + 8, diag_y + 60, x + w - 8, diag_y + 84), "LAUNCH_TRACKER"))
 
-    def render_prune_ba_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
+    def render_prune_ba_card(self, app: Any, canvas: np.ndarray, w: int, h: int):
         """居中展示工序 5-Auto: 迭代残差剪枝平差运行中多轮收敛监控卡片 (集成实时多轮报告列表)"""
         card_w, card_h = 760, 360
         cx1, cy1 = (w - card_w) // 2, (h - card_h) // 2
@@ -189,8 +189,8 @@ class StudioInspectorMixin:
         cv2.rectangle(canvas, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (255, 140, 0), 2)
 
         # 1. 标题与急停按钮
-        r = getattr(studio.ba_runner, "prune_round", 1)
-        max_r = getattr(studio.ba_runner, "max_prune_rounds", 10)
+        r = getattr(app.ba_runner, "prune_round", 1)
+        max_r = getattr(app.ba_runner, "max_prune_rounds", 10)
         title_txt = f"工序 5-Auto: 迭代残差剪枝平差监控 (第 {r}/{max_r} 轮)..."
         put_text(canvas, title_txt, (cx1 + 20, cy1 + 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
@@ -202,11 +202,11 @@ class StudioInspectorMixin:
         btn_x2 = btn_x1 + btn_w
         btn_y2 = btn_y1 + btn_h
         draw_styled_button(canvas, (btn_x1, btn_y1, btn_x2, btn_y2), "急停 (Space)",
-                           mouse_pos=studio.mouse_pos, btn_type="danger")
-        studio.gui_buttons.append(("STOP_PRUNE", (btn_x1, btn_y1, btn_x2, btn_y2), "STOP_PRUNE"))
+                           mouse_pos=app.mouse_pos, btn_type="danger")
+        app.gui_buttons.append(("STOP_PRUNE", (btn_x1, btn_y1, btn_x2, btn_y2), "STOP_PRUNE"))
 
         # 2. 进度条与百分比
-        pct = max(0.0, min(1.0, studio.ba_progress))
+        pct = max(0.0, min(1.0, app.ba_progress))
         pct_int = int(round(pct * 100))
         pct_str = f"{pct_int}%"
         (pw, _), _ = measure_text(pct_str, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 2)
@@ -233,10 +233,10 @@ class StudioInspectorMixin:
         cv2.rectangle(canvas, (bar_x1, cap_y1), (bar_x2, cap_y2), (25, 28, 36), -1)
         cv2.rectangle(canvas, (bar_x1, cap_y1), (bar_x2, cap_y2), (48, 54, 68), 1)
 
-        history: List[Dict[str, Any]] = getattr(studio.ba_runner, "prune_history", [])
+        history: List[Dict[str, Any]] = getattr(app.ba_runner, "prune_history", [])
         total_pruned = sum(len(item.get("pruned", [])) for item in history)
-        init_rmse = getattr(studio.ba_runner, "initial_rmse", studio.data_mgr.global_rmse)
-        curr_rmse = studio.data_mgr.global_rmse
+        init_rmse = getattr(app.ba_runner, "initial_rmse", app.data_mgr.global_rmse)
+        curr_rmse = app.data_mgr.global_rmse
         cum_delta = max(0.0, init_rmse - curr_rmse) if init_rmse > 0 else 0.0
         cum_pct = (cum_delta / init_rmse * 100.0) if init_rmse > 0 else 0.0
 
@@ -251,8 +251,8 @@ class StudioInspectorMixin:
         put_text(canvas, txt_d, (bar_x1 + 500, cap_y1 + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 120), 1, cv2.LINE_AA)
 
         # 4. 当前运行主阶段与动态细节
-        stg_txt = studio.ba_stage_text or "智能迭代剪枝平差管线推进中..."
-        sub_txt = studio.ba_sub_text or "正在执行全场景 BA 平差与共视安全守门..."
+        stg_txt = app.ba_stage_text or "智能迭代剪枝平差管线推进中..."
+        sub_txt = app.ba_sub_text or "正在执行全场景 BA 平差与共视安全守门..."
         put_text(canvas, stg_txt, (cx1 + 20, cy1 + 104), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
         put_text(canvas, sub_txt, (cx1 + 20, cy1 + 122), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 190, 80), 1, cv2.LINE_AA)
 
@@ -297,7 +297,7 @@ class StudioInspectorMixin:
             display_rows.append((rnd, pruned_info, b_rmse, a_rmse, d_txt, False))
 
         # 当前正在求解的进行中行
-        curr_target = getattr(studio.ba_runner, "current_pruning_target", "")
+        curr_target = getattr(app.ba_runner, "current_pruning_target", "")
         if curr_target:
             curr_row = (f"#{r}", curr_target, f"{curr_rmse:.2f}px", "--", "求解中...", True)
             display_rows.append(curr_row)
@@ -340,9 +340,9 @@ class StudioInspectorMixin:
         put_text(canvas, tip_txt, (cx1 + 20, cy1 + card_h - 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.34, (130, 140, 155), 1, cv2.LINE_AA)
 
-    def render_prune_settlement_card(self, studio: Any, canvas: np.ndarray, w: int, h: int):
+    def render_prune_settlement_card(self, app: Any, canvas: np.ndarray, w: int, h: int):
         """居中展示工序 5-Auto: 智能剪枝平差结算单对比卡片 (支持一键采纳或无损撤销)"""
-        s_data = getattr(studio, "prune_settlement_data", None)
+        s_data = getattr(app, "prune_settlement_data", None)
         if not s_data:
             return
 
@@ -423,21 +423,21 @@ class StudioInspectorMixin:
         b1_x1 = cx1 + 40
         b1_x2 = b1_x1 + b1_w
         draw_styled_button(canvas, (b1_x1, btn_y1, b1_x2, btn_y2), "采纳成果 (Enter)",
-                           mouse_pos=studio.mouse_pos, btn_type="success")
-        studio.gui_buttons.append(("ACCEPT_PRUNE", (b1_x1, btn_y1, b1_x2, btn_y2), "ACCEPT_PRUNE"))
+                           mouse_pos=app.mouse_pos, btn_type="success")
+        app.gui_buttons.append(("ACCEPT_PRUNE", (b1_x1, btn_y1, b1_x2, btn_y2), "ACCEPT_PRUNE"))
 
         # 导出报告按钮 (R)
         b2_w = 190
         b2_x1 = b1_x2 + 25
         b2_x2 = b2_x1 + b2_w
         draw_styled_button(canvas, (b2_x1, btn_y1, b2_x2, btn_y2), "导出质检单 (R)",
-                           mouse_pos=studio.mouse_pos, btn_type="primary")
-        studio.gui_buttons.append(("EXPORT_REPORT", (b2_x1, btn_y1, b2_x2, btn_y2), "EXPORT_REPORT"))
+                           mouse_pos=app.mouse_pos, btn_type="primary")
+        app.gui_buttons.append(("EXPORT_REPORT", (b2_x1, btn_y1, b2_x2, btn_y2), "EXPORT_REPORT"))
 
         # 撤销还原按钮 (Esc)
         b3_w = 170
         b3_x1 = b2_x2 + 25
         b3_x2 = b3_x1 + b3_w
         draw_styled_button(canvas, (b3_x1, btn_y1, b3_x2, btn_y2), "撤销还原 (Esc)",
-                           mouse_pos=studio.mouse_pos, btn_type="danger")
-        studio.gui_buttons.append(("UNDO_PRUNE", (b3_x1, btn_y1, b3_x2, btn_y2), "UNDO_PRUNE"))
+                           mouse_pos=app.mouse_pos, btn_type="danger")
+        app.gui_buttons.append(("UNDO_PRUNE", (b3_x1, btn_y1, b3_x2, btn_y2), "UNDO_PRUNE"))

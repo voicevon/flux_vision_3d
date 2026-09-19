@@ -1,5 +1,5 @@
 """
-AprilTag 离线标定工作站 - 异步 BA 平差调度器 (StudioBARunner)
+空间建图工作站 - 异步 BA 平差调度器 (MappingBARunner)
 ================================================================================
 负责工作站中高耗时计算任务的生命周期调度与状态通知：
 1. 后台异步线程执行两阶段 Cauchy 稳健核平差优化 (Bundle Adjustment)
@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.manifest_repository import ManifestRepository
-from tools.studio.studio_state import StudioDataManager
+from tools.spatial_mapping_studio.mapping_state import MappingDataManager
 from src.utils.logger import get_logger
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -23,12 +23,12 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 log = get_logger(__name__)
 
 
-class StudioBARunner:
+class MappingBARunner:
     """异步 BA 平差执行器与进度调度器"""
 
     def __init__(
         self,
-        data_mgr: StudioDataManager,
+        data_mgr: MappingDataManager,
         optimizer: BundleAdjustmentOptimizer,
         manifest_repo: ManifestRepository,
         map_path: str,
@@ -89,7 +89,7 @@ class StudioBARunner:
                         "align_xyz_mm": [float(v) for v in wa["align_xyz_mm"]]
                     }
         except Exception as e:
-            log.warning(f"[STUDIO] 读取对齐标靶配置异常，采用默认值 (0, 28): {e}")
+            log.warning(f"[SPATIAL_MAPPING] 读取对齐标靶配置异常，采用默认值 (0, 28): {e}")
 
     def _notify(self, msg: str):
         if self.on_status_change is not None:
@@ -162,7 +162,7 @@ class StudioBARunner:
         self.ba_stage_text = "正在启动两阶段全局 BA 平差优化计算..."
         self.ba_sub_text = "初始化优化工作空间..."
         self._notify("正在启动两阶段全局 BA 平差优化计算...")
-        log.info("\n[*] [STUDIO] 正在启动异步 BA 全局平差优化计算...")
+        log.info("\n[*] [SPATIAL_MAPPING] 正在启动异步 BA 全局平差优化计算...")
 
         def _worker():
             try:
@@ -242,7 +242,7 @@ class StudioBARunner:
         self.ba_stage_text = "正在启动工序 5-Auto: 迭代残差剪枝平差..."
         self.ba_sub_text = "创建状态快照并准备首轮基准平差..."
         self._notify("智能剪枝平差启动: 已制作状态快照")
-        log.info("\n[*] [STUDIO AUTO-PRUNE] 启动自动迭代残差剪枝平差...")
+        log.info("\n[*] [SPATIAL_MAPPING AUTO-PRUNE] 启动自动迭代残差剪枝平差...")
 
         def _auto_prune_worker():
             try:

@@ -373,7 +373,7 @@ class HubRenderer:
             ("3. 两阶段 BA 平差与重投影精度",
              f"全局 RMSE 误差: {sc.global_rmse_px:.3f} px" if sc.ba_solved else "尚未执行离线平差 (暂无精度数据)",
              "精度评级: 极优 (误差 < 0.20px)" if (sc.ba_solved and sc.global_rmse_px < 0.2) else
-             ("精度评级: 良好" if sc.ba_solved else "待平差: 请按 [S] 启动 Studio 计算"),
+             ("精度评级: 良好" if sc.ba_solved else "待平差: 请按 [S] 启动空间建图工作站"),
              (0, 255, 160) if sc.ba_solved else self.COLOR_GRAY),
 
             ("4. 生产系统生效与运行状态",
@@ -404,11 +404,11 @@ class HubRenderer:
             v_col = (0, 255, 160)
         elif sc.ba_solved:
             verdict_text = "🟡 [常规放行] 该场景平差已收敛，可直接投入常规抓取定位。"
-            action_advice = "建议操作: 可按 [S] 启动 Studio 执行智能残差剪枝以进一步压低误差。"
+            action_advice = "建议操作: 可按 [S] 启动空间建图工作站执行智能残差剪枝以进一步压低误差。"
             v_col = self.COLOR_GOLD
         else:
             verdict_text = "⚪ [未求解] 当前场景尚未执行离线两阶段 BA 空间建图与平差。"
-            action_advice = "建议操作: 确保采图 ≥10 帧后，按下 [S] 键启动离线平差工作站。"
+            action_advice = "建议操作: 确保采图 ≥10 帧后，按下 [S] 键启动空间建图工作站。"
             v_col = self.COLOR_GRAY
 
         draw_text(canvas, verdict_text, (box_x + 26, eval_y + 40), font_size=13, color=v_col, bold=True)
@@ -588,7 +588,7 @@ class HubRenderer:
             cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h), (70, 80, 100), 1)
             draw_text(canvas, "● 尚未执行 BA 平差 · 几何真值未定", (badge_x + 18, badge_y + 10),
                       font_size=14, color=self.COLOR_GRAY, bold=True)
-            draw_text(canvas, "按快捷键 [S] 启动离线 Studio 开展两阶段深度求解", (badge_x + 18, badge_y + 34),
+            draw_text(canvas, "按快捷键 [S] 启动空间建图工作站开展两阶段深度求解", (badge_x + 18, badge_y + 34),
                       font_size=12, color=self.COLOR_DARK_GRAY)
 
         # ==== 2. 中层：左右双排 4 块核心指标卡片 (y: 120~300) ====
@@ -681,7 +681,7 @@ class HubRenderer:
             draw_text(canvas, "【生产机制解析】[ESC/H] 关闭说明窗  |  选中卡片按 [P] 可直接生效到生产系统",
                       (20, 686), font_size=14, color=self.COLOR_GOLD, bold=True)
         else:
-            draw_text(canvas, "[↑↓] 切换Workspace  |  [⏎/S] 进入Studio  |  [W] 白名单  |  [P] 发布生产  |  [N] 新建  |  右键菜单",
+            draw_text(canvas, "[↑↓] 切换Workspace  |  [⏎/S] 空间建图工作站  |  [W] 白名单  |  [P] 发布生产  |  [N] 新建  |  右键菜单",
                       (20, 686), font_size=14, color=self.COLOR_GRAY)
 
         # 2. 右侧 沙盒数据隔离与生产基准胶囊 (x: 930~1265, y: 678~712)
@@ -759,7 +759,7 @@ class HubRenderer:
         workspace_points = [
             ("概念定义", "多 Workspace 平权平行的独立沙盒 (每个对应独立数据目录)"),
             ("连拍归档", "选中 Workspace 按 [C] 采图，照片自动存入该 Workspace raw_images/"),
-            ("离线平差", "选中 Workspace 按 [S] 启动 Studio，直接平差更新 tags_map.yaml"),
+            ("离线平差", "选中 Workspace 按 [S] 启动空间建图工作站，直接平差更新 tags_map.yaml"),
             ("白名单与隔离", "每个 Workspace 独立维护 tag_whitelist.yaml，按 [W] 随时编辑"),
             ("发布流转", "任意 Workspace 精度达标后，均可一键按 [P] 原子发布为生产基准"),
         ]
@@ -807,7 +807,7 @@ class HubRenderer:
 
         draw_text(canvas, "💡 工业工程标准作业流 (SOP 黄金闭环):", (mx + 42, flow_y + 8), font_size=14, color=(0, 220, 255), bold=True)
         draw_text(canvas, "步骤 1: 新建/选中场景 -> 按 [C] 原地抓拍多视角照片 (≥10帧，支持不同角度与距离)", (mx + 42, flow_y + 32), font_size=12, color=self.COLOR_WHITE)
-        draw_text(canvas, "步骤 2: 选中该场景按 [S] 启动 Studio 离线平差工作站 -> 智能残差剪枝 -> 质检评定 RMSE < 0.20px 极优放行", (mx + 42, flow_y + 52), font_size=12, color=(0, 240, 180))
+        draw_text(canvas, "步骤 2: 选中该场景按 [S] 启动空间建图工作站 -> 智能残差剪枝 -> 质检评定 RMSE < 0.20px 极优放行", (mx + 42, flow_y + 52), font_size=12, color=(0, 240, 180))
         draw_text(canvas, "步骤 3: 达到精度指标后，按 [P] 键一键发布为【★生产】地图，现场机械臂秒级热更新！", (mx + 42, flow_y + 72), font_size=12, color=self.COLOR_GOLD, bold=True)
 
         # 4. 底部关闭操作指引

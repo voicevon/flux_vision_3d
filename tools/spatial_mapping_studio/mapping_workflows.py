@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Studio 异步工作流 Mixin (studio_workflows.py)
+空间建图工作站 - 异步工作流 Mixin (mapping_workflows.py)
 =============================================
-从 app.py 拆分出的长耗时工作流调度职责模块，由 TagOfflineStudio 以 Mixin 方式继承：
+从 app.py 拆分出的长耗时工作流调度职责模块，由 SpatialMappingStudioApp 以 Mixin 方式继承：
   - 全量超精重提取的异步调度与结果轮询 (start_async_super_extract_all / poll_super_extract_result)
   - 智能剪枝平差的启动 / 采纳 / 撤销 (start_auto_prune_ba / accept_prune_results / undo_prune_results)
   - 异步全局 BA 平差启动 (start_async_bundle_adjustment)
@@ -17,13 +17,13 @@ import threading
 from typing import Optional, Tuple
 
 from src.calibration.manifest_repository import ManifestRepository
-from tools.studio.studio_app_meta import PROJECT_ROOT
+from tools.spatial_mapping_studio.mapping_app_meta import PROJECT_ROOT
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
 
-class StudioWorkflowMixin:
+class MappingWorkflowMixin:
 
     """异步工作流调度职责 (无状态，依赖宿主 self 属性)"""
 
@@ -91,7 +91,7 @@ class StudioWorkflowMixin:
         """采纳智能剪枝平差结果并清空结算单"""
         self.ba_runner.prune_settlement_data = None
         self.set_toast("已采纳智能剪枝平差结果！可按 [M] 保存为最新地图")
-        log.info("[*] [STUDIO] 操作员确认采纳智能剪枝平差结果。")
+        log.info("[*] [SPATIAL_MAPPING] 操作员确认采纳智能剪枝平差结果。")
 
     def undo_prune_results(self):
         """一键无损撤销智能剪枝，回滚至快照状态"""
@@ -99,7 +99,7 @@ class StudioWorkflowMixin:
         self.ba_runner.prune_settlement_data = None
         if succ:
             self.set_toast("已撤销智能剪枝！观测清单与地图已完全恢复至剪枝前状态")
-            log.warning("[*] [STUDIO] 操作员已撤销智能剪枝，状态已无损回滚。")
+            log.warning("[*] [SPATIAL_MAPPING] 操作员已撤销智能剪枝，状态已无损回滚。")
         else:
             self.set_toast("未找到有效快照，撤销未执行")
 
@@ -132,11 +132,11 @@ class StudioWorkflowMixin:
             report_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
         os.makedirs(report_dir, exist_ok=True)
         ts = int(time.time())
-        report_path = os.path.join(report_dir, f"studio_qa_report_{ts}.md")
+        report_path = os.path.join(report_dir, f"spatial_mapping_qa_report_{ts}.md")
 
         try:
             with open(report_path, "w", encoding="utf-8") as f:
-                f.write(f"# AprilTag 离线标定与建图全景质检单 (Offline Studio)\n\n")
+                f.write(f"# AprilTag 空间建图工作站全景精度质检单 (Spatial Mapping Studio)\n\n")
                 f.write(f"- **质检时间**: `{time.strftime('%Y-%m-%d %H:%M:%S')}`\n")
                 f.write(f"- **总采图集**: `{len(self.image_files)} 帧`\n")
                 f.write(f"- **全景 RMSE**: `{self.global_rmse:.3f} px`\n")
