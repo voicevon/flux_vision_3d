@@ -218,7 +218,7 @@ tags:
 
 | 工具名称 | 物理路径 | 定位与核心功能 |
 | :--- | :--- | :--- |
-| **工况与场景管理中枢** | `tools/scene_hub/app.py` | 工序 0：采样场景与批次分组管理、三模态视图、黄金闭环 SOP (新建场景→采图→一键生效生产) |
+| **工位与数据管理中枢** | `tools/workspace_hub/app.py` | 工序 0：采样工位与批次分组管理、三模态视图、黄金闭环 SOP (新建工位→采图→一键生效生产) |
 | **标靶图纸生成** | `tools/calibration/generate_apriltags.py` | 工序 1：生成 0~29 号 16h5 高清标靶与 1:1 A4 排版可打印 PDF |
 | **交互采图向导** | `tools/capture/capture_wizard.py` | 工序 2：实时视频流纯预览 + 空格连拍 1080P @ 8fps 原始照片 |
 | **超精重提取引擎** | `tools/calibration/tag_super_extractor.py` | **工序 3（离线超精重提取引擎）**：离线重算，16级致密自适应阈值网格 + 双尺度CLAHE增强 + 2x超分放大 + 正统轮廓拟合解析求交 (CONTOUR)，无损继承历史清洗标注，输出高质量观测清单 |

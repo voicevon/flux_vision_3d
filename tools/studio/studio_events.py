@@ -124,8 +124,8 @@ class StudioEventMixin:
         elif btn_id == "SAVE_MAP":
             ManifestRepository.save_map(self.tags_map_data, self.map_path)
             self.set_toast(f"空间立体地图已成功保存至 {self.map_path}")
-        elif btn_id == "TOGGLE_SCENE_DROPDOWN":
-            self.active_dropdown = None if self.active_dropdown == "SCENE_DROPDOWN" else "SCENE_DROPDOWN"
+        elif btn_id == "TOGGLE_WORKSPACE_DROPDOWN":
+            self.active_dropdown = None if self.active_dropdown == "WORKSPACE_DROPDOWN" else "WORKSPACE_DROPDOWN"
         elif btn_id == "TOGGLE_BA_VIEW_DROPDOWN":
             self.active_dropdown = None if self.active_dropdown == "BA_VIEW_DROPDOWN" else "BA_VIEW_DROPDOWN"
         elif btn_id == "TOGGLE_OBS_VIEW_DROPDOWN":
@@ -143,8 +143,8 @@ class StudioEventMixin:
             self.active_dropdown = None if self.active_dropdown == "PLANE_Z_DROPDOWN" else "PLANE_Z_DROPDOWN"
         elif btn_id.startswith("DD_SELECT_"):
             dd_name, selected_val = extra
-            if dd_name == "SCENE_DROPDOWN":
-                self.switch_scene(selected_val)
+            if dd_name == "WORKSPACE_DROPDOWN":
+                self.switch_workspace(selected_val)
             elif dd_name == "PLANE_Z_DROPDOWN":
                 if selected_val == "NONE":
                     self.show_xy_plane_on = False

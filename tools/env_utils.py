@@ -74,9 +74,7 @@ def check_env_status(force_refresh: bool = False) -> dict:
     ws_mgr = WorkspaceManager() if WorkspaceManager else None
     current_ws = ws_mgr.get_current_workspace() if ws_mgr else None
     status['ws_mgr'] = ws_mgr
-    status['scene_mgr'] = ws_mgr
     status['current_ws'] = current_ws
-    status['current_scene'] = current_ws
 
     # 采图数据集统计 (以当前工位为主)
     if current_ws:

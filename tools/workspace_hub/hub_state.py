@@ -1,7 +1,7 @@
 """
-Scene Hub 全局状态与数据模型 (HubState)
+Workspace Hub 全局状态与数据模型 (HubState)
 ======================================
-管理场景列表、选中项、视口双模切换、内存缩略图 LRU 缓存与白闪动效
+管理多 Workspace 列表、当前选定 Workspace 状态、采图连拍与模式流转
 """
 
 import os
@@ -41,21 +41,21 @@ def imwrite_unicode(filepath: str, img: np.ndarray) -> bool:
 
 
 class HubState:
-    """工况与场景管理中枢 (Scene Hub) 统一状态与缓存模型"""
+    """工作空间中枢 (Workspace Hub) 统一状态与缓存模型"""
 
     # 核心视图模式 (标准三栏 / 全宽大图 / 纯净数据看板)
     VIEW_STANDARD = "standard"    # 模式1: 标准三栏 (左340, 中460, 右480)
     VIEW_EXPANDED = "expanded"    # 模式2: 全宽大图 (左340, 右940大图铺满)
     VIEW_DASHBOARD = "dashboard"  # 模式3: 纯净健康看板 (左340固定, 右940大体检看板，无相册无预览)
 
-    def __init__(self, scene_mgr: WorkspaceManager = None, force_mock: bool = False):
-        self.scene_mgr = scene_mgr or WorkspaceManager()
+    def __init__(self, workspace_mgr: WorkspaceManager = None, force_mock: bool = False):
+        self.workspace_mgr = workspace_mgr or WorkspaceManager()
 
-        self.scenes: list[Workspace] = []
-        self.prod_scene_id = ""
-        self.selected_scene_idx = 0
+        self.workspaces: list[Workspace] = []
+        self.prod_workspace_id = ""
+        self.selected_workspace_idx = 0
 
-        # 当前选中场景的照片列表与大图选中项
+        # 当前选中工位的照片列表与大图选中项
         self.current_images: list[str] = []
         self.selected_image_idx = 0
         self.image_strip_offset = 0
@@ -75,85 +75,85 @@ class HubState:
         # 生产系统生效机制 Help 说明弹层 (按 H 键或点击 [? Help] 呼出)
         self.is_help_modal_open = False
 
-        # 场景卡片右键上下文菜单 (Context Menu) 状态
+        # 工位卡片右键上下文菜单 (Context Menu) 状态
         self.context_menu_open = False
         self.context_menu_pos = (0, 0)
-        self.context_menu_scene_idx = -1
+        self.context_menu_ws_idx = -1
 
         # 当前鼠标悬停坐标 (用于按钮 Hover 高亮效果)
         self.mouse_x = -1
         self.mouse_y = -1
 
-        # 初始加载场景
-        self.refresh_scenes()
+        # 初始加载工位
+        self.refresh_workspaces()
 
-    def refresh_scenes(self):
+    def refresh_workspaces(self):
         """刷新工位列表与生产工位标识"""
-        self.scenes = self.scene_mgr.list_workspaces()
-        self.prod_scene_id = self.scene_mgr.get_production_workspace_id()
+        self.workspaces = self.workspace_mgr.list_workspaces()
+        self.prod_workspace_id = self.workspace_mgr.get_production_workspace_id()
 
         # 确保选中索引不越界
-        if not self.scenes:
-            self.selected_scene_idx = 0
+        if not self.workspaces:
+            self.selected_workspace_idx = 0
         else:
-            self.selected_scene_idx = max(0, min(self.selected_scene_idx, len(self.scenes) - 1))
+            self.selected_workspace_idx = max(0, min(self.selected_workspace_idx, len(self.workspaces) - 1))
 
-        self.load_current_scene_images()
+        self.load_current_workspace_images()
 
-    def get_production_scene(self) -> Workspace | None:
+    def get_production_workspace(self) -> Workspace | None:
         """获取当前发布为生产运行的工位"""
-        for sc in self.scenes:
-            if sc.workspace_id == self.prod_scene_id:
-                return sc
-        for sc in self.scenes:
-            if sc.is_published:
-                return sc
+        for ws in self.workspaces:
+            if ws.workspace_id == self.prod_workspace_id:
+                return ws
+        for ws in self.workspaces:
+            if ws.is_published:
+                return ws
         return None
 
-    def get_selected_scene(self) -> Workspace | None:
-        """获取当前高亮选中的场景"""
-        if not self.scenes or self.selected_scene_idx >= len(self.scenes):
+    def get_selected_workspace(self) -> Workspace | None:
+        """获取当前高亮选中的工位"""
+        if not self.workspaces or self.selected_workspace_idx >= len(self.workspaces):
             return None
-        return self.scenes[self.selected_scene_idx]
+        return self.workspaces[self.selected_workspace_idx]
 
-    def select_scene_by_offset(self, delta: int):
-        """按偏移量切换选中的场景卡片"""
-        if not self.scenes:
+    def select_workspace_by_offset(self, delta: int):
+        """按偏移量切换选中的工位卡片"""
+        if not self.workspaces:
             return
-        new_idx = (self.selected_scene_idx + delta) % len(self.scenes)
-        if new_idx != self.selected_scene_idx:
-            self.selected_scene_idx = new_idx
+        new_idx = (self.selected_workspace_idx + delta) % len(self.workspaces)
+        if new_idx != self.selected_workspace_idx:
+            self.selected_workspace_idx = new_idx
             self.selected_image_idx = 0
             self.image_strip_offset = 0
-            self.load_current_scene_images()
+            self.load_current_workspace_images()
 
     def publish_selected_to_production(self) -> bool:
-        """将当前选中的场景发布为全局生产运行地图"""
-        sc = self.get_selected_scene()
-        if not sc:
-            self.set_toast("未选中有效场景")
+        """将当前选中的工位发布为全局生产运行地图"""
+        ws = self.get_selected_workspace()
+        if not ws:
+            self.set_toast("未选中有效工位")
             return False
-        if not sc.ba_solved or not os.path.exists(sc.map_path):
-            self.set_toast("发布失败: 该场景尚未进行 BA 平差解算或地图文件缺失")
+        if not ws.ba_solved or not os.path.exists(ws.map_path):
+            self.set_toast("发布失败: 该工位尚未进行 BA 平差解算或地图文件缺失")
             return False
-        res = self.scene_mgr.publish_to_production(sc.workspace_id)
+        res = self.workspace_mgr.publish_to_production(ws.workspace_id)
         ok = res[0] if isinstance(res, (tuple, list)) else bool(res)
         msg = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else ""
         if ok:
-            self.refresh_scenes()
-            self.set_toast(f"★ 场景【{sc.name}】已成功发布为全局生产运行地图！")
+            self.refresh_workspaces()
+            self.set_toast(f"★ 工位【{ws.name}】已成功发布为全局生产运行地图！")
         else:
             self.set_toast(f"发布失败: {msg or '无法写入全局生产地图文件'}")
         return ok
 
-    def load_current_scene_images(self):
+    def load_current_workspace_images(self):
         """载入当前选中工位的照片列表"""
-        sc = self.get_selected_scene()
-        if not sc or not os.path.exists(sc.calib_raw_images_dir):
+        ws = self.get_selected_workspace()
+        if not ws or not os.path.exists(ws.calib_raw_images_dir):
             self.current_images = []
             return
 
-        imgs = sorted(glob.glob(os.path.join(sc.calib_raw_images_dir, "*.png")))
+        imgs = sorted(glob.glob(os.path.join(ws.calib_raw_images_dir, "*.png")))
         self.current_images = imgs
         if self.current_images:
             self.selected_image_idx = max(0, min(self.selected_image_idx, len(self.current_images) - 1))
@@ -175,7 +175,7 @@ class HubState:
     def delete_selected_image(self) -> bool:
         """删除当前选中的照片帧（物理安全移除、清理缓存，并自适应指向相邻帧）"""
         if not self.current_images:
-            self.set_toast("当前场景相册为空，无照片可删除。")
+            self.set_toast("当前工位相册为空，无照片可删除。")
             return False
 
         idx = self.selected_image_idx
@@ -198,7 +198,7 @@ class HubState:
                 self.preview_cache.pop(k, None)
 
             # 重新载入相册列表
-            self.load_current_scene_images()
+            self.load_current_workspace_images()
 
             # 自适应定位相邻图片
             if self.current_images:
@@ -207,10 +207,10 @@ class HubState:
                 self.selected_image_idx = 0
             self.image_strip_offset = max(0, min(self.selected_image_idx, len(self.current_images) - 4))
 
-            # 同步更新场景对象的 image_count
-            sc = self.get_selected_scene()
-            if sc:
-                sc.image_count = len(self.current_images)
+            # 同步更新工位对象的 image_count
+            ws = self.get_selected_workspace()
+            if ws:
+                ws.image_count = len(self.current_images)
 
             self.set_toast(f"已删除照片: {file_name}")
             return True
@@ -261,14 +261,14 @@ class HubState:
         return prev
 
     def save_capture_frame(self, raw_frame: np.ndarray) -> str:
-        """将当前相机帧归档至选中的场景沙盒 raw_images 目录"""
-        sc = self.get_selected_scene()
-        if not sc:
+        """将当前相机帧归档至选中的工位沙盒 raw_images 目录"""
+        ws = self.get_selected_workspace()
+        if not ws:
             return ""
 
-        os.makedirs(sc.calib_raw_images_dir, exist_ok=True)
+        os.makedirs(ws.calib_raw_images_dir, exist_ok=True)
         # 获取现有帧的最大序号
-        existing = glob.glob(os.path.join(sc.calib_raw_images_dir, "view_*.png"))
+        existing = glob.glob(os.path.join(ws.calib_raw_images_dir, "view_*.png"))
         max_idx = 0
         for f in existing:
             base = os.path.basename(f)
@@ -278,18 +278,18 @@ class HubState:
 
         new_idx = max_idx + 1
         filename = f"view_{new_idx:04d}.png"
-        filepath = os.path.join(sc.calib_raw_images_dir, filename)
+        filepath = os.path.join(ws.calib_raw_images_dir, filename)
         imwrite_unicode(filepath, raw_frame)
 
         # 触发白闪动效
         self.flash_timer = time.time() + 0.08
 
-        # 刷新场景状态
-        sc.refresh_stats()
-        sc.save_meta()
-        self.load_current_scene_images()
+        # 刷新工位状态
+        ws.refresh_stats()
+        ws.save_meta()
+        self.load_current_workspace_images()
         self.selected_image_idx = len(self.current_images) - 1
-        self.set_toast(f"快照保存成功: {filename} (场景累计 {sc.image_count} 帧)")
+        self.set_toast(f"快照保存成功: {filename} (工位累计 {ws.image_count} 帧)")
         return filepath
 
     def set_toast(self, msg: str, duration: float = 3.0):
@@ -298,7 +298,7 @@ class HubState:
 
     @property
     def expanded_preview_mode(self) -> bool:
-        """保持向后兼容：当处于全宽大图模式时返回 True"""
+        """当处于全宽大图模式时返回 True"""
         return self.view_mode == self.VIEW_EXPANDED
 
     @expanded_preview_mode.setter
@@ -338,31 +338,31 @@ class HubState:
         else:
             self.set_toast("已关闭说明窗。")
 
-    def rename_current_scene(self, new_name: str) -> bool:
-        """重命名当前选中的场景显示名称 (支持中文)"""
-        sc = self.get_selected_scene()
-        if not sc:
+    def rename_current_workspace(self, new_name: str) -> bool:
+        """重命名当前选中的工位显示名称 (支持中文)"""
+        ws = self.get_selected_workspace()
+        if not ws:
             return False
         clean = new_name.strip()
         if not clean:
             return False
-        ok = self.scene_mgr.rename_workspace(sc.workspace_id, clean)
+        ok = self.workspace_mgr.rename_workspace(ws.workspace_id, clean)
         if ok:
-            sc.name = clean
-            self.refresh_scenes()
-            self.set_toast(f"场景名称已成功修改为: 【{clean}】")
+            ws.name = clean
+            self.refresh_workspaces()
+            self.set_toast(f"工位名称已成功修改为: 【{clean}】")
         return ok
 
-    def open_context_menu(self, x: int, y: int, scene_idx: int):
-        """在指定鼠标坐标处打开场景卡片的右键上下文菜单"""
-        if 0 <= scene_idx < len(self.scenes):
+    def open_context_menu(self, x: int, y: int, ws_idx: int):
+        """在指定鼠标坐标处打开工位卡片的右键上下文菜单"""
+        if 0 <= ws_idx < len(self.workspaces):
             self.context_menu_open = True
             self.context_menu_pos = (x, y)
-            self.context_menu_scene_idx = scene_idx
-            self.selected_scene_idx = scene_idx
-            self.load_current_scene_images()
+            self.context_menu_ws_idx = ws_idx
+            self.selected_workspace_idx = ws_idx
+            self.load_current_workspace_images()
 
     def close_context_menu(self):
         """关闭右键上下文菜单"""
         self.context_menu_open = False
-        self.context_menu_scene_idx = -1
+        self.context_menu_ws_idx = -1

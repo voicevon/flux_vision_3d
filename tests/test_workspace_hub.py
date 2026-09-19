@@ -1,7 +1,7 @@
 """
-Scene Hub 自动化单元测试
-========================
-验证 CameraStreamer 取流、HubState 场景状态机管理与原地连拍归档
+Workspace Hub 自动化单元测试
+===========================
+验证 CameraStreamer 取流、HubState 工位状态机管理与原地连拍归档
 """
 
 import os
@@ -18,11 +18,12 @@ if PROJECT_ROOT not in sys.path:
 
 from src.calibration.workspace_manager import WorkspaceManager
 from src.calibration.camera_streamer import CameraStreamer
-from tools.scene_hub.hub_state import HubState
-from tools.scene_hub.hub_renderer import HubRenderer
+from tools.workspace_hub.hub_state import HubState
+from tools.workspace_hub.hub_renderer import HubRenderer, HELP_MODAL_W, HELP_MODAL_H
+from tools.workspace_hub.app import WorkspaceHubApp
 
 
-class TestSceneHub(unittest.TestCase):
+class TestWorkspaceHub(unittest.TestCase):
 
     def setUp(self):
         self.test_root = tempfile.mkdtemp(prefix="test_hub_")
@@ -30,14 +31,14 @@ class TestSceneHub(unittest.TestCase):
         os.makedirs(self.workspaces_dir, exist_ok=True)
         self.test_prod_map = os.path.join(self.test_root, "config", "tags_map.yaml")
         self.test_config_yaml = os.path.join(self.test_root, "config.yaml")
-        self.scene_mgr = WorkspaceManager(
+        self.workspace_mgr = WorkspaceManager(
             workspaces_dir=self.workspaces_dir,
             prod_map_path=self.test_prod_map,
             config_path=self.test_config_yaml
         )
         # 创建两个测试工位
-        self.sc1 = self.scene_mgr.create_workspace(alias="site_a", description="测试工况A")
-        self.sc2 = self.scene_mgr.create_workspace(alias="site_b", description="测试工况B")
+        self.ws1 = self.workspace_mgr.create_workspace(alias="site_a", description="测试工况A")
+        self.ws2 = self.workspace_mgr.create_workspace(alias="site_b", description="测试工况B")
 
     def tearDown(self):
         shutil.rmtree(self.test_root, ignore_errors=True)
@@ -55,50 +56,50 @@ class TestSceneHub(unittest.TestCase):
         self.assertFalse(streamer.is_running)
 
     def test_hub_state_navigation(self):
-        """测试 HubState 场景切换与发布生产操作"""
-        state = HubState(self.scene_mgr, force_mock=True)
-        self.assertEqual(len(state.scenes), 2)
-        # 降序排序下，最新创建的 sc2 在 index 0，先创建的 sc1 在 index 1
-        self.assertEqual(state.scenes[0].workspace_id, self.sc2.workspace_id)
-        self.assertEqual(state.scenes[1].workspace_id, self.sc1.workspace_id)
-        self.assertEqual(state.selected_scene_idx, 0)
+        """测试 HubState 工位切换与发布生产操作"""
+        state = HubState(self.workspace_mgr, force_mock=True)
+        self.assertEqual(len(state.workspaces), 2)
+        # 降序排序下，最新创建的 ws2 在 index 0，先创建的 ws1 在 index 1
+        self.assertEqual(state.workspaces[0].workspace_id, self.ws2.workspace_id)
+        self.assertEqual(state.workspaces[1].workspace_id, self.ws1.workspace_id)
+        self.assertEqual(state.selected_workspace_idx, 0)
 
-        # 切换下一个场景 (index 0 -> 1)
-        state.select_scene_by_offset(1)
-        self.assertEqual(state.selected_scene_idx, 1)
-        self.assertEqual(state.get_selected_scene().workspace_id, self.sc1.workspace_id)
+        # 切换下一个工位 (index 0 -> 1)
+        state.select_workspace_by_offset(1)
+        self.assertEqual(state.selected_workspace_idx, 1)
+        self.assertEqual(state.get_selected_workspace().workspace_id, self.ws1.workspace_id)
 
-        # 模拟选中场景具备平差结果并发布为生产运行
-        cur_sc = state.get_selected_scene()
-        cur_sc.ba_solved = True
-        cur_sc.save_meta()
-        with open(cur_sc.map_path, "w", encoding="utf-8") as f:
+        # 模拟选中工位具备平差结果并发布为生产运行
+        cur_ws = state.get_selected_workspace()
+        cur_ws.ba_solved = True
+        cur_ws.save_meta()
+        with open(cur_ws.map_path, "w", encoding="utf-8") as f:
             f.write("tags:\n  0:\n    id: 0\n    position: [0.0, 0.0, 0.0]\n    orientation: [0.0, 0.0, 0.0, 1.0]\n")
         self.assertTrue(state.publish_selected_to_production())
-        self.assertEqual(state.prod_scene_id, cur_sc.workspace_id)
+        self.assertEqual(state.prod_workspace_id, cur_ws.workspace_id)
 
     def test_hub_state_in_place_capture(self):
         """测试 HubState 原地连拍保存与归档"""
-        state = HubState(self.scene_mgr, force_mock=True)
-        cur_sc = state.get_selected_scene()
-        self.assertEqual(cur_sc.image_count, 0)
+        state = HubState(self.workspace_mgr, force_mock=True)
+        cur_ws = state.get_selected_workspace()
+        self.assertEqual(cur_ws.image_count, 0)
 
         # 模拟生成并抓拍一帧
         test_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         saved_file = state.save_capture_frame(test_frame)
         self.assertTrue(os.path.exists(saved_file))
-        self.assertEqual(cur_sc.image_count, 1)
+        self.assertEqual(cur_ws.image_count, 1)
         self.assertEqual(len(state.current_images), 1)
 
         # 再次抓拍第二帧
         saved_file2 = state.save_capture_frame(test_frame)
         self.assertTrue(os.path.exists(saved_file2))
-        self.assertEqual(cur_sc.image_count, 2)
+        self.assertEqual(cur_ws.image_count, 2)
         self.assertEqual(len(state.current_images), 2)
 
     def test_hub_renderer_canvas(self):
         """测试 HubRenderer 双缓冲画布在不同视图模式下的渲染输出有效性"""
-        state = HubState(self.scene_mgr, force_mock=True)
+        state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
         # 1. 渲染标准三栏视图
@@ -118,14 +119,14 @@ class TestSceneHub(unittest.TestCase):
 
     def test_hub_header_buttons_layout(self):
         """测试 Header 顶部按钮布局及 Help 弹窗交互响应"""
-        state = HubState(self.scene_mgr, force_mock=True)
+        state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
         canvas = renderer.render(state)
         self.assertEqual(canvas.shape, (720, 1280, 3))
 
     def test_hub_help_modal(self):
         """测试【生效到生产系统】业务说明弹窗开启与渲染"""
-        state = HubState(self.scene_mgr, force_mock=True)
+        state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
         self.assertFalse(state.is_help_modal_open)
@@ -142,42 +143,42 @@ class TestSceneHub(unittest.TestCase):
         self.assertFalse(state.is_help_modal_open)
 
     def test_hub_clone_and_immediate_refresh(self):
-        """测试场景克隆、列表实时刷新与新场景自动定位"""
-        state = HubState(self.scene_mgr, force_mock=True)
-        initial_count = len(state.scenes)
+        """测试工位克隆、列表实时刷新与新工位自动定位"""
+        state = HubState(self.workspace_mgr, force_mock=True)
+        initial_count = len(state.workspaces)
         self.assertEqual(initial_count, 2)
 
         # 克隆工位
-        cur_sc = state.get_selected_scene()
-        cloned = self.scene_mgr.clone_workspace(cur_sc.workspace_id, new_alias="对照组_工况测试")
+        cur_ws = state.get_selected_workspace()
+        cloned = self.workspace_mgr.clone_workspace(cur_ws.workspace_id, new_alias="对照组_工况测试")
         self.assertIsNotNone(cloned)
         self.assertEqual(cloned.name, "对照组_工况测试")
 
         # 刷新并重新定位
-        state.refresh_scenes()
-        self.assertEqual(len(state.scenes), initial_count + 1)
+        state.refresh_workspaces()
+        self.assertEqual(len(state.workspaces), initial_count + 1)
 
         # 验证新工位在列表中且可被定位
         target_idx = -1
-        for idx, sc in enumerate(state.scenes):
-            if sc.workspace_id == cloned.workspace_id:
+        for idx, ws in enumerate(state.workspaces):
+            if ws.workspace_id == cloned.workspace_id:
                 target_idx = idx
                 break
         self.assertNotEqual(target_idx, -1)
-        state.selected_scene_idx = target_idx
-        state.load_current_scene_images()
-        self.assertEqual(state.get_selected_scene().name, "对照组_工况测试")
+        state.selected_workspace_idx = target_idx
+        state.load_current_workspace_images()
+        self.assertEqual(state.get_selected_workspace().name, "对照组_工况测试")
 
-    def test_hub_rename_scene(self):
-        """测试场景修改名称立即生效"""
-        state = HubState(self.scene_mgr, force_mock=True)
-        ok = state.rename_current_scene("全新车间工况A")
+    def test_hub_rename_workspace(self):
+        """测试工位修改名称立即生效"""
+        state = HubState(self.workspace_mgr, force_mock=True)
+        ok = state.rename_current_workspace("全新车间工况A")
         self.assertTrue(ok)
-        self.assertEqual(state.get_selected_scene().name, "全新车间工况A")
+        self.assertEqual(state.get_selected_workspace().name, "全新车间工况A")
 
     def test_hub_expanded_preview_toggle(self):
         """测试 [F] 键单帧大图全宽自适应占满与三栏模式切换"""
-        state = HubState(self.scene_mgr, force_mock=True)
+        state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
         self.assertFalse(state.expanded_preview_mode)
@@ -190,8 +191,7 @@ class TestSceneHub(unittest.TestCase):
 
     def test_hub_top_exit_button_click(self):
         """测试点击右上角 [X] 退出按钮能够正常结束主循环"""
-        from tools.scene_hub import SceneHubApp
-        app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
+        app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
         self.assertTrue(app._running)
 
         # 模拟鼠标点击顶部右上角退出按钮 (x=1150, y=20)
@@ -200,20 +200,19 @@ class TestSceneHub(unittest.TestCase):
 
     def test_hub_footer_camera_and_card_active_action(self):
         """测试 Footer 底部 Camera 状态指示以及卡片点击直接设为活动"""
-        from tools.scene_hub import SceneHubApp
-        app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
+        app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
         renderer = HubRenderer()
         canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
 
         # 验证 Footer 渲染不报错
         renderer._render_footer(canvas, app.state)
 
-        # 验证场景生产运行地图状态
-        self.assertIsNotNone(app.state.prod_scene_id)
+        # 验证工位生产运行地图状态
+        self.assertIsNotNone(app.state.prod_workspace_id)
 
     def test_three_view_modes_cycle_and_rendering(self):
         """测试三模态视图循环切换与各模态画布渲染稳定性"""
-        state = HubState(self.scene_mgr, force_mock=True)
+        state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
         # 1. 初始为标准模式
@@ -241,8 +240,7 @@ class TestSceneHub(unittest.TestCase):
 
     def test_three_view_modes_tab_clicks(self):
         """测试鼠标点击转移至右侧相册栏的三段式 Tab 胶囊直接切换模式"""
-        from tools.scene_hub import SceneHubApp
-        app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
+        app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
         app.win_mgr.canvas_w = 1280
         app.win_mgr.canvas_h = 720
 
@@ -259,9 +257,8 @@ class TestSceneHub(unittest.TestCase):
         self.assertEqual(app.state.view_mode, HubState.VIEW_STANDARD)
 
     def test_context_menu_open_and_actions(self):
-        """测试场景卡片鼠标右键弹出菜单、项执行与渲染稳定性"""
-        from tools.scene_hub import SceneHubApp
-        app = SceneHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
+        """测试工位卡片鼠标右键弹出菜单、项执行与渲染稳定性"""
+        app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
 
         self.assertFalse(app.state.context_menu_open)
 
@@ -285,19 +282,17 @@ class TestSceneHub(unittest.TestCase):
         app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 800, 500, 0, None)
         self.assertFalse(app.state.context_menu_open)
 
-    def test_scene_hub_settings_persistence(self):
-        """测试 Scene Hub 窗口尺寸与缩放比例的自动记忆持久化与二次启动恢复"""
-        import tempfile
-        from tools.scene_hub import SceneHubApp
+    def test_workspace_hub_settings_persistence(self):
+        """测试 Workspace Hub 窗口尺寸与缩放比例的自动记忆持久化与二次启动恢复"""
         with tempfile.TemporaryDirectory() as tmpdir:
             test_cfg = os.path.join(tmpdir, "hub_test_settings.json")
             # 1. 启动第一实例并缩放到 120%
-            app1 = SceneHubApp(force_mock=True, settings_file=test_cfg)
+            app1 = WorkspaceHubApp(force_mock=True, settings_file=test_cfg)
             app1.win_mgr.apply_zoom(+20)
             self.assertEqual(app1.win_mgr.scale_pct, 120)
 
             # 2. 启动第二实例，验证自动无感恢复
-            app2 = SceneHubApp(force_mock=True, settings_file=test_cfg)
+            app2 = WorkspaceHubApp(force_mock=True, settings_file=test_cfg)
             self.assertEqual(app2.win_mgr.scale_pct, 120)
             self.assertEqual(app2.win_mgr.canvas_w, int(1280 * 1.2))
             self.assertEqual(app2.win_mgr.canvas_h, int(720 * 1.2))
@@ -308,17 +303,15 @@ class TestSceneHub(unittest.TestCase):
             app2.win_mgr.save_settings()
 
             # 4. 启动第三实例，验证 1600x900 依然被精准记住
-            app3 = SceneHubApp(force_mock=True, settings_file=test_cfg)
+            app3 = WorkspaceHubApp(force_mock=True, settings_file=test_cfg)
             self.assertEqual(app3.win_mgr.scale_pct, 120)
             self.assertEqual(app3.win_mgr.canvas_w, 1600)
             self.assertEqual(app3.win_mgr.canvas_h, 900)
 
     def test_help_modal_hit_test_and_close(self):
         """验证生产说明弹窗右上角 [X] 关闭按钮在各种坐标（中心、边缘、容差、物理缩放）下的瞬间关闭判定"""
-        from tools.scene_hub.app import SceneHubApp
-        from tools.scene_hub.hub_renderer import HELP_MODAL_W, HELP_MODAL_H
         clean_cfg = os.path.join(self.test_root, "clean_hub_settings.json")
-        app = SceneHubApp(force_mock=True, settings_file=clean_cfg)
+        app = WorkspaceHubApp(force_mock=True, settings_file=clean_cfg)
         app.win_mgr.canvas_w = 1280
         app.win_mgr.canvas_h = 720
         state = app.state
@@ -379,22 +372,21 @@ class TestSceneHub(unittest.TestCase):
 
     def test_image_deletion_and_tabs_relocation(self):
         """测试照片删除功能与三段式Tab转移后的点击交互"""
-        from tools.scene_hub.app import SceneHubApp
         clean_cfg = os.path.join(self.test_root, "clean_tabs_settings.json")
-        app = SceneHubApp(force_mock=True, settings_file=clean_cfg)
+        app = WorkspaceHubApp(force_mock=True, settings_file=clean_cfg)
         app.win_mgr.canvas_w = 1280
         app.win_mgr.canvas_h = 720
         state = app.state
 
-        # 1. 创建两张测试图片放入当前选中场景中
-        sc = state.get_selected_scene()
-        self.assertIsNotNone(sc)
-        img1 = os.path.join(sc.calib_raw_images_dir, "test_view_01.png")
-        img2 = os.path.join(sc.calib_raw_images_dir, "test_view_02.png")
+        # 1. 创建两张测试图片放入当前选中工位中
+        ws = state.get_selected_workspace()
+        self.assertIsNotNone(ws)
+        img1 = os.path.join(ws.calib_raw_images_dir, "test_view_01.png")
+        img2 = os.path.join(ws.calib_raw_images_dir, "test_view_02.png")
         dummy = np.zeros((480, 640, 3), dtype=np.uint8)
         cv2.imwrite(img1, dummy)
         cv2.imwrite(img2, dummy)
-        state.load_current_scene_images()
+        state.load_current_workspace_images()
 
         initial_count = len(state.current_images)
         self.assertGreaterEqual(initial_count, 2)
@@ -406,7 +398,7 @@ class TestSceneHub(unittest.TestCase):
         self.assertTrue(ok)
         self.assertFalse(os.path.exists(deleted_file), "被删除的照片文件应已从磁盘移除")
         self.assertEqual(len(state.current_images), initial_count - 1)
-        self.assertEqual(sc.image_count, initial_count - 1)
+        self.assertEqual(ws.image_count, initial_count - 1)
 
         # 3. 测试通过鼠标点击右上角 [Del] 按钮删除 (x: 1240, y: 70)
         del_target = state.current_images[0]
@@ -427,8 +419,34 @@ class TestSceneHub(unittest.TestCase):
         app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1010, 70, 0, None)
         self.assertEqual(state.view_mode, HubState.VIEW_EXPANDED)
 
+    def test_tag_whitelist_creation_and_context_menu(self):
+        """测试通过 _handle_tag_whitelist() 自动生成 tag_whitelist.yaml 模板以及右键菜单项"""
+        import yaml
+        clean_cfg = os.path.join(self.test_root, "clean_whitelist_settings.json")
+        app = WorkspaceHubApp(force_mock=True, settings_file=clean_cfg)
+        ws = app.state.get_selected_workspace()
+        self.assertIsNotNone(ws)
+
+        # 确保初始无 whitelist
+        wl_path = ws.whitelist_path
+        if os.path.exists(wl_path):
+            os.remove(wl_path)
+
+        # 执行白名单处理 (Windows startfile 在 unittest 中打桩避免弹出外部编辑器)
+        import unittest.mock as mock
+        with mock.patch("os.startfile", create=True) as mock_startfile:
+            app._handle_tag_whitelist()
+            self.assertTrue(os.path.exists(wl_path), "应自动创建 tag_whitelist.yaml 文件")
+            mock_startfile.assert_called_once_with(wl_path)
+
+        # 验证文件结构符合规范
+        with open(wl_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        self.assertIn("enabled", cfg)
+        self.assertIn("allowed_ids", cfg)
+        self.assertIn("workspace_id", cfg)
+        self.assertEqual(cfg["workspace_id"], ws.workspace_id)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-

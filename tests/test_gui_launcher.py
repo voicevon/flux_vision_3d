@@ -30,9 +30,9 @@ class TestGuiLauncher(unittest.TestCase):
         seen_keys = set()
         seen_shortcuts = set()
         valid_categories = {
-            "A — 工位工作空间 (Workspace)",
+            "A — Workspace",
             "B — 标定建图与生产验证",
-            "D — 生产调试"
+            "D — 硬件调试与系统运维"
         }
         for tool in catalog:
             self.assertIsInstance(tool, ToolCardMeta)
@@ -234,35 +234,37 @@ class TestGuiLauncher(unittest.TestCase):
             self.assertLessEqual(w, 200)
 
     def test_asparagus_card_position_and_shortcuts(self):
-        """测试芦笋离线验证卡片位于 B 组第 5 位 (idx=4)，快捷键为 5"""
+        """测试芦笋离线验证卡片位于 B 组 (idx=3)，快捷键为 4，卡片与快捷键顺移无冲突"""
         catalog = build_tools_catalog()
         ids = [t.key_id for t in catalog]
-        self.assertEqual(ids[4], "asparagus_offline")
-        self.assertEqual(catalog[4].shortcut, "5")
-        self.assertEqual(catalog[4].category, "B — 标定建图与生产验证")
-        self.assertTrue(catalog[4].is_gui)
+        self.assertEqual(ids[3], "asparagus_offline")
+        self.assertEqual(catalog[3].shortcut, "4")
+        self.assertEqual(catalog[3].category, "B — 标定建图与生产验证")
+        self.assertTrue(catalog[3].is_gui)
         # 数字快捷键与卡片一一对应且顺移无冲突: 1~8
         expected = ["1", "2", "3", "4", "5", "6", "7", "8"]
         for idx, sc in enumerate(expected):
             self.assertEqual(catalog[idx].shortcut, sc)
-        self.assertEqual(catalog[5].key_id, "robot_online_tracker")
-        self.assertEqual(catalog[6].key_id, "d435_live")
-        self.assertEqual(catalog[7].key_id, "scara_debug")
+        self.assertEqual(catalog[4].key_id, "robot_online_tracker")
+        self.assertEqual(catalog[5].key_id, "d435_live")
+        self.assertEqual(catalog[6].key_id, "scara_debug")
+        self.assertEqual(catalog[7].key_id, "tag_paper_gen")
 
     def test_grid_layout_two_plus_two_plus_one(self):
-        """测试 B/D 两组网格布局几何正确 (共 10 张卡片)"""
+        """测试 B/D 两组网格布局几何正确 (共 10 张卡片: A 1张全宽, B 2x2, D 2+2+1)"""
         rects = [self.app._get_card_rect(i) for i in range(10)]
-        # B 组: idx 1/2 第一行, 3/4 第二行, 5 第三行仅左列
+        # B 组: idx 1/2 第一行, 3/4 第二行
         self.assertEqual(rects[1][1], rects[2][1])
         self.assertEqual(rects[3][1], rects[4][1])
         self.assertGreater(rects[3][1], rects[1][1])
+        # D 组: idx 5/6 第一行, 7/8 第二行, 9 第三行仅左列
+        self.assertEqual(rects[5][1], rects[6][1])
+        self.assertEqual(rects[7][1], rects[8][1])
+        self.assertGreater(rects[7][1], rects[5][1])
+        self.assertGreater(rects[9][1], rects[7][1])
+        self.assertEqual(rects[9][0], rects[5][0])          # 第三行仅左列
+        # D 组整体低于 B 组
         self.assertGreater(rects[5][1], rects[3][1])
-        self.assertEqual(rects[5][0], rects[1][0])          # 第三行仅左列
-        # D 组: idx 6/7 第一行, 8/9 第二行, 整体低于 B 组
-        self.assertEqual(rects[6][1], rects[7][1])
-        self.assertEqual(rects[8][1], rects[9][1])
-        self.assertGreater(rects[8][1], rects[6][1])
-        self.assertGreater(rects[6][1], rects[5][1])
         # 全部卡片在 1000px 基准画布内
         for r in rects:
             self.assertLess(r[1] + r[3], 1000)

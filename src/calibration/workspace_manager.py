@@ -367,6 +367,10 @@ class WorkspaceManager:
             self._cached_workspaces[ws_id] = ws
         return ws
 
+    def get_tag_whitelist_path(self, workspace_id: str) -> str:
+        """获取指定工位的 tag_whitelist.yaml 绝对路径"""
+        return os.path.join(self.workspaces_dir, workspace_id, "tag_whitelist.yaml")
+
     def get_current_workspace_id(self) -> str:
         """获取当前默认工位 ID (优先生产工位，次优活动标记，兜底最新工位)"""
         prod_id = self.get_production_workspace_id()

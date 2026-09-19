@@ -144,19 +144,9 @@ class CaptureWizard:
             opts.append((w.workspace_id, f"{tag}{w.name} ({cnt}帧)"))
         return opts
 
-    # 兼容原 scene_options
-    @property
-    def scene_options(self):
-        return self.workspace_options
-
     @property
     def current_workspace_name(self):
         return self.current_workspace.name if self.current_workspace else "默认工位"
-
-    # 兼容原 current_scene_name
-    @property
-    def current_scene_name(self):
-        return self.current_workspace_name
 
     @property
     def current_purpose_label(self):
@@ -172,10 +162,6 @@ class CaptureWizard:
         self._update_output_dir()
         self.set_toast(f"已切换归档工位: 【{ws.name}】/【{self.current_purpose_label}】(当前 {self.image_count} 帧)")
         log.info(f"采图向导已切换归档工位: {ws.name} ({ws.workspace_id}) [{self.purpose}] -> {self.output_dir}")
-
-    # 兼容原 switch_scene
-    def switch_scene(self, scene_id: str):
-        self.switch_workspace(scene_id)
 
     def switch_purpose(self, purpose_key: str):
         """实时切换采集用途 (标定 calibration / 生产 production)"""
@@ -466,7 +452,7 @@ class CaptureWizard:
 
 def main():
     parser = argparse.ArgumentParser(description="多视角采图向导 (纯预览 + 保存)")
-    parser.add_argument("--workspace", "--scene", dest="workspace", type=str, default="", help="指定初始归档工位 ID")
+    parser.add_argument("--workspace", dest="workspace", type=str, default="", help="指定初始归档工位 ID")
     parser.add_argument("--purpose", type=str, default="calibration", choices=["calibration", "production"], help="采集用途: calibration 标定 / production 生产")
     parser.add_argument("--dir", "--output-dir", "--output_dir", dest="dir", type=str, default=None, help="自定义保存目录路径")
     args = parser.parse_args()

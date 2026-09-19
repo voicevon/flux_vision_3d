@@ -184,19 +184,19 @@ class StudioUIRenderer(StudioFrameListMixin, StudioCenterViewMixin, StudioInspec
         btn_y_top, btn_y_bot = 7, top_h - 7
         bx = 16 + logo_w + 20
 
-        # 0. 选择场景下拉框 (首要核心位置)
+        # 0. 选择工位下拉框 (首要核心位置)
         sc_w = 145
-        cur_sc_label = getattr(studio, "current_scene_name", "默认场景")
-        is_sc_open = (studio.active_dropdown == "SCENE_DROPDOWN")
-        draw_dropdown_button(canvas, (bx, btn_y_top, bx + sc_w, btn_y_bot), f"场景: {cur_sc_label}",
+        cur_sc_label = getattr(studio, "current_workspace_name", "默认工位")
+        is_sc_open = (studio.active_dropdown == "WORKSPACE_DROPDOWN")
+        draw_dropdown_button(canvas, (bx, btn_y_top, bx + sc_w, btn_y_bot), f"工位: {cur_sc_label}",
                              is_open=is_sc_open, mouse_pos=(mx, my),
                              theme_color=(0, 255, 180))
-        studio.dropdown_boxes["SCENE_DROPDOWN"] = {
+        studio.dropdown_boxes["WORKSPACE_DROPDOWN"] = {
             "rect": (bx, btn_y_top, bx + sc_w, btn_y_bot),
-            "options": getattr(studio, "scene_options", []),
-            "active_key": getattr(studio, "current_scene_id", "")
+            "options": getattr(studio, "workspace_options", []),
+            "active_key": getattr(studio, "current_workspace_id", "")
         }
-        studio.gui_buttons.append(("TOGGLE_SCENE_DROPDOWN", (bx, btn_y_top, bx + sc_w, btn_y_bot), "SCENE_DROPDOWN"))
+        studio.gui_buttons.append(("TOGGLE_WORKSPACE_DROPDOWN", (bx, btn_y_top, bx + sc_w, btn_y_bot), "WORKSPACE_DROPDOWN"))
         bx += sc_w + 5
 
         # 0.5. [绘制XY平面] 透视网格开关与 [Z轴特殊点] 下拉选择 (移植自在线跟踪)

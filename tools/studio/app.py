@@ -103,7 +103,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         win_w: int = 1920,
         win_h: int = 1080,
         manifest_path: Optional[str] = None,
-        scene_id: Optional[str] = None
+        workspace_id: Optional[str] = None
     ):
         self.marker_size_mm = marker_size_mm
         self.win_w = win_w
@@ -112,28 +112,28 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         # 工位管理器感知与初始目标工位装配
         try:
             from src.calibration.workspace_manager import WorkspaceManager
-            self.scene_mgr = WorkspaceManager()
-            if scene_id:
-                sc = self.scene_mgr.get_workspace_by_id(scene_id)
+            self.workspace_mgr = WorkspaceManager()
+            if workspace_id:
+                ws = self.workspace_mgr.get_workspace_by_id(workspace_id)
             elif image_dir and image_dir != CALIB_IMAGES_DIR:
                 norm_target = os.path.normpath(image_dir)
-                sc = next((s for s in self.scene_mgr.list_workspaces()
+                ws = next((s for s in self.workspace_mgr.list_workspaces()
                            if os.path.normpath(s.calib_raw_images_dir) == norm_target or os.path.normpath(s.workspace_dir) == norm_target), None)
             else:
-                sc = self.scene_mgr.get_current_workspace()
+                ws = self.workspace_mgr.get_current_workspace()
 
-            if not sc:
-                sc = self.scene_mgr.get_current_workspace()
-            self.current_scene = sc
-            self.current_scene_id = sc.workspace_id if sc else ""
+            if not ws:
+                ws = self.workspace_mgr.get_current_workspace()
+            self.current_workspace = ws
+            self.current_workspace_id = ws.workspace_id if ws else ""
         except Exception:
-            self.scene_mgr = None
-            self.current_scene = None
-            self.current_scene_id = ""
+            self.workspace_mgr = None
+            self.current_workspace = None
+            self.current_workspace_id = ""
 
-        self.map_path = map_path or (self.current_scene.map_path if self.current_scene else DEFAULT_MAP_PATH)
-        self.image_dir = image_dir or (self.current_scene.calib_raw_images_dir if self.current_scene else CALIB_IMAGES_DIR)
-        self.manifest_path = manifest_path or (self.current_scene.calib_manifest_path if self.current_scene else os.path.join(self.image_dir, "tag_observations.yaml"))
+        self.map_path = map_path or (self.current_workspace.map_path if self.current_workspace else DEFAULT_MAP_PATH)
+        self.image_dir = image_dir or (self.current_workspace.calib_raw_images_dir if self.current_workspace else CALIB_IMAGES_DIR)
+        self.manifest_path = manifest_path or (self.current_workspace.calib_manifest_path if self.current_workspace else os.path.join(self.image_dir, "tag_observations.yaml"))
         self.manifest_repo = ManifestRepository()
 
         # 1. 初始化视口管理器与物理布局尺寸
@@ -222,26 +222,26 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         self.refresh_all_frame_metrics()
 
     @property
-    def scene_options(self):
+    def workspace_options(self):
         """动态读取所有可用工位供顶栏下拉菜单展示"""
-        if not self.scene_mgr:
+        if not self.workspace_mgr:
             return []
         opts = []
-        for s in self.scene_mgr.list_workspaces():
+        for s in self.workspace_mgr.list_workspaces():
             tag = "★ " if s.is_published else ""
             opts.append((s.workspace_id, f"{tag}{s.name} ({s.image_count}帧)"))
         return opts
 
     @property
-    def current_scene_name(self):
-        return self.current_scene.name if self.current_scene else "默认工位"
+    def current_workspace_name(self):
+        return self.current_workspace.name if self.current_workspace else "默认工位"
 
-    def switch_scene(self, scene_id: str):
+    def switch_workspace(self, workspace_id: str):
         """实时热切换工位：重新装载图像、清单与地图并复位视口与平差引擎"""
-        if not self.scene_mgr:
+        if not self.workspace_mgr:
             return
-        target_sc = self.scene_mgr.get_workspace_by_id(scene_id)
-        if not target_sc:
+        target_ws = self.workspace_mgr.get_workspace_by_id(workspace_id)
+        if not target_ws:
             return
 
         # 1. 自动持久化当前工位已修改数据
@@ -251,11 +251,11 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
             pass
 
         # 2. 重新指向新工位
-        self.current_scene = target_sc
-        self.current_scene_id = target_sc.workspace_id
-        self.image_dir = target_sc.calib_raw_images_dir
-        self.manifest_path = target_sc.calib_manifest_path
-        self.map_path = target_sc.map_path
+        self.current_workspace = target_ws
+        self.current_workspace_id = target_ws.workspace_id
+        self.image_dir = target_ws.calib_raw_images_dir
+        self.manifest_path = target_ws.calib_manifest_path
+        self.map_path = target_ws.map_path
 
         # 3. 驱动 data_mgr 重载
         self.data_mgr.reload_dataset(
@@ -800,10 +800,10 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
                     self.export_verification_report()
                 elif key in (ord('m'), ord('M')):      # M 键 -> 保存地图
                     ManifestRepository.save_map(self.tags_map_data, self.map_path)
-                    if self.current_scene:
-                        self.current_scene.refresh_stats()
-                        self.current_scene.save_meta()
-                    self.set_toast("空间立体地图已保存至当前场景！")
+                    if self.current_workspace:
+                        self.current_workspace.refresh_stats()
+                        self.current_workspace.save_meta()
+                    self.set_toast("空间立体地图已保存至当前工位！")
                 elif key in (ord('u'), ord('U')):      # U 键 -> 发布至生产全局地图
                     self.publish_to_production()
                 elif key in (ord('y'), ord('Y')):      # Y 键 -> 开关 XY 平面网格
@@ -828,7 +828,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
 
 def main():
     parser = argparse.ArgumentParser(description="AprilTag 离线标定与空间建图综合工作站 (Offline Studio)")
-    parser.add_argument("--scene", type=str, default=None, help="目标场景 ID")
+    parser.add_argument("--workspace", type=str, default=None, help="目标工位 ID")
     parser.add_argument("--map", type=str, default=None, help="标靶空间立体地图路径")
     parser.add_argument("--images", type=str, default=None, help="标定采图目录")
     parser.add_argument("--marker_size", type=float, default=50.0, help="标靶物理边长 (mm)")
@@ -838,7 +838,7 @@ def main():
         map_path=args.map,
         image_dir=args.images,
         marker_size_mm=args.marker_size,
-        scene_id=args.scene
+        workspace_id=args.workspace
     )
     studio.run()
 

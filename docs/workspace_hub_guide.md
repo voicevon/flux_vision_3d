@@ -1,7 +1,7 @@
 # 工位工作空间 (Workspace) 与管理中枢技术指南
 
 > **文档版本**: v3.0 (2026-09)  
-> **适用模块**: `tools/scene_hub/` & `src/calibration/workspace_manager.py`  
+> **适用模块**: `tools/workspace_hub/` & `src/calibration/workspace_manager.py`  
 > **系统环境**: Windows 10/11 x64, Python 3.11+, OpenCV 4.x
 
 ---

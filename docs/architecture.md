@@ -25,7 +25,7 @@ graph TD
     subgraph L3["第三层：应用交互与标定工具链"]
         subgraph L3_App["顶层标定应用 (tools/)"]
             Dashboard["综合控制中心 Dashboard<br>(gui_launcher.py)"]
-            Hub["工况与场景管理中枢<br>Scene Hub (scene_hub/)"]
+            Hub["工位与数据管理中枢<br>Workspace Hub (workspace_hub/)"]
             Studio["离线标定综合工作站<br>Studio (studio/)"]
             Asparagus["芦笋抓取位姿离线验证<br>(asparagus_offline.py)"]
             Tracker["Robot 在线跟踪<br>(tracker/)"]
@@ -125,7 +125,7 @@ graph TD
 
 | 工具 | 文件路径 | 定位与核心功能 |
 | :--- | :--- | :--- |
-| **工况与场景管理中枢** | `tools/scene_hub/app.py` | 采样场景与批次分组管理、三模态视图、黄金闭环 SOP (新建场景→采图→一键生效生产) |
+| **工位与数据管理中枢** | `tools/workspace_hub/app.py` | 采样工位与批次分组管理、三模态视图、黄金闭环 SOP (新建工位→采图→一键生效生产) |
 | **离线标定综合工作站** | `tools/studio/app.py` | 帧序列资产管理、交互审核画板、迭代剪枝 BA 平差、离线精度体检 |
 | **Robot 在线跟踪** | `tools/tracker/app.py` | Tag 世界坐标实时解算、机械臂"抬起→平移→下探"联动跟踪、M114 到位偏差对比 (相机位置校准)；真矢量模式 1:1 imshow 消除鼠标坐标漂移 |
 | **SCARA 机械臂调试** | `tools/scara_debug/app.py` | MKS Base V1.6 (Marlin) 调试终端：串口点动、回零设零、夹爪舵机、搬运宏、G-code 透传 |
@@ -183,7 +183,7 @@ Dashboard、Tracker、Scene Hub 等 GUI 应用共享以下基础设施，统一�
 | | `tests/test_audit_p0_fixes.py` | 标定体系审查 P0 问题修复回归锁定 |
 | **在线定位** | `tests/test_tag_localizer.py` | 在线单帧外参定位精度与守门降级 |
 | **GUI 与应用** | `tests/test_gui_launcher.py`、`tests/test_gui_window_manager.py` | Dashboard 调度与动态分辨率窗口管理 |
-| | `tests/test_scene_hub.py`、`tests/test_scene_manager.py` | Scene Hub 渲染状态机与场景管理器 |
+| | `tests/test_workspace_hub.py`、`tests/test_workspace_manager.py` | Workspace Hub 渲染状态机与工位管理器 |
 | | `tests/test_tag_offline_studio.py` | Offline Studio 工作站 |
 | | `tests/test_viewport_manager.py`、`tests/test_verification_reporter.py` | 视口管理与精度体检报告生成 |
 | | `tests/test_hardware_config.py`、`tests/test_terminal_panel.py` | 硬件环境配置应用与 Dashboard 内嵌终端面板 |

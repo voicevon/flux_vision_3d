@@ -56,7 +56,7 @@ class GuiWindowManager:
                  min_h: int = 270,
                  settings_file: Optional[str] = None):
         """
-        :param app_id: 应用唯一标识 (如 'gui_launcher', 'scene_hub', 'tag_studio')
+        :param app_id: 应用唯一标识 (如 'gui_launcher', 'workspace_hub', 'tag_studio')
         :param base_w: 基准窗口宽度 (默认 1280)
         :param base_h: 基准窗口高度 (默认 720)
         :param min_w: 最小允许宽度 (默认 480)

@@ -125,23 +125,23 @@ class AsparagusOfflineApp:
         self.win_mgr = GuiWindowManager(app_id=APP_ID, base_w=BASE_W, base_h=BASE_H,
                                         min_w=900, min_h=600)
 
-        # 场景/工位管理器感知
+        # 工位管理器感知
         from src.calibration.workspace_manager import WorkspaceManager
-        self.scene_mgr = WorkspaceManager()
-        self.current_scene_id = "__prod__"  # 默认使用全局生产地图
+        self.workspace_mgr = WorkspaceManager()
+        self.current_workspace_id = "__prod__"  # 默认使用全局生产地图
 
         # 默认样本目录: 优先当前工位 production 采图，回退 snapshots
         if sample_dir:
             self.sample_dir = sample_dir
         else:
-            cur_ws = self.scene_mgr.get_current_workspace()
+            cur_ws = self.workspace_mgr.get_current_workspace()
             if cur_ws and os.path.exists(cur_ws.prod_raw_images_dir) and glob.glob(os.path.join(cur_ws.prod_raw_images_dir, "*.png")):
                 self.sample_dir = cur_ws.prod_raw_images_dir
             else:
                 self.sample_dir = DEFAULT_DIR
         self.active_dropdown = None
         self._dd_items = []
-        self._scene_rect = None
+        self._workspace_rect = None
 
         # 标定链: AprilTag 建图定位器 (一次装载) + 手工标定矩阵回退
         self.tag_localizer = None
@@ -176,13 +176,13 @@ class AsparagusOfflineApp:
     # ------------------------------ 数据流程 ------------------------------
     def _init_localizer(self):
         """装载标靶立体地图"""
-        if self.current_scene_id == "__prod__":
+        if self.current_workspace_id == "__prod__":
             tags_path = self.sys_cfg.get("tags_map_path", "")
             if tags_path and not os.path.isabs(tags_path):
                 tags_path = os.path.join(PROJECT_ROOT, tags_path)
         else:
-            sc = self.scene_mgr.get_workspace_by_id(self.current_scene_id)
-            tags_path = sc.map_path if sc else ""
+            ws = self.workspace_mgr.get_workspace_by_id(self.current_workspace_id)
+            tags_path = ws.map_path if ws else ""
 
         if tags_path and os.path.exists(tags_path) and os.path.getsize(tags_path) > 50:
             try:
@@ -195,31 +195,31 @@ class AsparagusOfflineApp:
             self.tag_localizer = None
 
     @property
-    def scene_options(self):
+    def workspace_options(self):
         """动态列出可选地图：首项为生产全局地图，后续为各工位地图"""
         opts = [("__prod__", "★ 当前生产地图 (config/tags_map.yaml)")]
-        for s in self.scene_mgr.list_workspaces():
+        for s in self.workspace_mgr.list_workspaces():
             tag = "★ " if s.is_published else ""
             status = f"{s.global_rmse_px:.2f}px" if s.ba_solved else "未平差"
             opts.append((s.workspace_id, f"{tag}{s.name} ({s.image_count}帧, {status})"))
         return opts
 
     @property
-    def current_scene_name(self):
-        if self.current_scene_id == "__prod__":
+    def current_workspace_name(self):
+        if self.current_workspace_id == "__prod__":
             return "生产地图"
-        sc = self.scene_mgr.get_workspace_by_id(self.current_scene_id)
-        return sc.name if sc else "默认"
+        ws = self.workspace_mgr.get_workspace_by_id(self.current_workspace_id)
+        return ws.name if ws else "默认"
 
-    def switch_scene(self, scene_key: str):
+    def switch_workspace(self, workspace_key: str):
         """动态切换标靶立体地图并重新解算当前样本"""
-        self.current_scene_id = scene_key
+        self.current_workspace_id = workspace_key
         self._init_localizer()
         if self.tag_localizer:
             tag_cnt = len(getattr(self.tag_localizer, "tag_poses", {}))
-            self.set_toast(f"已装载【{self.current_scene_name}】地图 (包含 {tag_cnt} 个标靶)")
+            self.set_toast(f"已装载【{self.current_workspace_name}】地图 (包含 {tag_cnt} 个标靶)")
         else:
-            self.set_toast(f"【{self.current_scene_name}】尚未平差生成 tags_map.yaml，降级估算！")
+            self.set_toast(f"【{self.current_workspace_name}】尚未平差生成 tags_map.yaml，降级估算！")
         
         # 立即重新解算当前样本
         if 0 <= self.sel_idx < len(self.samples):
@@ -504,13 +504,13 @@ class AsparagusOfflineApp:
             self._draw_button(canvas, (bx, int(14 * m["s"]), bx + bw, int(14 * m["s"]) + m["btn_h"]),
                               label, enabled=enabled)
 
-        # 按钮组最左侧：地图场景选择下拉按钮
+        # 按钮组最左侧：地图工位选择下拉按钮
         sc_w = int(165 * m["s"])
         bx -= sc_w + int(8 * m["s"])
-        self._scene_rect = (bx, int(14 * m["s"]), bx + sc_w, int(14 * m["s"]) + m["btn_h"])
-        is_sc_open = (self.active_dropdown == "SCENE_DROPDOWN")
-        self._draw_dropdown_button(canvas, self._scene_rect, f"地图: {self.current_scene_name}", is_open=is_sc_open)
-        self._buttons.append((self._scene_rect, ("toggle_dd", "SCENE_DROPDOWN")))
+        self._workspace_rect = (bx, int(14 * m["s"]), bx + sc_w, int(14 * m["s"]) + m["btn_h"])
+        is_sc_open = (self.active_dropdown == "WORKSPACE_DROPDOWN")
+        self._draw_dropdown_button(canvas, self._workspace_rect, f"地图: {self.current_workspace_name}", is_open=is_sc_open)
+        self._buttons.append((self._workspace_rect, ("toggle_dd", "WORKSPACE_DROPDOWN")))
 
         # 底部状态栏
         yb = H - m["bottom_h"] + int(8 * m["s"])
@@ -544,8 +544,8 @@ class AsparagusOfflineApp:
             draw_text(canvas, self._toast_msg, (tx, ty), m["fs_body"], GuiTheme.WARN, bold=True)
 
         # 置顶渲染下拉弹出菜单 (覆盖在所有内容最上层)
-        if self.active_dropdown == "SCENE_DROPDOWN" and self._scene_rect:
-            self._render_dropdown_popup(canvas, self._scene_rect, self.scene_options, self.current_scene_id)
+        if self.active_dropdown == "WORKSPACE_DROPDOWN" and self._workspace_rect:
+            self._render_dropdown_popup(canvas, self._workspace_rect, self.workspace_options, self.current_workspace_id)
 
         return canvas
 
@@ -726,7 +726,7 @@ class AsparagusOfflineApp:
                 for rect, key in self._dd_items:
                     if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
                         self.active_dropdown = None
-                        self.switch_scene(key)
+                        self.switch_workspace(key)
                         return
                 self.active_dropdown = None
 

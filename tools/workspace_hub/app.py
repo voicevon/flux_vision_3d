@@ -1,13 +1,13 @@
 """
-工况与场景综合管理中枢 (Scene Hub)
+工作空间综合管理中枢 (Workspace Hub)
 ==============================================
 提供现代深色科技风格 GUI 界面：
-- 场景画廊管理 (选择、切换、新建、重命名、克隆、删除)
+- Workspace 画廊管理 (选择、切换、新建、重命名、克隆、删除)
 - 历史采样照片缩略图流与单帧大图自适应视口 (支持 [F] 键全宽放大)
-- 场景几何健康度与两阶段 BA 平差残差看板
-- 场景数据工作空间与工况生命周期管理
+- 几何健康度与两阶段 BA 平差残差看板
+- 数据工作空间与生命周期管理
 - 一键直通标定离线 Studio 深度平差与原子发布至生产环境
-- 完美支持中英文场景别名输入与显示
+- 完美支持中英文 Workspace 别名输入与显示
 """
 
 import os
@@ -24,8 +24,8 @@ if PROJECT_ROOT not in sys.path:
 
 from src.calibration.workspace_manager import WorkspaceManager
 from src.utils.gui_window_manager import GuiWindowManager
-from tools.scene_hub.hub_state import HubState
-from tools.scene_hub.hub_renderer import HubRenderer, HELP_MODAL_W, HELP_MODAL_H
+from tools.workspace_hub.hub_state import HubState
+from tools.workspace_hub.hub_renderer import HubRenderer, HELP_MODAL_W, HELP_MODAL_H
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -50,23 +50,23 @@ def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
             return ""
 
 
-class SceneHubApp:
-    """Scene Hub 主应用"""
+class WorkspaceHubApp:
+    """Workspace Hub 主应用"""
 
     def __init__(self, force_mock: bool = False, settings_file: str = None):
         self.force_mock = force_mock
         self.win_mgr = GuiWindowManager(
-            app_id="scene_hub",
+            app_id="workspace_hub",
             base_w=1280,
             base_h=720,
             settings_file=settings_file
         )
-        self.scene_mgr = WorkspaceManager()
-        self.state = HubState(self.scene_mgr, force_mock=force_mock)
+        self.workspace_mgr = WorkspaceManager()
+        self.state = HubState(self.workspace_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
         # 窗口内部 key 必须纯 ASCII (namedWindow ANSI API), 中文标题走 set_unicode_title
-        self.window_name = "flux_vision_3d | scene-hub"
-        self.window_title = "flux_vision_3d | 工况与场景管理中枢 (Scene Hub)"
+        self.window_name = "flux_vision_3d | workspace"
+        self.window_title = "flux_vision_3d | Workspace"
         self._running = True
 
         if self.win_mgr.scale_pct != 100 or self.win_mgr.canvas_w != 1280 or self.win_mgr.canvas_h != 720:
@@ -155,14 +155,19 @@ class SceneHubApp:
                 self._launch_capture_wizard()
                 continue
 
-            # =================== 标准看板模式下的事件 (多键位全覆盖) ===================
-            # [↑] 上方向键: Windows waitKeyEx 2490368 / 65362 或 'w' / 小键盘 8
-            if raw_key in (2490368, 65362, ord('w'), ord('W'), ord('8')) or key in (ord('w'), ord('W')):
-                self.state.select_scene_by_offset(-1)
+            # [W] 管理当前 Workspace 标靶 ID 白名单 (tag_whitelist.yaml)
+            if key in (ord('w'), ord('W')):
+                self._handle_tag_whitelist()
+                continue
 
-            # [↓] 下方向键: Windows waitKeyEx 2621440 / 65364 或 's' / 小键盘 2
-            elif raw_key in (2621440, 65364, ord('s'), ord('S'), ord('2')) or key in (ord('s'), ord('S')):
-                self.state.select_scene_by_offset(1)
+            # =================== 标准看板模式下的事件 (多键位全覆盖) ===================
+            # [↑] 上方向键: Windows waitKeyEx 2490368 / 65362 或 小键盘 8
+            if raw_key in (2490368, 65362, ord('8')) or key in (ord('8'),):
+                self.state.select_workspace_by_offset(-1)
+
+            # [↓] 下方向键: Windows waitKeyEx 2621440 / 65364 或 小键盘 2
+            elif raw_key in (2621440, 65364, ord('2')) or key in (ord('2'),):
+                self.state.select_workspace_by_offset(1)
 
             # [←] 左方向键: Windows waitKeyEx 2424832 / 65361 或 'a' / 小键盘 4 / 'j'
             elif raw_key in (2424832, 65361, ord('a'), ord('A'), ord('4'), ord('j'), ord('J')) or key in (ord('a'), ord('A')):
@@ -184,43 +189,43 @@ class SceneHubApp:
             elif raw_key in (3014656, 65535, 127, 8) or key in (127, 8):
                 self.state.delete_selected_image()
 
-            # [R] 重命名当前场景显示名称 (支持中文)
+            # [R] 重命名当前 Workspace 显示名称 (支持中文)
             elif key in (ord('r'), ord('R')):
-                self._handle_rename_scene()
+                self._handle_rename_workspace()
 
-            # [N] 新建工况场景 (支持弹窗输入中文别名)
+            # [N] 新建 Workspace (支持弹窗输入中文别名)
             elif key in (ord('n'), ord('N')):
-                self._handle_create_scene()
+                self._handle_create_workspace()
 
             # [O] 或 [S] 启动离线 Studio 深度平差
             elif key in (ord('o'), ord('O'), ord('s'), ord('S')):
                 self._launch_offline_studio()
 
-            # [P] 生效为生产运行地图 (覆盖全局 config/tags_map.yaml)
+            # [P] 生效为生产运行基准 (原子覆盖生产基准)
             elif key in (ord('p'), ord('P')):
                 self._handle_publish_to_production()
 
-            # [K] 克隆场景副本
+            # [K] 克隆 Workspace 副本
             elif key in (ord('k'), ord('K')):
-                self._handle_clone_scene()
+                self._handle_clone_workspace()
 
-            # [V] 打开本地场景目录
+            # [V] 打开本地物理目录
             elif key in (ord('v'), ord('V')):
                 self._handle_open_directory()
 
-            # [X] 或 [Delete] 删除场景
+            # [X] 或 [Delete] 删除 Workspace
             elif raw_key in (ord('x'), ord('X'), 3014656):
-                self._handle_delete_scene()
+                self._handle_delete_workspace()
 
         # 退出清理
         cv2.destroyAllWindows()
 
     def _launch_capture_wizard(self):
         """启动多视角交互式采图向导 (tools/capture/capture_wizard.py)"""
-        sc = self.state.get_selected_scene()
+        ws = self.state.get_selected_workspace()
         cmd = [sys.executable, os.path.join(PROJECT_ROOT, "tools", "capture", "capture_wizard.py")]
-        if sc:
-            cmd.extend(["--workspace", sc.workspace_id])
+        if ws:
+            cmd.extend(["--workspace", ws.workspace_id])
         self._run_subtool(cmd, "多视角交互采图向导")
 
     def _on_mouse_event(self, event, x, y, flags, param):
@@ -248,25 +253,25 @@ class SceneHubApp:
             self.state.mouse_y = y
             return
 
-        # 1.1 鼠标右键点击卡片：弹出场景专属上下文菜单 (Context Menu)
+        # 1.1 鼠标右键点击卡片：弹出 Workspace 专属上下文菜单 (Context Menu)
         if event == cv2.EVENT_RBUTTONDOWN:
             if 10 <= x <= 330 and 90 <= y <= 480:
                 card_h = 70
                 gap = 8
                 idx_in_view = (y - 90) // (card_h + gap)
                 max_cards = 5
-                scroll_start = max(0, self.state.selected_scene_idx - max_cards + 1)
+                scroll_start = max(0, self.state.selected_workspace_idx - max_cards + 1)
                 target_idx = scroll_start + idx_in_view
-                if 0 <= target_idx < len(self.state.scenes):
+                if 0 <= target_idx < len(self.state.workspaces):
                     self.state.open_context_menu(x, y, target_idx)
                     return
             return
 
-        # 2. 普通滚轮极速翻页/切换场景 (未按 Ctrl 时)
+        # 2. 普通滚轮极速翻页/切换 Workspace (未按 Ctrl 时)
         if event == cv2.EVENT_MOUSEWHEEL:
             delta = -1 if flags > 0 else 1
             if x <= 340 and 80 <= y <= 480:
-                self.state.select_scene_by_offset(delta)
+                self.state.select_workspace_by_offset(delta)
             else:
                 self.state.select_image_by_offset(delta)
             return
@@ -275,7 +280,7 @@ class SceneHubApp:
         if event != cv2.EVENT_LBUTTONDOWN:
             return
 
-        # =================== 2.5 场景右键上下文菜单处于激活状态下的点击 ===================
+        # =================== 2.5 Workspace 右键上下文菜单处于激活状态下的点击 ===================
         if self.state.context_menu_open:
             menu_w = 216
             item_h = 32
@@ -300,13 +305,15 @@ class SceneHubApp:
                 if item_idx == 0:
                     self._handle_publish_to_production()
                 elif item_idx == 1:
-                    self._handle_rename_scene()
+                    self._handle_tag_whitelist()
                 elif item_idx == 2:
-                    self._handle_clone_scene()
+                    self._handle_rename_workspace()
                 elif item_idx == 3:
-                    self._handle_open_directory()
+                    self._handle_clone_workspace()
                 elif item_idx == 4:
-                    self._handle_delete_scene()
+                    self._handle_open_directory()
+                elif item_idx == 5:
+                    self._handle_delete_workspace()
                 return
 
             # 点击菜单外部任意区域：安全关闭菜单
@@ -346,38 +353,38 @@ class SceneHubApp:
             self._running = False
             return
 
-        # 5.1 点击左侧场景列表卡片 (x: 10~330, y: 90~560, 支持 6 张卡片)
+        # 5.1 点击左侧 Workspace 列表卡片 (x: 10~330, y: 90~560, 支持 6 张卡片)
         if 10 <= x <= 330 and 90 <= y <= 560:
             card_h = 70
             gap = 8
             idx_in_view = (y - 90) // (card_h + gap)
             max_cards = 6
-            scroll_start = max(0, self.state.selected_scene_idx - max_cards + 1)
+            scroll_start = max(0, self.state.selected_workspace_idx - max_cards + 1)
             target_idx = scroll_start + idx_in_view
-            if 0 <= target_idx < len(self.state.scenes):
-                target_sc = self.state.scenes[target_idx]
+            if 0 <= target_idx < len(self.state.workspaces):
+                target_ws = self.state.workspaces[target_idx]
                 card_cy = 90 + idx_in_view * (card_h + gap)
 
                 # 检查是否直接点击了右侧操作胶囊 (x: 226~326, y: card_cy + 18 ~ card_cy + 54)
                 if 226 <= x <= 326 and card_cy + 18 <= y <= card_cy + 54:
-                    self.state.selected_scene_idx = target_idx
-                    if not target_sc.is_published and target_sc.ba_solved:
+                    self.state.selected_workspace_idx = target_idx
+                    if not target_ws.is_published and target_ws.ba_solved:
                         self._handle_publish_to_production()
-                    elif target_sc.is_published:
+                    elif target_ws.is_published:
                         self.state.toggle_help_modal()
                     return
 
-                # 点击卡片其余区域：选中该场景并载入图像
-                self.state.selected_scene_idx = target_idx
-                self.state.load_current_scene_images()
+                # 点击卡片其余区域：选中该 Workspace 并载入图像
+                self.state.selected_workspace_idx = target_idx
+                self.state.load_current_workspace_images()
             return
 
-        # 5.2 点击左侧通用全局场景管理按钮 (y: 614~654)
-        # 按钮 1: 新建工况 [N] (x: 10~165, y: 614~654)
+        # 5.2 点击左侧通用全局 Workspace 管理按钮 (y: 614~654)
+        # 按钮 1: 新建 Workspace [N] (x: 10~165, y: 614~654)
         if 10 <= x <= 165 and 614 <= y <= 654:
-            self._handle_create_scene()
+            self._handle_create_workspace()
             return
-        # 按钮 2: 打开场景总库目录 [V] (x: 175~330, y: 614~654)
+        # 按钮 2: 打开 Workspace 物理总目录 [V] (x: 175~330, y: 614~654)
         if 175 <= x <= 330 and 614 <= y <= 654:
             self._handle_open_directory()
             return
@@ -458,42 +465,42 @@ class SceneHubApp:
 
     def _handle_publish_to_production(self):
         """生效为生产运行地图 (覆盖全局 config/tags_map.yaml)"""
-        sc = self.state.get_selected_scene()
-        if not sc:
-            self.state.set_toast("未选中任何场景，无法生效！")
+        ws = self.state.get_selected_workspace()
+        if not ws:
+            self.state.set_toast("未选中任何工位，无法生效！")
             return
 
-        ok, msg = self.scene_mgr.publish_to_production(sc.workspace_id)
-        self.state.refresh_scenes()
+        ok, msg = self.workspace_mgr.publish_to_production(ws.workspace_id)
+        self.state.refresh_workspaces()
         if ok:
-            toast = f"★ 生产生效成功！已将【{sc.name}】高精度地图覆盖发布至: config/tags_map.yaml"
+            toast = f"★ 生产生效成功！已将【{ws.name}】高精度地图覆盖发布至: config/tags_map.yaml"
             self.state.set_toast(toast)
         else:
             self.state.set_toast(f"生效失败: {msg}")
 
     def _handle_open_directory(self):
-        """在系统资源管理器中打开场景目录"""
-        sc = self.state.get_selected_scene()
-        if sc and os.path.exists(sc.workspace_dir):
+        """在系统资源管理器中打开工位目录"""
+        ws = self.state.get_selected_workspace()
+        if ws and os.path.exists(ws.workspace_dir):
             try:
                 if sys.platform == "win32":
-                    os.startfile(sc.workspace_dir)
+                    os.startfile(ws.workspace_dir)
                 elif sys.platform == "darwin":
-                    subprocess.run(["open", sc.workspace_dir])
+                    subprocess.run(["open", ws.workspace_dir])
                 else:
-                    subprocess.run(["xdg-open", sc.workspace_dir])
-                self.state.set_toast(f"已在资源管理器中打开: {sc.name}")
+                    subprocess.run(["xdg-open", ws.workspace_dir])
+                self.state.set_toast(f"已在资源管理器中打开: {ws.name}")
             except Exception as e:
                 self.state.set_toast(f"打开目录异常: {e}")
 
-    def _handle_delete_scene(self):
-        """删除当前场景"""
-        sc = self.state.get_selected_scene()
-        if not sc:
+    def _handle_delete_workspace(self):
+        """删除当前 Workspace"""
+        ws = self.state.get_selected_workspace()
+        if not ws:
             return
 
-        ok, msg = self.scene_mgr.delete_workspace(sc.workspace_id)
-        self.state.refresh_scenes()
+        ok, msg = self.workspace_mgr.delete_workspace(ws.workspace_id)
+        self.state.refresh_workspaces()
         self.state.set_toast(msg)
 
     def _run_subtool(self, cmd: list, desc: str):
@@ -511,23 +518,23 @@ class SceneHubApp:
         cv2.resizeWindow(self.window_name, 1280, 720)
         cv2.setMouseCallback(self.window_name, self._on_mouse_event)
 
-        sc = self.state.get_selected_scene()
-        if sc:
-            sc.refresh_stats()
-            sc.save_meta()
-        self.state.refresh_scenes()
-        self.state.load_current_scene_images()
-        self.state.set_toast(f"已完成 {desc} 并返回 Scene Hub，数据已同步！")
+        ws = self.state.get_selected_workspace()
+        if ws:
+            ws.refresh_stats()
+            ws.save_meta()
+        self.state.refresh_workspaces()
+        self.state.load_current_workspace_images()
+        self.state.set_toast(f"已完成 {desc} 并返回 Workspace 驾驶舱，数据已同步！")
 
     def _launch_offline_studio(self):
         """启动 AprilTag 离线 Studio 深度平差"""
-        sc = self.state.get_selected_scene()
-        if not sc:
+        ws = self.state.get_selected_workspace()
+        if not ws:
             return
         cmd = [sys.executable, "tools/studio/app.py",
-                "--workspace", sc.workspace_id,
-               "--images", sc.calib_raw_images_dir,
-               "--map", sc.map_path]
+               "--workspace", ws.workspace_id,
+               "--images", ws.calib_raw_images_dir,
+               "--map", ws.map_path]
         self._run_subtool(cmd, "Offline Studio 深度平差工作站")
 
     def _launch_image_diagnostics(self):
@@ -541,92 +548,121 @@ class SceneHubApp:
         self._run_subtool(cmd, "标靶高清生成与排版工具")
 
     def _handle_tag_whitelist(self):
-        """管理当前场景标靶 ID 白名单"""
-        sc = self.state.get_selected_scene()
-        sname = sc.name if sc else "默认场景"
-        self.state.set_toast(f"标靶白名单: 当前场景【{sname}】默认放行所有有效 16h5 标靶")
+        """管理/编辑当前 Workspace 的 AprilTag ID 白名单 (tag_whitelist.yaml)"""
+        ws = self.state.get_selected_workspace()
+        if not ws:
+            self.state.set_toast("未选择任何 Workspace")
+            return
 
-    def _handle_rename_scene(self):
-        """修改场景显示名称 (支持中文)"""
-        sc = self.state.get_selected_scene()
-        if not sc:
+        whitelist_path = self.workspace_mgr.get_tag_whitelist_path(ws.workspace_id)
+        if not os.path.exists(whitelist_path):
+            import yaml
+            default_config = {
+                "workspace_id": ws.workspace_id,
+                "workspace_name": ws.name,
+                "enabled": False,
+                "allowed_ids": ws.valid_tag_ids if ws.valid_tag_ids else [],
+                "description": f"Workspace {ws.name} 标靶白名单配置",
+                "notes": "enabled 为 true 时仅放行 allowed_ids 中的标靶；为 false 或为空时放行所有检测到的有效标靶",
+            }
+            try:
+                os.makedirs(os.path.dirname(whitelist_path), exist_ok=True)
+                with open(whitelist_path, "w", encoding="utf-8") as f:
+                    yaml.dump(default_config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            except Exception as e:
+                log.warning(f"创建默认 tag_whitelist.yaml 失败: {e}")
+
+        # 使用操作系统关联程序打开文件供现场编辑
+        try:
+            if sys.platform == "win32":
+                os.startfile(whitelist_path)
+            else:
+                subprocess.Popen(["xdg-open", whitelist_path])
+            self.state.set_toast(f"已打开白名单: tag_whitelist.yaml")
+        except Exception as e:
+            self.state.set_toast(f"打开白名单失败: {e}")
+
+    def _handle_rename_workspace(self):
+        """修改 Workspace 显示名称 (支持中文)"""
+        ws = self.state.get_selected_workspace()
+        if not ws:
             return
 
         new_name = prompt_input_text(
-            "修改场景名称",
-            f"请输入场景【{sc.name}】的新显示名称\n(支持中文、英文、数字，如: 1号机台主标定):",
-            initial=sc.name
+            "修改 Workspace 名称",
+            f"请输入 Workspace【{ws.name}】的新显示名称\n(支持中文、英文、数字，如: 1号机台主标定):",
+            initial=ws.name
         )
-        if new_name and new_name != sc.name:
-            self.state.rename_current_scene(new_name)
+        if new_name and new_name != ws.name:
+            self.state.rename_current_workspace(new_name)
 
-    def _handle_create_scene(self):
-        """新建工况场景 (支持中文名称弹窗)"""
-        idx = len(self.state.scenes) + 1
-        default_alias = f"标定工况_{idx}"
+    def _handle_create_workspace(self):
+        """新建 Workspace (支持中文名称弹窗)"""
+        idx = len(self.state.workspaces) + 1
+        default_alias = f"Workspace_{idx}"
 
         chosen_name = prompt_input_text(
-            "新建采样工况场景",
-            "请输入新场景名称/别名 (支持中文、英文、数字，如: 2号机架高位):",
+            "新建 Workspace",
+            "请输入新 Workspace 名称/别名 (支持中文、英文、数字，如: 2号机架高位):",
             initial=default_alias
         )
         if not chosen_name:
-            self.state.set_toast("已取消新建场景。")
+            self.state.set_toast("已取消新建 Workspace。")
             return
 
-        new_sc = self.scene_mgr.create_workspace(alias=chosen_name, description=f"工况工位 {chosen_name}")
-        self.state.refresh_scenes()
+        new_ws = self.workspace_mgr.create_workspace(alias=chosen_name, description=f"Workspace {chosen_name}")
+        self.state.refresh_workspaces()
         target_idx = 0
-        for i, s in enumerate(self.state.scenes):
-            if s.workspace_id == new_sc.workspace_id:
+        for i, s in enumerate(self.state.workspaces):
+            if s.workspace_id == new_ws.workspace_id:
                 target_idx = i
                 break
-        self.state.selected_scene_idx = target_idx
+        self.state.selected_workspace_idx = target_idx
         self.state.selected_image_idx = 0
         self.state.image_strip_offset = 0
-        self.state.load_current_scene_images()
-        self.state.set_toast(f"已成功新建工位: 【{new_sc.name}】({new_sc.workspace_id})，按 [C] 可立即开始采图！")
+        self.state.load_current_workspace_images()
+        self.state.set_toast(f"已成功新建 Workspace: 【{new_ws.name}】({new_ws.workspace_id})，按 [C] 开始采图！")
 
-    def _handle_clone_scene(self):
-        """克隆场景 (支持中文名称弹窗)"""
-        sc = self.state.get_selected_scene()
-        if not sc:
-            self.state.set_toast("未选中任何场景，无法克隆！")
+    def _handle_clone_workspace(self):
+        """克隆 Workspace (支持中文名称弹窗)"""
+        ws = self.state.get_selected_workspace()
+        if not ws:
+            self.state.set_toast("未选中任何 Workspace，无法克隆！")
             return
 
-        default_clone_name = f"{sc.name}_对照组"
+        default_clone_name = f"{ws.name}_对照组"
         chosen_name = prompt_input_text(
-            "克隆场景",
-            f"请输入克隆后的新场景名称 (基于原场景【{sc.name}】):",
+            "克隆 Workspace",
+            f"请输入克隆后的新 Workspace 名称 (基于原 Workspace【{ws.name}】):",
             initial=default_clone_name
         )
         if not chosen_name:
             return
 
-        cloned = self.scene_mgr.clone_workspace(sc.workspace_id, new_alias=chosen_name)
+        cloned = self.workspace_mgr.clone_workspace(ws.workspace_id, new_alias=chosen_name)
         if cloned:
-            # 立即刷新场景列表
-            self.state.refresh_scenes()
+            # 立即刷新 Workspace 列表
+            self.state.refresh_workspaces()
             target_idx = 0
-            for i, s in enumerate(self.state.scenes):
+            for i, s in enumerate(self.state.workspaces):
                 if s.workspace_id == cloned.workspace_id:
                     target_idx = i
                     break
-            self.state.selected_scene_idx = target_idx
+            self.state.selected_workspace_idx = target_idx
             self.state.selected_image_idx = 0
             self.state.image_strip_offset = 0
-            self.state.load_current_scene_images()
-            self.state.set_toast(f"已成功克隆场景: 【{cloned.name}】并定位至新场景！")
+            self.state.load_current_workspace_images()
+            self.state.set_toast(f"已成功克隆 Workspace: 【{cloned.name}】并定位至新 Workspace！")
         else:
-            self.state.set_toast("克隆场景失败，请检查源场景目录！")
+            self.state.set_toast("克隆 Workspace 失败，请检查源目录！")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="工况与场景综合管理中枢 (Scene Hub)")
+    parser = argparse.ArgumentParser(description="工作空间综合管理中枢 (Workspace Hub)")
     parser.add_argument("--mock", action="store_true", help="强制以模拟仿真相机模式运行")
     args = parser.parse_args()
 
-    app = SceneHubApp(force_mock=args.mock)
+    app = WorkspaceHubApp(force_mock=args.mock)
     app.run()
 
 

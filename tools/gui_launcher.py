@@ -112,53 +112,32 @@ def build_tools_catalog() -> List[ToolCardMeta]:
     COLOR_D = (90,  140, 195)  # D 生产调试  : 钢蓝 (Steel Blue)
 
     catalog = [
-        # ===== A — 工位工作空间 (Workspace) =====
+        # ===== A — Workspace =====
         ToolCardMeta(
-            key_id="scene_hub",
+            key_id="workspace_hub",
             shortcut="1",
-            title="工位",
-            subtitle="工作空间沙盒 / 标定与生产中枢",
-            category="A — 工位工作空间 (Workspace)",
+            title="Workspace",
+            subtitle="列表，白名单，评估",
+            category="A — Workspace",
             is_gui=True,
-            command=[sys.executable, "-m", "tools.scene_hub"],
+            command=[sys.executable, "-m", "tools.workspace_hub"],
             tag_color=COLOR_A,
-            summary="工业视觉工位 (Workspace) 统一数据中枢，支持多工位沙盒隔离、标定平差与生产一键发布。",
+            summary="工业视觉 Workspace 统一数据中枢，支持多工位沙盒隔离、Tag 白名单管理与精度体检评估。",
             details=[
-                "工位沙盒管理：多工作空间创建、重命名、克隆与物理存储隔离",
-                "业务双轨分流：标定工作流 (calibration/) 与生产工作流 (production/) 独立自包含",
-                "工位顶层基准：全局立体几何地图 (tags_map.yaml) 与 Tag 白名单统一管理",
-                "生产原子发布：标定解算图谱一键原子发布至生产运行基准 tags_map.yaml"
+                "列表管理：多 Workspace 沙盒创建、重命名、克隆与物理隔离",
+                "白名单管理：各 Workspace 独立维护 tag_whitelist.yaml 白名单配置与同步",
+                "精度与几何评估：全局立体地图 (tags_map.yaml) 与残差质量体检",
+                "生产原子发布：平差解算成果一键原子发布至生产运行基准"
             ],
             inputs=["data/workspaces/ 工位目录"],
-            outputs=["workspace_meta.yaml、工位顶层 tags_map.yaml"],
-            quick_tips="快捷键: [1] 启动 | 中枢内 [⏎] 激活 | [P] 发布生产 | [S] 进Studio",
+            outputs=["workspace_meta.yaml、tag_whitelist.yaml、工位顶层 tags_map.yaml"],
+            quick_tips="快捷键: [1] 启动 | 中枢内 [⏎] 激活 | [P] 发布生产 | [W] 编辑白名单 | [S] 进Studio",
         ),
 
         # ===== B — 标定建图与生产验证流水线 =====
         ToolCardMeta(
-            key_id="tag_manager",
-            shortcut="2",
-            title="AprilTag",
-            subtitle="图纸生成 + 白名单管理",
-            category="B — 标定建图与生产验证",
-            is_gui=True,
-            command=[sys.executable, "tools/calibration/tag_manager.py"],
-            tag_color=COLOR_B,
-            summary="AprilTag 16h5 标靶统一管理，支持标靶图纸生成与白名单配置。",
-            details=[
-                "图纸生成：一键生成 ID 0~29 标靶高清图与 A4 打印 PDF",
-                "白名单管理：30 个 Tag ID 启用/禁用与快速预设切换",
-                "配置同步：白名单直接写回 config.yaml valid_tag_ids",
-                "打印要求：按 100% 实际尺寸打印，请勿勾选适应页面"
-            ],
-            inputs=["reportlab 依赖库 (用于 PDF 排版导出)"],
-            outputs=["data/apriltags_16h5/ (PNG/PDF) | config.yaml 白名单"],
-            quick_tips="快捷键: [2] 启动 (控制台执行) | 运行后请按 100% 实际尺寸打印 PDF"
-        ),
-
-        ToolCardMeta(
             key_id="tag_wizard",
-            shortcut="3",
+            shortcut="2",
             title="采图向导",
             subtitle="双用途 (标定/生产) 快速采样",
             category="B — 标定建图与生产验证",
@@ -174,12 +153,12 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense 深度相机或 USB 摄像头"],
             outputs=["当前工位 raw_images/ 原始图集 (标定/生产隔离存储)"],
-            quick_tips="快捷键: [3] 启动 | 预览中 [空格] 拍摄保存 | [ESC]/[Q] 退出"
+            quick_tips="快捷键: [2] 启动 | 预览中 [空格] 拍摄保存 | [ESC]/[Q] 退出"
         ),
 
         ToolCardMeta(
             key_id="tag_studio",
-            shortcut="4",
+            shortcut="3",
             title="Offline Studio",
             subtitle="深度平差与质量体检工作站",
             category="B — 标定建图与生产验证",
@@ -195,12 +174,12 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["当前工位 calibration/raw_images/、相机内参文件"],
             outputs=["当前工位顶层 tags_map.yaml、质检评估报告"],
-            quick_tips="快捷键: [4] 启动 | 工作站内 [⏎] 求解 | [P] 剪枝 | [R] 导出报告"
+            quick_tips="快捷键: [3] 启动 | 工作站内 [⏎] 求解 | [P] 剪枝 | [R] 导出报告"
         ),
 
         ToolCardMeta(
             key_id="asparagus_offline",
-            shortcut="5",
+            shortcut="4",
             title="芦笋抓取位置",
             subtitle="生产样本与位姿离线解算",
             category="B — 标定建图与生产验证",
@@ -216,12 +195,12 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["工位生产照片目录 (production/raw_images/ 或 snapshots)"],
             outputs=["芦笋位姿检测结果、抓取 G-code 预览与批量报表"],
-            quick_tips="快捷键: [5] 启动 | [↑↓] 切换样本 | [B] 批量解算 | [ESC] 退出"
+            quick_tips="快捷键: [4] 启动 | [↑↓] 切换样本 | [B] 批量解算 | [ESC] 退出"
         ),
 
         ToolCardMeta(
             key_id="robot_online_tracker",
-            shortcut="6",
+            shortcut="5",
             title="Robot 在线跟踪",
             subtitle="实时解算世界坐标与机械臂联动",
             category="B — 标定建图与生产验证",
@@ -237,16 +216,16 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["RealSense 或 USB 相机、工位顶层 tags_map.yaml、机械臂串口"],
             outputs=["屏幕实时世界坐标显示、机械臂末端到位偏差统计"],
-            quick_tips="快捷键: [6] 启动 | [A] 标靶 | [L] 定原点 | [C] 连机械臂 | [T] 跟踪"
+            quick_tips="快捷键: [5] 启动 | [A] 标靶 | [L] 定原点 | [C] 连机械臂 | [T] 跟踪"
         ),
 
-        # ===== D — 生产调试 =====
+        # ===== D — 硬件调试与系统运维 =====
         ToolCardMeta(
             key_id="d435_live",
-            shortcut="7",
+            shortcut="6",
             title="RealSense 诊断",
             subtitle="硬件检测/深度探针/双流画面",
-            category="D — 生产调试",
+            category="D — 硬件调试与系统运维",
             is_gui=True,
             command=[sys.executable, "tools/d435_viewer.py"],
             tag_color=COLOR_D,
@@ -259,16 +238,16 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["Intel RealSense D435 深度相机 或 USB 摄像头"],
             outputs=["屏幕实时预览画面与深度探针读数 (不落盘)"],
-            quick_tips="快捷键: [7] 启动 | [Space] 暂停 | [V] 排列 | [S] 抓拍 | [Q] 退出"
+            quick_tips="快捷键: [6] 启动 | [Space] 暂停 | [V] 排列 | [S] 抓拍 | [Q] 退出"
         ),
 
-        # ===== D — 生产调试 (续，SCARA 机械臂调试) =====
+        # ===== D — 硬件调试与系统运维 (续，SCARA 机械臂调试) =====
         ToolCardMeta(
             key_id="scara_debug",
-            shortcut="8",
+            shortcut="7",
             title="SCARA 机械臂调试",
             subtitle="点动/回零/设零/舵机/G-code 透传",
-            category="D — 生产调试",
+            category="D — 硬件调试与系统运维",
             is_gui=True,
             command=[sys.executable, "tools/scara_debug/app.py"],
             tag_color=COLOR_D,
@@ -281,16 +260,39 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             ],
             inputs=["MKS Base V1.6 串口 (如 COM11)", "几何参数 loader_core/config.py"],
             outputs=["串口 G-code 指令下发、机械臂动作执行与通信日志"],
-            quick_tips="快捷键: [8] 启动 | 界面内 W/S/A/D 点动 | [G28] 回零 | [ESC] 退出"
+            quick_tips="快捷键: [7] 启动 | 界面内 W/S/A/D 点动 | [G28] 回零 | [ESC] 退出"
         ),
 
-        # ===== D — 生产调试 (续，系统诊断) =====
+        # ===== D — 硬件调试与系统运维 (续，AprilTag 图纸生成) =====
+        ToolCardMeta(
+            key_id="tag_paper_gen",
+            shortcut="8",
+            title="AprilTag 图纸生成",
+            subtitle="一键生成 ID 0~29 标靶与 A4 打印 PDF",
+            category="D — 硬件调试与系统运维",
+            is_gui=False,
+            command=[sys.executable, "tools/calibration/generate_apriltags.py"],
+            tag_color=COLOR_D,
+            summary="一键批量生成 AprilTag 16h5 标靶（ID 0~29）矢量高清图及标准 A4 排版打印 PDF。",
+            details=[
+                "图纸批量生成：一键生成 ID 0~29 标靶高清图像与矢量排版文件",
+                "标准 A4 布局：自动按工业规范以 50mm 物理尺寸排版于 A4 页面",
+                "矢量 PDF 导出：调用 ReportLab 高保真输出至 data/apriltags_16h5/",
+                "打印标准警示：按 100% 实际尺寸打印，禁止缩放或适应页面"
+            ],
+            inputs=["ReportLab 依赖库 (用于矢量 PDF 排版导出)"],
+            outputs=["data/apriltags_16h5/apriltags_16h5_A4_print.pdf"],
+            quick_tips="快捷键: [8] 启动 (控制台生成) | 自动生成图纸并写盘，请以 100% 比例打印",
+            mode="CMD"
+        ),
+
+        # ===== D — 硬件调试与系统运维 (续，系统诊断) =====
         ToolCardMeta(
             key_id="sys_diagnose_tests",
             shortcut="T",
             title="系统环境诊断与测试",
             subtitle="[T] 驱动与依赖诊断 / 自动化测试套件",
-            category="D — 生产调试",
+            category="D — 硬件调试与系统运维",
             is_gui=False,
             command=[sys.executable, "tools/diagnose_env.py"],
             tag_color=COLOR_D,
@@ -312,7 +314,7 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             shortcut="P",
             title="安装/更新项目依赖",
             subtitle="[P] pip install -r requirements.txt",
-            category="D — 生产调试",
+            category="D — 硬件调试与系统运维",
             is_gui=False,
             command=[sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
             tag_color=COLOR_D,
@@ -363,7 +365,7 @@ class GuiLauncherApp:
             app_id="gui_launcher", base_w=self._base_w, base_h=self._base_h,
             settings_file=self._settings_file)
 
-        self.scene_mgr = WorkspaceManager()
+        self.workspace_mgr = WorkspaceManager()
         self.tools = build_tools_catalog()
         self.selected_tool_idx = -1    # 初始无选中，键盘/点击才激活焦点
         self.hover_tool_idx = -1
@@ -436,7 +438,7 @@ class GuiLauncherApp:
     def refresh_system_status(self):
         """刷新底层系统与场景状态"""
         try:
-            self.scene_mgr.invalidate_cache()
+            self.workspace_mgr.invalidate_cache()
             self.system_status = check_env_status(force_refresh=True)
         except Exception:
             self.system_status = {}
@@ -577,27 +579,27 @@ class GuiLauncherApp:
             return
 
         # 方向键：将卡片索引映射到 (row, col) 坐标后导航
-        # row 0: idx 0 (A 工位管理中枢，全宽)
-        # rows 1-3: idx 1-5 (B 区 5张: 2+2+1)
-        # rows 4-5: idx 6-9 (D 区 4张: 2+2)
+        # row 0: idx 0 (A Workspace，全宽)
+        # rows 1-2: idx 1-4 (B 区 4张: 2+2)
+        # rows 3-5: idx 5-9 (D 区 5张: 2+2+1)
         def idx_to_rc(i: int) -> Tuple[int, int]:
             if i <= 0:
                 return (0, 0)
-            if 1 <= i <= 5:   # B 区
+            if 1 <= i <= 4:   # B 区 4张 (row1: idx 1, 2; row2: idx 3, 4)
                 b = i - 1
                 return (b // 2 + 1, b % 2)
-            d = i - 6         # D 区 (4张: 2+2)
-            return (d // 2 + 4, d % 2)
+            d = i - 5         # D 区 5张 (row3: idx 5, 6; row4: idx 7, 8; row5: idx 9)
+            return (d // 2 + 3, d % 2)
 
         def rc_to_idx(r: int, c: int) -> int:
             if r == 0:
                 return 0
-            if 1 <= r <= 3:   # B 区 (row3 仅左列 idx 5)
+            if 1 <= r <= 2:   # B 区 (row1: idx 1, 2; row2: idx 3, 4)
                 base_b = (r - 1) * 2
-                return min(1 + base_b + c, 5)
-            if 4 <= r <= 5:   # D 区 (row4: idx 6, 7; row5: idx 8, 9)
-                base_d = (r - 4) * 2
-                return min(6 + base_d + c, 9)
+                return min(1 + base_b + c, 4)
+            if 3 <= r <= 5:   # D 区 (row3: idx 5, 6; row4: idx 7, 8; row5: idx 9)
+                base_d = (r - 3) * 2
+                return min(5 + base_d + c, 9)
             return 9
 
         row, col = idx_to_rc(self.selected_tool_idx)
@@ -656,7 +658,7 @@ class GuiLauncherApp:
         key_char = chr(raw_key & 0xFF).lower() if (raw_key & 0xFF) < 128 else ""
 
         shortcut_map = {
-            '1': "scene_hub",             # A 工位工作空间中枢
+            '1': "workspace_hub",         # A 工位工作空间中枢
             '2': "tag_manager",           # B AprilTag 图纸与白名单
             '3': "tag_wizard",            # B 采图向导 (双用途)
             '4': "tag_studio",            # B Offline Studio 深度平差
@@ -681,9 +683,9 @@ class GuiLauncherApp:
         """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
         布局 (6行，3分组，共 10 张卡片):
-          row 0     A 工位工作空间 (1张全宽: idx 0)
-          rows 1-3  B 标定建图与生产验证流水线 (5张: 2+2+1, idx 1~5)
-          rows 4-5  D 硬件调试与系统运维 (4张: 2+2, idx 6~9)
+          row 0     A Workspace (1张全宽: idx 0)
+          rows 1-2  B 标定建图与生产验证流水线 (4张: 2+2, idx 1~4)
+          rows 3-5  D 硬件调试与系统运维 (5张: 2+2+1, idx 5~9)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
@@ -696,17 +698,17 @@ class GuiLauncherApp:
         Y0 = max(40, int(66 * s))
         FW = CW * 2 + SX
 
-        if idx == 0:          # A: 顶部全宽卡片 (工位工作空间总中枢)
+        if idx == 0:          # A: 顶部全宽卡片 (Workspace)
             return X0, Y0 + LH, FW, CH
 
-        if 1 <= idx <= 5:     # B: 5张 (2+2+1, 3行: idx 1~5)
+        if 1 <= idx <= 4:     # B: 4张 (2+2, 2行: idx 1~4)
             b = idx - 1
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        # D: 4张 (2+2, 2行: idx 6~9)
-        d = idx - 6
-        base_y = Y0 + LH + CH + GY + LH + 3 * (CH + SY) + GY + LH
+        # D: 5张 (2+2+1, 3行: idx 5~9)
+        d = idx - 5
+        base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
         return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
 
     def _hit_test_cards(self, x: int, y: int) -> int:
@@ -954,9 +956,9 @@ class GuiLauncherApp:
 
         HEADER_TEXT = (192, 206, 222)
         group_headers = [
-            (self._get_card_rect(0)[1] - LH,  FW, "A  工位工作空间 (Workspace)",                 (195, 155,  45)),
+            (self._get_card_rect(0)[1] - LH,  FW, "A  Workspace",                                 (195, 155,  45)),
             (self._get_card_rect(1)[1] - LH,  FW, "B  标定建图与生产验证 (Pipelines)",           ( 65, 175, 160)),
-            (self._get_card_rect(6)[1] - LH,  FW, "D  硬件调试与系统运维 (Hardware & System)",   ( 90, 140, 195)),
+            (self._get_card_rect(5)[1] - LH,  FW, "D  硬件调试与系统运维 (Hardware & System)",   ( 90, 140, 195)),
         ]
         for hy, hw, label, accent in group_headers:
             cv2.rectangle(canvas, (X0, hy), (X0 + hw, hy + LH - max(1, int(2 * s))), (18, 22, 30), -1)
@@ -1165,7 +1167,7 @@ class GuiLauncherApp:
         rs_ok = rs_tuple[2] if len(rs_tuple) > 2 else False
         rs_msg = rs_tuple[1] if len(rs_tuple) > 1 else str(rs_tuple)
         snaps_c = st.get("snapshot_count", 0)
-        act_sc = self.scene_mgr.get_current_workspace()
+        act_ws = self.workspace_mgr.get_current_workspace()
 
         # 正文排版
         curr_y = py + max(44, int(64 * s))
@@ -1216,35 +1218,35 @@ class GuiLauncherApp:
                                      font_size=max(9, int(12 * s)), color=(185, 200, 215), line_spacing=max(2, int(4 * s)))
         curr_y += max(12, int(16 * s))
 
-        # ── 模块 3：当前生产场景与三维标靶地图 ──────────────────────────────
-        draw_text(canvas, "【当前生产场景与标靶地图资产】", (px + max(8, int(16 * s)), curr_y),
+        # ── 模块 3：当前生产工位与三维标靶地图 ──────────────────────────────
+        draw_text(canvas, "【当前活动工位与标靶地图资产】", (px + max(8, int(16 * s)), curr_y),
                   font_size=max(10, int(13 * s)), color=self.COLOR_GOLD, bold=True)
         curr_y += max(16, int(24 * s))
 
-        if act_sc:
-            status_tag = "★ 生产环境 (已正式发布)" if act_sc.is_published else ("已求解全局平差 (BA Solved)" if act_sc.ba_solved else "沙盒草稿 (Sandbox)")
-            sc_color = self.COLOR_GOLD if act_sc.is_published else ((0, 210, 160) if act_sc.ba_solved else (160, 180, 200))
-            cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), sc_color, -1)
-            curr_y = draw_multiline_text(canvas, f"活动工况场景: 【{act_sc.name}】 ({status_tag})",
+        if act_ws:
+            status_tag = "★ 生产环境 (已正式发布)" if act_ws.is_published else ("已求解全局平差 (BA Solved)" if act_ws.ba_solved else "沙盒草稿 (Sandbox)")
+            ws_color = self.COLOR_GOLD if act_ws.is_published else ((0, 210, 160) if act_ws.ba_solved else (160, 180, 200))
+            cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), ws_color, -1)
+            curr_y = draw_multiline_text(canvas, f"当前活动工位: 【{act_ws.name}】 ({status_tag})",
                                          (bullet_text_x, curr_y), max_width=bullet_w,
-                                         font_size=max(9, int(12 * s)), color=sc_color, bold=True,
+                                         font_size=max(9, int(12 * s)), color=ws_color, bold=True,
                                          line_spacing=max(2, int(4 * s)))
             curr_y += max(3, int(5 * s))
 
             cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (180, 160, 100), -1)
-            curr_y = draw_multiline_text(canvas, f"场景标定样本: 已采集 {act_sc.image_count} 帧原始图集",
+            curr_y = draw_multiline_text(canvas, f"工位标定样本: 已采集 {act_ws.image_count} 帧原始图集",
                                          (bullet_text_x, curr_y), max_width=bullet_w,
                                          font_size=max(9, int(12 * s)), color=(190, 205, 220), line_spacing=max(2, int(4 * s)))
             curr_y += max(3, int(5 * s))
 
-            map_status = "已生成 tags_map.yaml (坐标系对齐已锁定)" if act_sc.ba_solved else "未求解 (需执行两阶段平差)"
+            map_status = "已生成 tags_map.yaml (坐标系对齐已锁定)" if act_ws.ba_solved else "未求解 (需执行两阶段平差)"
             cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (180, 160, 100), -1)
             curr_y = draw_multiline_text(canvas, f"标靶地图状态: {map_status}",
                                          (bullet_text_x, curr_y), max_width=bullet_w,
                                          font_size=max(9, int(12 * s)), color=(190, 205, 220), line_spacing=max(2, int(4 * s)))
         else:
             cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), (120, 130, 140), -1)
-            curr_y = draw_multiline_text(canvas, "活动工况场景: 未选定场景 (请点击 [1] 场景管理新建或切换)",
+            curr_y = draw_multiline_text(canvas, "活动工况工位: 未选定工位 (请点击 [1] Workspace 新建或切换)",
                                          (bullet_text_x, curr_y), max_width=bullet_w,
                                          font_size=max(9, int(12 * s)), color=(150, 160, 170), line_spacing=max(2, int(4 * s)))
         curr_y += max(12, int(16 * s))
