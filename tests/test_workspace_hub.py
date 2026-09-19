@@ -9,6 +9,7 @@ import sys
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 import numpy as np
 import cv2
 
@@ -29,11 +30,9 @@ class TestWorkspaceHub(unittest.TestCase):
         self.test_root = tempfile.mkdtemp(prefix="test_hub_")
         self.workspaces_dir = os.path.join(self.test_root, "workspaces")
         os.makedirs(self.workspaces_dir, exist_ok=True)
-        self.test_prod_map = os.path.join(self.test_root, "config", "tags_map.yaml")
         self.test_config_yaml = os.path.join(self.test_root, "config.yaml")
         self.workspace_mgr = WorkspaceManager(
             workspaces_dir=self.workspaces_dir,
-            prod_map_path=self.test_prod_map,
             config_path=self.test_config_yaml
         )
         # 创建两个测试工位
@@ -69,14 +68,15 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertEqual(state.selected_workspace_idx, 1)
         self.assertEqual(state.get_selected_workspace().workspace_id, self.ws1.workspace_id)
 
-        # 模拟选中工位具备平差结果并发布为生产运行
+        # 验证工位自身独立沙盒地图存储与状态感知
         cur_ws = state.get_selected_workspace()
         cur_ws.ba_solved = True
         cur_ws.save_meta()
         with open(cur_ws.map_path, "w", encoding="utf-8") as f:
             f.write("tags:\n  0:\n    id: 0\n    position: [0.0, 0.0, 0.0]\n    orientation: [0.0, 0.0, 0.0, 1.0]\n")
-        self.assertTrue(state.publish_selected_to_production())
-        self.assertEqual(state.prod_workspace_id, cur_ws.workspace_id)
+        cur_ws.refresh_stats()
+        self.assertTrue(os.path.exists(cur_ws.map_path))
+        self.assertTrue(cur_ws.ba_solved)
 
     def test_hub_state_in_place_capture(self):
         """测试 HubState 原地连拍保存与归档"""
@@ -218,8 +218,8 @@ class TestWorkspaceHub(unittest.TestCase):
         # 验证 Footer 渲染不报错
         renderer._render_footer(canvas, app.state)
 
-        # 验证工位生产运行地图状态
-        self.assertIsNotNone(app.state.prod_workspace_id)
+        # 验证当前选中的工位对象有效
+        self.assertIsNotNone(app.state.get_selected_workspace())
 
     def test_four_tabs_switch_and_rendering(self):
         """测试右侧动态区四页签切换与各页签画布渲染稳定性"""
@@ -299,8 +299,9 @@ class TestWorkspaceHub(unittest.TestCase):
         canvas = app.renderer.render(app.state)
         self.assertEqual(canvas.shape, (720, 1280, 3))
 
-        # 3. 点击菜单第一项 [设为活动沙盒] (x=120, y=120+34+16 = 170)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 120, 170, 0, None)
+        # 3. 点击菜单第一项 (x=120, y=120+34+16 = 170)
+        with patch('tools.workspace_hub.app.prompt_input_text', return_value="测试工位"):
+            app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 120, 170, 0, None)
         self.assertFalse(app.state.context_menu_open)
 
         # 4. 再次右键打开后点击外部区域，验证安全关闭

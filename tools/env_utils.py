@@ -85,7 +85,6 @@ def check_env_status(force_refresh: bool = False) -> dict:
         status['manifest_path'] = current_ws.calib_manifest_path
         status['image_dir'] = current_ws.calib_raw_images_dir
         status['map_path'] = current_ws.map_path
-        status['is_published'] = current_ws.is_published
     else:
         status['calib_image_count'] = 0
         status['has_tag_map'] = False
@@ -93,11 +92,6 @@ def check_env_status(force_refresh: bool = False) -> dict:
         status['manifest_path'] = ""
         status['image_dir'] = ""
         status['map_path'] = ""
-        status['is_published'] = False
-
-    # 生产环境全局地图状态
-    prod_map_path = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
-    status['prod_has_map'] = os.path.exists(prod_map_path)
 
     manifest_excluded = 0
     if status['has_manifest']:

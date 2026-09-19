@@ -274,23 +274,16 @@ class HubState:
         self.selected_image_idx = new_idx
         self._ensure_image_visible()
 
-    def get_production_workspace(self) -> Workspace | None:
-        """获取当前发布为生产运行的工位对象"""
-        for ws in self.workspaces:
-            if ws.is_published:
-                return ws
-        return None
-
     def load_prod_images(self):
-        """载入当前生产基准工位的采样相册 (生产相册页签数据源)"""
-        ws = self.get_production_workspace()
-        if not ws or not os.path.exists(ws.calib_raw_images_dir):
+        """载入当前选中工位的生产采图相册 (生产相册页签数据源)"""
+        ws = self.get_selected_workspace()
+        if not ws or not os.path.exists(ws.prod_raw_images_dir):
             self.prod_images = []
             self.selected_prod_image_idx = 0
             self.prod_grid_offset = 0
             return
 
-        self.prod_images = sorted(glob.glob(os.path.join(ws.calib_raw_images_dir, "*.png")))
+        self.prod_images = sorted(glob.glob(os.path.join(ws.prod_raw_images_dir, "*.png")))
         if self.prod_images:
             self.selected_prod_image_idx = max(0, min(self.selected_prod_image_idx, len(self.prod_images) - 1))
         else:
@@ -570,37 +563,10 @@ class HubState:
         self.context_menu_open = False
         self.context_menu_ws_idx = -1
 
-    @property
-    def prod_workspace_id(self) -> str:
-        """返回当前正式发布的生产运行工位 ID"""
-        for ws in self.workspaces:
-            if ws.is_published:
-                return ws.workspace_id
-        return ""
-
-    def publish_selected_to_production(self) -> bool:
-        """将当前选中的工位发布为全局生产运行地图"""
-        ws = self.get_selected_workspace()
-        if not ws:
-            self.set_toast("未选中有效工位")
-            return False
-        if not ws.ba_solved or not os.path.exists(ws.map_path):
-            self.set_toast("发布失败: 该工位尚未进行 BA 平差解算或地图文件缺失")
-            return False
-        res = self.workspace_mgr.publish_to_production(ws.workspace_id)
-        ok = res[0] if isinstance(res, (tuple, list)) else bool(res)
-        msg = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else ""
-        if ok:
-            self.refresh_workspaces()
-            self.set_toast(f"★ 工位【{ws.name}】已成功发布为全局生产运行地图！")
-        else:
-            self.set_toast(f"发布失败: {msg or '无法写入全局生产地图文件'}")
-        return ok
-
     def toggle_help_modal(self):
-        """打开或关闭生产系统发布机制说明弹窗 (按 H 键或点击对应入口切换)"""
+        """打开或关闭 Workspace 工位与生产体系说明弹窗 (按 H 键切换)"""
         self.is_help_modal_open = not self.is_help_modal_open
         if self.is_help_modal_open:
-            self.set_toast("已呼出【生效到生产系统】业务说明窗 (按 ESC/H 关闭)")
+            self.set_toast("已呼出【Workspace 工位与生产体系】业务说明窗 (按 ESC/H 关闭)")
         else:
             self.set_toast("已关闭说明窗。")

@@ -7,7 +7,7 @@
   - 全量超精重提取的异步调度与结果轮询 (start_async_super_extract_all / poll_super_extract_result)
   - 智能剪枝平差的启动 / 采纳 / 撤销 (start_auto_prune_ba / accept_prune_results / undo_prune_results)
   - 异步全局 BA 平差启动 (start_async_bundle_adjustment)
-  - 生产地图发布与全景质检报告导出 (publish_to_production / export_verification_report)
+  - 空间立体地图保存与全景质检报告导出 (save_current_workspace_map / export_verification_report)
 无 __init__、无新增实例属性，全部通过宿主 self 与主控制器协作。
 """
 
@@ -107,22 +107,16 @@ class MappingWorkflowMixin:
         """启动后台线程执行两阶段全局 BA 平差优化，前台持续平滑响应"""
         return self.ba_runner.start()
 
-    def publish_to_production(self):
-        """将当前工作站优化好的地图一键发布至全局生产环境 (config/tags_map.yaml)"""
+    def save_current_workspace_map(self):
+        """将当前优化好的高精度几何地图原子保存至当前工位沙盒 (tags_map.yaml)"""
         if not self.tags_map_data:
             self.set_toast("当前尚无有效地图，请先按 [B] 进行 BA 平差！")
             return
 
         ManifestRepository.save_map(self.tags_map_data, self.map_path)
-        target_ws = self.current_workspace
-        if self.workspace_mgr and target_ws:
-            ok, msg = self.workspace_mgr.publish_to_production(target_ws.workspace_id)
-            if ok:
-                self.set_toast(f"★ 成功将【{target_ws.name}】发布为生产全局地图！")
-            else:
-                self.set_toast(f"发布失败: {msg}")
-        else:
-            self.set_toast("未连接工位管理器，已保存至本工位地图")
+        ws_name = self.current_workspace.name if self.current_workspace else "当前工位"
+        self.set_toast(f"地图已成功保存至【{ws_name}】工位沙盒 (tags_map.yaml)！")
+        log.info(f"[SPATIAL_MAPPING] 地图已持久化至工位: {self.map_path}")
 
     def export_verification_report(self):
         """导出 Markdown 全景精度质检单"""

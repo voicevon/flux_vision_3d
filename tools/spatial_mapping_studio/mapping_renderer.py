@@ -51,7 +51,7 @@ HOVER_TOOLTIPS: Dict[str, List[str]] = {
         "【保存地图】",
         "",
         "将当前工作站 BA 全局平差后的 Tag 空间立体地图",
-        "写入 config/tags_map.yaml (覆盖保存)。",
+        "原子保存至当前工位沙盒 tags_map.yaml。",
         "",
         "地图内容包含:",
         "  • 每个 Tag 的世界坐标系位姿 (x, y, z, 四元数)",
@@ -59,7 +59,7 @@ HOVER_TOOLTIPS: Dict[str, List[str]] = {
         "  • 全局 RMSE / 物理偏差 / 迭代次数等元信息",
         "",
         "下游 (capture_wizard / spatial_mapping_studio / robot_tracker)",
-        "启动时会自动加载此文件作为已知空间基准。",
+        "在指定该工位时会自动加载该工位地图作为空间基准。",
         "",
         "快捷键: [M]  建议每次 BA 平差后立即保存",
     ],
@@ -87,7 +87,7 @@ HOVER_TOOLTIPS: Dict[str, List[str]] = {
         "将当前工作站的标定结果导出为 Markdown 报告:",
         "  • 收敛曲线 / 残差分布图 / 三维位姿",
         "  • 各项精度指标汇总",
-        "  • 质检结论 (是否可发布)",
+        "  • 质检结论 (是否达标)",
         "快捷键: [R]",
     ],
 }
@@ -253,7 +253,7 @@ class MappingRenderer(MappingFrameListMixin, MappingCenterViewMixin, MappingInsp
         app.gui_buttons.append(("RUN_AUTO_PRUNE_BA", (bx, btn_y_top, bx + prune_w, btn_y_bot), "RUN_AUTO_PRUNE_BA"))
         bx += prune_w + 5
 
-        # 4. [M] 保存/发布地图
+        # 4. [M] 保存工位地图
         s_w = 86
         draw_dashboard_button(canvas, (bx, btn_y_top, bx + s_w, btn_y_bot), "保存地图",
                               mouse_pos=(mx, my), accent=(0, 215, 90))

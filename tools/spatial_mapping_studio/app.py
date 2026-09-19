@@ -227,8 +227,7 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
             return []
         opts = []
         for s in self.workspace_mgr.list_workspaces():
-            tag = "★ " if s.is_published else ""
-            opts.append((s.workspace_id, f"{tag}{s.name} ({s.image_count}帧)"))
+            opts.append((s.workspace_id, f"{s.name} ({s.image_count}帧)"))
         return opts
 
     @property
@@ -267,8 +266,8 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
         self.ba_runner.map_path = self.map_path
         self.ba_runner.manifest_path = self.manifest_path
 
-        self.set_toast(f"已热重载切换至场景: 【{target_sc.name}】(共 {len(self.data_mgr.image_files)} 帧)")
-        log.info(f"[SPATIAL_MAPPING] 成功切换场景至: {target_sc.name} ({target_sc.workspace_id})")
+        self.set_toast(f"已热重载切换至场景: 【{target_ws.name}】(共 {len(self.data_mgr.image_files)} 帧)")
+        log.info(f"[SPATIAL_MAPPING] 成功切换场景至: {target_ws.name} ({target_ws.workspace_id})")
 
     def reset_viewport_zoom(self):
         """重置中间视口缩放与平移状态为适应屏幕 (1.0x)"""
@@ -797,14 +796,12 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
                     self.set_toast("已全量重算体检指标")
                 elif key in (ord('r'), ord('R')):      # R 键 -> 导出报告
                     self.export_verification_report()
-                elif key in (ord('m'), ord('M')):      # M 键 -> 保存地图
+                elif key in (ord('m'), ord('M'), ord('u'), ord('U')):  # M/U 键 -> 保存工位地图
                     ManifestRepository.save_map(self.tags_map_data, self.map_path)
                     if self.current_workspace:
                         self.current_workspace.refresh_stats()
                         self.current_workspace.save_meta()
-                    self.set_toast("空间立体地图已保存至当前工位！")
-                elif key in (ord('u'), ord('U')):      # U 键 -> 发布至生产全局地图
-                    self.publish_to_production()
+                    self.set_toast("空间立体地图已保存至当前工位沙盒 (tags_map.yaml)！")
                 elif key in (ord('y'), ord('Y')):      # Y 键 -> 开关 XY 平面网格
                     self.show_xy_plane_on = not self.show_xy_plane_on
                     self.set_toast(f"XY 平面网格{'已开启' if self.show_xy_plane_on else '已关闭'} ({self.get_current_plane_z_label()})")

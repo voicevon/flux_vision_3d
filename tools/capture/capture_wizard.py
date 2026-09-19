@@ -140,9 +140,8 @@ class CaptureWizard:
         self.workspaces = self.ws_mgr.list_workspaces()
         opts = []
         for w in self.workspaces:
-            tag = "★ " if w.is_published else ""
             cnt = w.image_count if self.purpose == "calibration" else w.prod_image_count
-            opts.append((w.workspace_id, f"{tag}{w.name} ({cnt}帧)"))
+            opts.append((w.workspace_id, f"{w.name} ({cnt}帧)"))
         return opts
 
     @property

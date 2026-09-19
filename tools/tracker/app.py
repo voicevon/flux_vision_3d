@@ -211,7 +211,7 @@ class RobotOnlineTracker:
                 self.workspace_id = ws_ids[0] if ws_ids else ""
 
     def _workspace_map_path(self) -> str:
-        """当前工位的地图路径: 选中工位优先 (无有效地图回退全局 config/tags_map.yaml)"""
+        """当前工位的地图路径"""
         if self.ws_manager is not None and self.workspace_id:
             ws = self.ws_manager.get_workspace_by_id(self.workspace_id)
             if ws and os.path.exists(ws.map_path) and os.path.getsize(ws.map_path) > 50:
@@ -220,15 +220,15 @@ class RobotOnlineTracker:
             from src.calibration.workspace_manager import WorkspaceManager
             return WorkspaceManager().get_current_workspace().map_path
         except Exception:
-            return os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
+            return ""
 
     @property
     def workspace_label(self) -> str:
-        """工具栏工作空间下拉的显示文本 (★=已发布为生产工位)"""
+        """工具栏工作空间下拉的显示文本"""
         if self.ws_manager is not None and self.workspace_id:
             ws = self.ws_manager.get_workspace_by_id(self.workspace_id)
             if ws:
-                return ("★" if ws.is_published else "") + ws.name
+                return ws.name
         return self.workspace_id or "工作空间"
 
     def refresh_workspace_options(self):
@@ -236,9 +236,9 @@ class RobotOnlineTracker:
         if self.ws_manager is None:
             self.workspace_options = []
             return
-        opts = [(ws.workspace_id, ("★" if ws.is_published else "") + ws.name)
+        opts = [(ws.workspace_id, ws.name)
                 for ws in self.ws_manager.list_workspaces()]
-        # 当前地图不在工位列表 (全局回退地图) 时追加占位项, 保证选中态可见
+        # 当前工位不在工位列表时追加占位项, 保证选中态可见
         if self.workspace_id and all(k != self.workspace_id for k, _ in opts):
             opts.insert(0, (self.workspace_id, self.workspace_id))
         self.workspace_options = opts

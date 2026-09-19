@@ -47,7 +47,6 @@ class Workspace:
     active_image_count: int = 0            # 标定有效帧数
     ba_solved: bool = False
     global_rmse_px: float = 0.0
-    is_published: bool = False             # 是否已发布为生产环境运行地图
 
     # ------------------------------ 顶层核心资产路径 ------------------------------
     @property
@@ -104,18 +103,8 @@ class Workspace:
 
     @property
     def prod_raw_images_dir(self) -> str:
-        """生产与模拟生产采样图像存储目录"""
+        """生产与现场采样图像存储目录"""
         return os.path.join(self.production_dir, "raw_images")
-
-    @property
-    def prod_reports_dir(self) -> str:
-        """生产评测报告与离线质检结果目录"""
-        return os.path.join(self.production_dir, "reports")
-
-    @property
-    def prod_results_dir(self) -> str:
-        """生产结果与产物导出目录"""
-        return os.path.join(self.production_dir, "results")
 
     # ------------------------------ 业务方法 ------------------------------
     def get_raw_images_dir(self, purpose: str = "calibration") -> str:
@@ -136,14 +125,12 @@ class Workspace:
         return count
 
     def ensure_directories(self):
-        """确保工位完整的顶层及双分支子目录就绪"""
+        """确保工位顶层及核心子目录就绪"""
         os.makedirs(self.workspace_dir, exist_ok=True)
         os.makedirs(self.calib_raw_images_dir, exist_ok=True)
         os.makedirs(self.calib_reports_dir, exist_ok=True)
         os.makedirs(self.calib_visualized_dir, exist_ok=True)
         os.makedirs(self.prod_raw_images_dir, exist_ok=True)
-        os.makedirs(self.prod_reports_dir, exist_ok=True)
-        os.makedirs(self.prod_results_dir, exist_ok=True)
 
     def refresh_stats(self):
         """快速刷新物理磁盘状态并持久化至元数据缓存"""
@@ -216,7 +203,6 @@ class Workspace:
                 "active_image_count": self.active_image_count,
                 "ba_solved": self.ba_solved,
                 "global_rmse_px": self.global_rmse_px,
-                "is_published": self.is_published,
             }
         }
         with open(self.meta_path, "w", encoding="utf-8") as f:
@@ -253,7 +239,6 @@ class Workspace:
         active_image_count = status.get("active_image_count", 0)
         ba_solved = status.get("ba_solved", False)
         global_rmse_px = status.get("global_rmse_px", 0.0)
-        is_published = bool(status.get("is_published", False))
 
         ws = cls(
             workspace_id=ws_id,
@@ -270,8 +255,7 @@ class Workspace:
             prod_image_count=prod_image_count,
             active_image_count=active_image_count,
             ba_solved=ba_solved,
-            global_rmse_px=global_rmse_px,
-            is_published=is_published
+            global_rmse_px=global_rmse_px
         )
         if force_refresh or not status:
             ws.refresh_stats()
@@ -289,23 +273,11 @@ class WorkspaceManager:
     ):
         self.workspaces_dir = os.path.abspath(workspaces_dir)
         self.config_path = os.path.abspath(config_path)
-        self.prod_map_path = os.path.abspath(prod_map_path) if prod_map_path else os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
         self.active_marker_file = os.path.join(self.workspaces_dir, ".active_workspace")
         self._cached_active_ws: Optional[Workspace] = None
         self._cached_workspaces: Dict[str, Workspace] = {}
 
         os.makedirs(self.workspaces_dir, exist_ok=True)
-
-    def get_prod_workspace_id(self) -> str:
-        """从 config.yaml 中获取当前正式发布运行的生产工位 ID"""
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
-                return str((cfg.get("calibration") or {}).get("prod_workspace_id") or "").strip()
-            except Exception:
-                pass
-        return ""
 
     def list_workspaces(self) -> List[Workspace]:
         """枚举所有有效工位，按创建时间降序"""
@@ -324,12 +296,6 @@ class WorkspaceManager:
                         workspaces.append(ws)
                 except Exception as e:
                     log.warning(f"[WARN] 加载工位异常 {item}: {e}")
-
-        # 如果全局配置存在正式发布的工位 ID，精准同步其 is_published 标记
-        prod_ws_id = self.get_prod_workspace_id()
-        if prod_ws_id:
-            for ws in workspaces:
-                ws.is_published = (ws.workspace_id == prod_ws_id)
 
         workspaces.sort(key=lambda s: (s.created_at, s.workspace_id), reverse=True)
         return workspaces
@@ -494,49 +460,6 @@ class WorkspaceManager:
         ws.save_meta()
         self._cached_workspaces[ws_id] = ws
         return True
-
-    def publish_to_production(self, ws_id: Optional[str] = None) -> Tuple[bool, str]:
-        """将指定工位的 tags_map.yaml 安全原子发布覆盖至 config/tags_map.yaml 并记录至 config.yaml"""
-        target_id = ws_id or self.get_current_workspace_id()
-        if not target_id:
-            return False, "无可发布的工位"
-
-        ws_dir = os.path.join(self.workspaces_dir, target_id)
-        ws = Workspace.load(ws_dir)
-        if not ws:
-            return False, f"工位不存在: {target_id}"
-
-        if not os.path.exists(ws.map_path) or os.path.getsize(ws.map_path) < 50:
-            return False, "该工位尚未平差生成有效地图 (tags_map.yaml 缺失或为空)"
-
-        try:
-            os.makedirs(os.path.dirname(self.prod_map_path), exist_ok=True)
-            if os.path.exists(self.prod_map_path):
-                shutil.copy2(self.prod_map_path, f"{self.prod_map_path}.bak")
-
-            shutil.copy2(ws.map_path, self.prod_map_path)
-
-            if os.path.exists(self.config_path):
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
-                if "calibration" not in cfg:
-                    cfg["calibration"] = {}
-                cfg["calibration"]["prod_workspace_id"] = target_id
-                with open(self.config_path, "w", encoding="utf-8") as f:
-                    yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-            for other_ws in self.list_workspaces():
-                if other_ws.workspace_id == target_id:
-                    other_ws.is_published = True
-                    other_ws.save_meta()
-                elif other_ws.is_published:
-                    other_ws.is_published = False
-                    other_ws.save_meta()
-
-            self.invalidate_cache()
-            return True, f"成功将工位 [{target_id}] 发布为全局生产运行地图 (RMSE: {ws.global_rmse_px:.3f}px)"
-        except Exception as e:
-            return False, f"发布至生产环境发生异常: {e}"
 
     def delete_workspace(self, ws_id: str) -> Tuple[bool, str]:
         """物理删除指定工位"""

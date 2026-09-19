@@ -128,13 +128,13 @@ class AsparagusOfflineApp:
         # 工位管理器感知
         from src.calibration.workspace_manager import WorkspaceManager
         self.workspace_mgr = WorkspaceManager()
-        self.current_workspace_id = "__prod__"  # 默认使用全局生产地图
+        cur_ws = self.workspace_mgr.get_current_workspace()
+        self.current_workspace_id = cur_ws.workspace_id if cur_ws else ""
 
         # 默认样本目录: 优先当前工位 production 采图，回退 snapshots
         if sample_dir:
             self.sample_dir = sample_dir
         else:
-            cur_ws = self.workspace_mgr.get_current_workspace()
             if cur_ws and os.path.exists(cur_ws.prod_raw_images_dir) and glob.glob(os.path.join(cur_ws.prod_raw_images_dir, "*.png")):
                 self.sample_dir = cur_ws.prod_raw_images_dir
             else:
@@ -176,13 +176,8 @@ class AsparagusOfflineApp:
     # ------------------------------ 数据流程 ------------------------------
     def _init_localizer(self):
         """装载标靶立体地图"""
-        if self.current_workspace_id == "__prod__":
-            tags_path = self.sys_cfg.get("tags_map_path", "")
-            if tags_path and not os.path.isabs(tags_path):
-                tags_path = os.path.join(PROJECT_ROOT, tags_path)
-        else:
-            ws = self.workspace_mgr.get_workspace_by_id(self.current_workspace_id)
-            tags_path = ws.map_path if ws else ""
+        ws = self.workspace_mgr.get_workspace_by_id(self.current_workspace_id)
+        tags_path = ws.map_path if ws else ""
 
         if tags_path and os.path.exists(tags_path) and os.path.getsize(tags_path) > 50:
             try:
@@ -196,20 +191,17 @@ class AsparagusOfflineApp:
 
     @property
     def workspace_options(self):
-        """动态列出可选地图：首项为生产全局地图，后续为各工位地图"""
-        opts = [("__prod__", "★ 当前生产地图 (config/tags_map.yaml)")]
+        """动态列出各工位专属地图选项"""
+        opts = []
         for s in self.workspace_mgr.list_workspaces():
-            tag = "★ " if s.is_published else ""
-            status = f"{s.global_rmse_px:.2f}px" if s.ba_solved else "未平差"
-            opts.append((s.workspace_id, f"{tag}{s.name} ({s.image_count}帧, {status})"))
+            status = f"RMSE: {s.global_rmse_px:.2f}px" if s.ba_solved else "未平差"
+            opts.append((s.workspace_id, f"{s.name} ({s.image_count}帧, {status})"))
         return opts
 
     @property
     def current_workspace_name(self):
-        if self.current_workspace_id == "__prod__":
-            return "生产地图"
         ws = self.workspace_mgr.get_workspace_by_id(self.current_workspace_id)
-        return ws.name if ws else "默认"
+        return ws.name if ws else "默认工位"
 
     def switch_workspace(self, workspace_key: str):
         """动态切换标靶立体地图并重新解算当前样本"""

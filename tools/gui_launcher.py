@@ -1223,10 +1223,10 @@ class GuiLauncherApp:
         curr_y += max(16, int(24 * s))
 
         if act_ws:
-            status_tag = "★ 生产环境 (已正式发布)" if act_ws.is_published else ("已求解全局平差 (BA Solved)" if act_ws.ba_solved else "沙盒草稿 (Sandbox)")
-            ws_color = self.COLOR_GOLD if act_ws.is_published else ((0, 210, 160) if act_ws.ba_solved else (160, 180, 200))
+            status_tag = f"已求解平差 (RMSE: {act_ws.global_rmse_px:.2f}px)" if act_ws.ba_solved else "未平差 (草稿)"
+            ws_color = (0, 210, 160) if act_ws.ba_solved else (160, 180, 200)
             cv2.circle(canvas, (bullet_icon_x, curr_y + max(5, int(7 * s))), max(2, int(3 * s)), ws_color, -1)
-            curr_y = draw_multiline_text(canvas, f"当前活动工位: 【{act_ws.name}】 ({status_tag})",
+            curr_y = draw_multiline_text(canvas, f"当前工位: 【{act_ws.name}】 ({status_tag})",
                                          (bullet_text_x, curr_y), max_width=bullet_w,
                                          font_size=max(9, int(12 * s)), color=ws_color, bold=True,
                                          line_spacing=max(2, int(4 * s)))

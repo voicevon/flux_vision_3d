@@ -826,31 +826,31 @@ class HubRenderer:
         cv2.line(canvas, (mx, my + 54), (mx + modal_w, my + 54), self.COLOR_BORDER, 1)
 
         cv2.circle(canvas, (mx + 24, my + 27), 6, self.COLOR_GOLD, -1)
-        draw_text(canvas, "★ 业务架构解析: 为什么需要【生效到生产系统】？", (mx + 38, my + 15),
+        draw_text(canvas, "★ 业务架构解析: Workspace 工位沙盒与生产体系", (mx + 38, my + 15),
                   font_size=17, color=self.COLOR_WHITE, bold=True)
 
         # 右上角 [X] 关闭按钮
         self._draw_button(canvas, (mx + modal_w - 116, my + 11, 100, 32), "[X] 关闭 [H]", mpos)
 
         # 4 条架构阐释卡片
-        intro_text = "在工业机器视觉与机械臂抓取工程中，标定研发与现场生产实行严格的【沙盒隔离】机制："
+        intro_text = "在工业机器视觉与机械臂抓取工程中，各工位实行完全自包含的【物理沙盒】机制："
         draw_text(canvas, intro_text, (mx + 30, my + 68), font_size=14, color=(0, 240, 220))
 
         sections = [
-            ("1. 研发沙盒安全隔离 (Sandbox Isolation)",
-             "每个工况场景（如“1号机台主标定”、“光照对照组”）都是独立沙盒，拥有专属照片集与平差结果。现场实验或测试标定时，绝对不会影响正在作业的机械臂。",
+            ("1. 独立工位安全沙盒 (Sandbox Isolation)",
+             "每个工位（如“1号机台”、“现场工位A”）均为独立物理沙盒，拥有专属标定照片集、生产照片集与平差结果，互不干扰。",
              (0, 255, 180)),
 
-            ("2. 全局唯一生产地图 (Global Production Map)",
-             "流水线所有空间定位与手眼协同节点，均默认读取项目根目录的【config/tags_map.yaml】。该文件是全系统运行时的唯一真实几何基准。",
+            ("2. 工位专属生产地图 (Per-Workspace Production Map)",
+             "系统无全局唯一地图。每个工位均自包含经过严格平差的高精度几何地图 (tags_map.yaml)，作为该工位专属的空间几何基准。",
              (0, 220, 255)),
 
-            ("3. 一键安全原子覆盖与自动备份 (Safe Atomic Publish)",
-             "当操作员选中满意场景并按【[P] 生效到生产系统】时，系统自动生成带时间戳的 .bak 历史备份，随后将平差坐标原子写入 config/tags_map.yaml 并记录至 config.yaml。",
+            ("3. 地图原子持久化与安全备份 (Safe Atomic Persistence)",
+             "平差优化完成后，直接原子持久化写入当前工位沙盒内，并自动保留带时间戳的 .bak 历史备份，杜绝跨工位数据污染与误操作。",
              self.COLOR_GOLD),
 
-            ("4. 实时生效与生产闭环 (Seamless Hot-Reload)",
-             "生效发布后，无需重启生产服务即可读取最新厘米/亚毫米级标定矩阵，实现从“采图 -> 平差 -> 质检 -> 生产发布”的完整闭环，确保流水线作业极致精准！",
+            ("4. 生产作业按需指定工位 (Production Anchored to Workspace)",
+             "实际流水线作业时，生产服务直接对接目标工位，读取本工位专属的几何标定矩阵与白名单，实现按工位精准受控作业！",
              (160, 255, 120))
         ]
 

@@ -31,7 +31,6 @@ class TestWorkspaceManager(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.workspaces_dir = os.path.join(self.temp_dir, "workspaces")
         self.config_path = os.path.join(self.temp_dir, "config.yaml")
-        self.prod_map_path = os.path.join(self.temp_dir, "tags_map.yaml")
 
         # 写入初始空 config.yaml
         with open(self.config_path, "w", encoding="utf-8") as f:
@@ -39,8 +38,7 @@ class TestWorkspaceManager(unittest.TestCase):
 
         self.mgr = WorkspaceManager(
             workspaces_dir=self.workspaces_dir,
-            config_path=self.config_path,
-            prod_map_path=self.prod_map_path
+            config_path=self.config_path
         )
 
     def tearDown(self):
@@ -105,15 +103,11 @@ class TestWorkspaceManager(unittest.TestCase):
         self.assertFalse(os.path.exists(calib_img))
         self.assertTrue(os.path.exists(os.path.join(cloned.calib_raw_images_dir, "view_0001.png")))
 
-    def test_publish_to_production(self):
-        """测试将工位顶层地图发布为全局生产运行地图"""
-        ws = self.mgr.create_workspace(alias="prod_candidate")
+    def test_workspace_map_sandbox(self):
+        """测试工位沙盒地图自包含存储与独立性 (无全局发布)"""
+        ws = self.mgr.create_workspace(alias="sandbox_test")
 
-        # 尚未生成地图时发布应失败
-        ok, msg = self.mgr.publish_to_production(ws.workspace_id)
-        self.assertFalse(ok)
-
-        # 写入顶层有效地图 (tags_map.yaml)
+        # 写入工位自身顶层地图 (tags_map.yaml)
         map_content = {
             "marker_size_mm": 50.0,
             "rmse_reprojection_px": 0.158,
@@ -122,20 +116,15 @@ class TestWorkspaceManager(unittest.TestCase):
         with open(ws.map_path, "w", encoding="utf-8") as f:
             yaml.dump(map_content, f)
 
-        # 执行发布
-        ok, msg = self.mgr.publish_to_production(ws.workspace_id)
-        self.assertTrue(ok, msg)
-        self.assertTrue(os.path.exists(self.prod_map_path))
+        # 验证工位自身地图存在并可读取
+        self.assertTrue(os.path.exists(ws.map_path))
+        with open(ws.map_path, "r", encoding="utf-8") as f:
+            loaded_m = yaml.safe_load(f)
+        self.assertEqual(loaded_m["rmse_reprojection_px"], 0.158)
 
-        # 验证生产地图内容
-        with open(self.prod_map_path, "r", encoding="utf-8") as f:
-            prod_m = yaml.safe_load(f)
-        self.assertEqual(prod_m["rmse_reprojection_px"], 0.158)
-
-        # 验证 config.yaml 同步记录
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
-        self.assertEqual(cfg["calibration"]["prod_workspace_id"], ws.workspace_id)
+        # 验证刷新状态后工位自感知 ba_solved
+        ws.refresh_stats()
+        self.assertTrue(ws.ba_solved)
 
     def test_delete_workspace(self):
         """测试工位自由物理删除"""

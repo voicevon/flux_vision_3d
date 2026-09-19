@@ -262,19 +262,6 @@ class WorkspaceHubApp:
             scroll_start = max(0, self.state.selected_workspace_idx - max_cards + 1)
             target_idx = scroll_start + idx_in_view
             if 0 <= target_idx < len(self.state.workspaces):
-                target_ws = self.state.workspaces[target_idx]
-                card_cy = 58 + idx_in_view * (card_h + gap)
-
-                # 检查是否直接点击了右侧操作胶囊 (x: 226~326, y: card_cy + 18 ~ card_cy + 54)
-                if 226 <= x <= 326 and card_cy + 18 <= y <= card_cy + 54:
-                    self.state.select_workspace_at_index(target_idx)
-                    if not target_ws.is_published and target_ws.ba_solved:
-                        self._handle_publish_to_production()
-                    elif target_ws.is_published:
-                        self.state.toggle_help_modal()
-                    return
-
-                # 点击卡片其余区域：选中该 Workspace 并载入图像
                 self.state.select_workspace_at_index(target_idx)
             return
 
@@ -353,21 +340,6 @@ class WorkspaceHubApp:
             self.state.scroll_prod_grid(delta_rows)
         else:
             self.state.scroll_image_grid(delta_rows)
-
-    def _handle_publish_to_production(self):
-        """生效为生产运行地图 (覆盖全局 config/tags_map.yaml)"""
-        ws = self.state.get_selected_workspace()
-        if not ws:
-            self.state.set_toast("未选中任何工位，无法生效！")
-            return
-
-        ok, msg = self.workspace_mgr.publish_to_production(ws.workspace_id)
-        self.state.refresh_workspaces()
-        if ok:
-            toast = f"★ 生产生效成功！已将【{ws.name}】高精度地图覆盖发布至: config/tags_map.yaml"
-            self.state.set_toast(toast)
-        else:
-            self.state.set_toast(f"生效失败: {msg}")
 
     def _handle_open_directory(self):
         """在系统资源管理器中打开工位目录"""
