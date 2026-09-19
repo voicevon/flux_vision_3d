@@ -77,11 +77,11 @@ except ImportError:
 log = get_logger(__name__)
 
 try:
-    from src.calibration.scene_manager import CalibrationSceneManager
-    _cur_sc = CalibrationSceneManager().get_current_scene()
-    CALIB_IMAGES_DIR = _cur_sc.raw_images_dir
-    DEFAULT_MAP_PATH = _cur_sc.map_path
-    MANIFEST_PATH = _cur_sc.manifest_path
+    from src.calibration.workspace_manager import WorkspaceManager
+    _cur_ws = WorkspaceManager().get_current_workspace()
+    CALIB_IMAGES_DIR = _cur_ws.calib_raw_images_dir
+    DEFAULT_MAP_PATH = _cur_ws.map_path
+    MANIFEST_PATH = _cur_ws.calib_manifest_path
 except Exception:
     CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
     DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
@@ -109,31 +109,31 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         self.win_w = win_w
         self.win_h = win_h
 
-        # 场景管理器感知与初始目标场景装配
+        # 工位管理器感知与初始目标工位装配
         try:
-            from src.calibration.scene_manager import CalibrationSceneManager
-            self.scene_mgr = CalibrationSceneManager()
+            from src.calibration.workspace_manager import WorkspaceManager
+            self.scene_mgr = WorkspaceManager()
             if scene_id:
-                sc = self.scene_mgr.get_scene_by_id(scene_id)
+                sc = self.scene_mgr.get_workspace_by_id(scene_id)
             elif image_dir and image_dir != CALIB_IMAGES_DIR:
                 norm_target = os.path.normpath(image_dir)
-                sc = next((s for s in self.scene_mgr.list_scenes()
-                           if os.path.normpath(s.raw_images_dir) == norm_target or os.path.normpath(s.scene_dir) == norm_target), None)
+                sc = next((s for s in self.scene_mgr.list_workspaces()
+                           if os.path.normpath(s.calib_raw_images_dir) == norm_target or os.path.normpath(s.workspace_dir) == norm_target), None)
             else:
-                sc = self.scene_mgr.get_current_scene()
+                sc = self.scene_mgr.get_current_workspace()
 
             if not sc:
-                sc = self.scene_mgr.get_current_scene()
+                sc = self.scene_mgr.get_current_workspace()
             self.current_scene = sc
-            self.current_scene_id = sc.scene_id if sc else ""
+            self.current_scene_id = sc.workspace_id if sc else ""
         except Exception:
             self.scene_mgr = None
             self.current_scene = None
             self.current_scene_id = ""
 
         self.map_path = map_path or (self.current_scene.map_path if self.current_scene else DEFAULT_MAP_PATH)
-        self.image_dir = image_dir or (self.current_scene.raw_images_dir if self.current_scene else CALIB_IMAGES_DIR)
-        self.manifest_path = manifest_path or (self.current_scene.manifest_path if self.current_scene else os.path.join(self.image_dir, "tag_observations.yaml"))
+        self.image_dir = image_dir or (self.current_scene.calib_raw_images_dir if self.current_scene else CALIB_IMAGES_DIR)
+        self.manifest_path = manifest_path or (self.current_scene.calib_manifest_path if self.current_scene else os.path.join(self.image_dir, "tag_observations.yaml"))
         self.manifest_repo = ManifestRepository()
 
         # 1. 初始化视口管理器与物理布局尺寸
@@ -223,13 +223,13 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
 
     @property
     def scene_options(self):
-        """动态读取所有可用场景供顶栏下拉菜单展示"""
+        """动态读取所有可用工位供顶栏下拉菜单展示"""
         if not self.scene_mgr:
             return []
         opts = []
-        for s in self.scene_mgr.list_scenes():
+        for s in self.scene_mgr.list_workspaces():
             tag = "★ " if s.is_published else ""
-            opts.append((s.scene_id, f"{tag}{s.name} ({s.image_count}帧)"))
+            opts.append((s.workspace_id, f"{tag}{s.name} ({s.image_count}帧)"))
         return opts
 
     @property
@@ -237,24 +237,24 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         return self.current_scene.name if self.current_scene else "默认工位"
 
     def switch_scene(self, scene_id: str):
-        """实时热切换工作场景：重新装载图像、清单与地图并复位视口与平差引擎"""
+        """实时热切换工位：重新装载图像、清单与地图并复位视口与平差引擎"""
         if not self.scene_mgr:
             return
-        target_sc = self.scene_mgr.get_scene_by_id(scene_id)
+        target_sc = self.scene_mgr.get_workspace_by_id(scene_id)
         if not target_sc:
             return
 
-        # 1. 自动持久化当前场景已修改数据
+        # 1. 自动持久化当前工位已修改数据
         try:
             self.data_mgr.save_manifest()
         except Exception:
             pass
 
-        # 2. 重新指向新场景
+        # 2. 重新指向新工位
         self.current_scene = target_sc
-        self.current_scene_id = target_sc.scene_id
-        self.image_dir = target_sc.raw_images_dir
-        self.manifest_path = target_sc.manifest_path
+        self.current_scene_id = target_sc.workspace_id
+        self.image_dir = target_sc.calib_raw_images_dir
+        self.manifest_path = target_sc.calib_manifest_path
         self.map_path = target_sc.map_path
 
         # 3. 驱动 data_mgr 重载
@@ -269,7 +269,7 @@ class TagOfflineStudio(StudioEventMixin, StudioWorkflowMixin):
         self.ba_runner.manifest_path = self.manifest_path
 
         self.set_toast(f"已热重载切换至场景: 【{target_sc.name}】(共 {len(self.data_mgr.image_files)} 帧)")
-        log.info(f"[STUDIO] 成功切换场景至: {target_sc.name} ({target_sc.scene_id})")
+        log.info(f"[STUDIO] 成功切换场景至: {target_sc.name} ({target_sc.workspace_id})")
 
     def reset_viewport_zoom(self):
         """重置中间视口缩放与平移状态为适应屏幕 (1.0x)"""

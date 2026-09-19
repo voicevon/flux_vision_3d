@@ -38,21 +38,36 @@ class TestCaptureWizard(unittest.TestCase):
         wiz.renderer.draw_toolbar(canvas)
 
         ids = [btn_id for btn_id, _, _ in wiz.renderer.buttons]
-        for expected in ("TOGGLE_SCENE_DD", "TOGGLE_CAM_DD", "TOGGLE_RES_DD", "TOGGLE_CAMERA", "QUIT"):
+        for expected in ("TOGGLE_WS_DD", "TOGGLE_PURPOSE_DD", "TOGGLE_CAM_DD", "TOGGLE_RES_DD", "TOGGLE_CAMERA", "QUIT"):
             self.assertIn(expected, ids)
 
-        # 命中检测: 场景下拉 (x=8 起)、相机类型下拉按钮 与退出按钮 (最右 90px) 均可命中
-        hit_scene = wiz.renderer.hit_test(20, TOOLBAR_H // 2)
-        self.assertIsNotNone(hit_scene)
-        self.assertEqual(hit_scene[0], "TOGGLE_SCENE_DD")
+        # 命中检测: 工位下拉 (x=8 起)、用途下拉、相机类型下拉按钮 与退出按钮
+        hit_ws = wiz.renderer.hit_test(20, TOOLBAR_H // 2)
+        self.assertIsNotNone(hit_ws)
+        self.assertEqual(hit_ws[0], "TOGGLE_WS_DD")
 
-        hit_cam = wiz.renderer.hit_test(220, TOOLBAR_H // 2)
+        hit_purpose = wiz.renderer.hit_test(200, TOOLBAR_H // 2)
+        self.assertIsNotNone(hit_purpose)
+        self.assertEqual(hit_purpose[0], "TOGGLE_PURPOSE_DD")
+
+        hit_cam = wiz.renderer.hit_test(330, TOOLBAR_H // 2)
         self.assertIsNotNone(hit_cam)
         self.assertEqual(hit_cam[0], "TOGGLE_CAM_DD")
         tw = canvas.shape[1]
         hit_quit = wiz.renderer.hit_test(tw - 40, TOOLBAR_H // 2)
         self.assertIsNotNone(hit_quit)
         self.assertEqual(hit_quit[0], "QUIT")
+
+        # 展开用途下拉后: 出现 DD_PURPOSE_ 选项按钮, 点击动作可分发
+        wiz.active_dropdown = "PURPOSE_DROPDOWN"
+        wiz.renderer.draw_toolbar(canvas)
+        pur_ids = [btn_id for btn_id, _, _ in wiz.renderer.buttons if btn_id.startswith("DD_PURPOSE_")]
+        self.assertEqual(len(pur_ids), len(wiz.purpose_options))
+
+        # 点击用途选项 -> 切换用途为 production
+        wiz._handle_action(pur_ids[1], "production")
+        self.assertEqual(wiz.purpose, "production")
+        self.assertIsNone(wiz.active_dropdown)
 
         # 展开相机类型下拉后: 出现 DD_CAM_ 选项按钮, 点击动作可分发
         wiz.active_dropdown = "CAMERA_TYPE_DROPDOWN"

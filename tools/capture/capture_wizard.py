@@ -4,13 +4,17 @@
 多视角采图向导 (Capture Wizard)
 ===================================================
 单一职责：多视角采集高质量图像 (纯预览 + 保存)。
-用途：
-  1. GUI 先行启动 (不自动开相机)：顶部工具栏选相机类型 (RealSense D435 / USB 摄像头) →
-     分辨率 → [开启] 乒乓开关 (布局与 Robot 在线跟踪第一排左半部分同款)，点击 [开启] 后进入预览；
-  2. 按 [空格] 键一键拍摄保存无标注的高清原始帧至目标场景图像目录；
-  3. 提供拍照快门白闪视觉反馈与采样计数，采图完毕后衔接离线空间建图 (tag_map_builder)；
-  4. 曝光调节 [ ] 与自动曝光切换 [E] (RealSense 物理感光控制)。
-注：Tag 识别/观测解算统一由离线建图管线完成，向导不做任何检测 (先采后验)。
+工位与双用途体系：
+  1. 顶部工具栏：
+     - [工位: XXX ▼] 选择目标工作空间 (Workspace)
+     - [用途: 标定/生产 ▼] 切换采集用途 (标定 calibration / 生产 production)
+     - [相机类型 ▼] RealSense D435 / USB
+     - [分辨率 ▼] 1920x1080 / 1280x720 等
+     - [开启/关闭] 乒乓开关
+     - [退出 X]
+  2. 按 [空格] 键一键拍摄保存高清原始帧 (view_XXXX.png) 至对应用途的 raw_images 目录；
+  3. 提供拍照快门白闪视觉反馈与该用途下的实时采样计数；
+  4. 曝光调节 [ / ] 与自动曝光切换 [E] (RealSense 物理感光控制)。
 """
 
 import os
@@ -27,17 +31,12 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except (AttributeError, ValueError):
-        pass  # 编码重配置失败无伤大雅，终端仍可正常运行
+        pass
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
 
-try:
-    from src.calibration.scene_manager import CalibrationSceneManager
-    DEFAULT_IMAGE_DIR = CalibrationSceneManager().get_current_scene().raw_images_dir
-except (ImportError, RuntimeError):
-    DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "tag_calibration_images")
-
+from src.calibration.workspace_manager import WorkspaceManager, Workspace
 from src.calibration.camera_service import CameraService
 from src.utils.text_rendering import draw_text
 from src.utils.logger import get_logger
@@ -62,49 +61,50 @@ log = get_logger(__name__)
 
 
 class CaptureWizard:
-    def __init__(self, output_dir: str = None, scene_id: str = None):
-        from src.calibration.scene_manager import CalibrationSceneManager
-        self.scene_mgr = CalibrationSceneManager()
-        self.scenes = self.scene_mgr.list_scenes()
+    def __init__(self, output_dir: str = None, workspace_id: str = None, purpose: str = "calibration"):
+        self.ws_mgr = WorkspaceManager()
+        self.workspaces = self.ws_mgr.list_workspaces()
 
-        # 确定初始归档场景
-        is_custom_output = bool(output_dir and output_dir != DEFAULT_IMAGE_DIR)
-        sc = None
-        if scene_id:
-            sc = self.scene_mgr.get_scene_by_id(scene_id)
-        elif is_custom_output:
-            norm_target = os.path.normpath(output_dir)
-            for s in self.scenes:
-                if os.path.normpath(s.raw_images_dir) == norm_target or os.path.normpath(s.scene_dir) == norm_target:
-                    sc = s
-                    break
+        # 采集用途: calibration (标定) | production (生产)
+        self.purpose = purpose if purpose in ("calibration", "production") else "calibration"
+        self.purpose_options = [
+            ("calibration", "标定 (Calib)"),
+            ("production",  "生产 (Prod)"),
+        ]
 
-        if not sc and not is_custom_output:
-            sc = self.scene_mgr.get_current_scene()
+        # 确定初始归档工位
+        ws = None
+        if workspace_id:
+            ws = self.ws_mgr.get_workspace_by_id(workspace_id)
+        if not ws:
+            ws = self.ws_mgr.get_current_workspace()
 
-        self.current_scene = sc
-        self.current_scene_id = sc.scene_id if sc else ""
-        self.output_dir = sc.raw_images_dir if sc else (output_dir or DEFAULT_IMAGE_DIR)
-        os.makedirs(self.output_dir, exist_ok=True)
+        self.current_workspace = ws
+        self.current_workspace_id = ws.workspace_id if ws else ""
 
-        # 硬件与运行时状态 (必须先声明，严禁在后续被覆盖为 None)
+        # 自定义 output_dir 或工位自动路由
+        self._custom_output_dir = output_dir
+        self.output_dir = ""
+        self.image_count = 0
+        self._update_output_dir()
+
+        # 硬件与运行时状态
         self.is_running = False
         self.flash_timer = 0.0
         self.actual_stream_desc = "相机未开启"
-        # 统一取流服务: 硬件启停/帧读取全部委托 CameraService
         self._cam_srv = CameraService()
 
-        # GUI 状态: 启动只加载界面不开相机, 用户选择相机/分辨率后点击 [开启] 才进入预览
+        # GUI 状态
         self.win_mgr = GuiWindowManager(app_id=APP_ID)
         self.renderer = CaptureRenderer(self)
-        self.active_dropdown = None        # None / CAMERA_TYPE_DROPDOWN / RES_DROPDOWN
+        self.active_dropdown = None        # None / WS_DROPDOWN / PURPOSE_DROPDOWN / CAMERA_TYPE_DROPDOWN / RES_DROPDOWN
         self.pipeline_running = False
         self.camera_type = "realsense"
         self.camera_options = [
             ("realsense", "RealSense D435"),
             ("usb",       "USB 普通摄像头"),
         ]
-        self.resolution = "1920x1080"      # 延续现状 1080P 优先 (高像素利于离线建图解算)
+        self.resolution = "1920x1080"
         self.resolution_options = [
             ("1920x1080", "1920 × 1080  (推荐)"),
             ("1280x720",  "1280 × 720"),
@@ -120,45 +120,82 @@ class CaptureWizard:
         self.status_toast_time = 0.0
         self.color_sensor = None
 
-        # 统计已有图片数
-        existing = glob.glob(os.path.join(self.output_dir, "view_*.png"))
-        self.image_count = len(existing)
+    def _update_output_dir(self):
+        """根据当前工位与用途，重新计算并确保采图存储路径"""
+        if self._custom_output_dir:
+            self.output_dir = self._custom_output_dir
+        elif self.current_workspace:
+            self.output_dir = self.current_workspace.get_raw_images_dir(self.purpose)
+        else:
+            self.output_dir = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", self.purpose, "raw_images")
 
-    @property
-    def scene_options(self):
-        """动态读取所有可用场景供下拉菜单展示"""
-        self.scenes = self.scene_mgr.list_scenes()
-        opts = []
-        for s in self.scenes:
-            tag = "★ " if s.is_published else ""
-            opts.append((s.scene_id, f"{tag}{s.name} ({s.image_count}帧)"))
-        return opts
-
-    @property
-    def current_scene_name(self):
-        return self.current_scene.name if self.current_scene else "默认工位"
-
-    def switch_scene(self, scene_id: str):
-        """实时切换采图目标场景 (照片自动路由至该场景的 raw_images)"""
-        sc = self.scene_mgr.get_scene_by_id(scene_id)
-        if not sc:
-            return
-        self.current_scene = sc
-        self.current_scene_id = sc.scene_id
-        self.output_dir = sc.raw_images_dir
         os.makedirs(self.output_dir, exist_ok=True)
         existing = glob.glob(os.path.join(self.output_dir, "view_*.png"))
         self.image_count = len(existing)
-        self.set_toast(f"已切换归档场景: 【{sc.name}】(当前 {self.image_count} 帧)")
-        log.info(f"采图向导已切换归档场景: {sc.name} ({sc.scene_id}) -> {self.output_dir}")
+
+    @property
+    def workspace_options(self):
+        """动态读取所有可用工位供下拉菜单展示"""
+        self.workspaces = self.ws_mgr.list_workspaces()
+        opts = []
+        for w in self.workspaces:
+            tag = "★ " if w.is_published else ""
+            cnt = w.image_count if self.purpose == "calibration" else w.prod_image_count
+            opts.append((w.workspace_id, f"{tag}{w.name} ({cnt}帧)"))
+        return opts
+
+    # 兼容原 scene_options
+    @property
+    def scene_options(self):
+        return self.workspace_options
+
+    @property
+    def current_workspace_name(self):
+        return self.current_workspace.name if self.current_workspace else "默认工位"
+
+    # 兼容原 current_scene_name
+    @property
+    def current_scene_name(self):
+        return self.current_workspace_name
+
+    @property
+    def current_purpose_label(self):
+        return dict(self.purpose_options).get(self.purpose, self.purpose)
+
+    def switch_workspace(self, ws_id: str):
+        """实时切换采图目标工位"""
+        ws = self.ws_mgr.get_workspace_by_id(ws_id)
+        if not ws:
+            return
+        self.current_workspace = ws
+        self.current_workspace_id = ws.workspace_id
+        self._update_output_dir()
+        self.set_toast(f"已切换归档工位: 【{ws.name}】/【{self.current_purpose_label}】(当前 {self.image_count} 帧)")
+        log.info(f"采图向导已切换归档工位: {ws.name} ({ws.workspace_id}) [{self.purpose}] -> {self.output_dir}")
+
+    # 兼容原 switch_scene
+    def switch_scene(self, scene_id: str):
+        self.switch_workspace(scene_id)
+
+    def switch_purpose(self, purpose_key: str):
+        """实时切换采集用途 (标定 calibration / 生产 production)"""
+        if purpose_key not in ("calibration", "production"):
+            return
+        if purpose_key == self.purpose:
+            return
+        self.purpose = purpose_key
+        self._save_viewer_state()
+        self._update_output_dir()
+        self.set_toast(f"已切换采集用途: 【{self.current_purpose_label}】(当前 {self.image_count} 帧)")
+        log.info(f"采图向导已切换采集用途: {self.purpose} -> {self.output_dir}")
 
     def set_toast(self, msg: str):
         self.status_toast = msg
         self.status_toast_time = time.time()
 
-    # ------------------------------ 相机开关 (GUI 先行, 借鉴 Robot 在线跟踪) ------------------------------
+    # ------------------------------ 状态持久化 ------------------------------
     def _load_viewer_state(self):
-        """从 config/gui_settings.json 恢复上次退出时的下拉选择 (相机类型/分辨率)"""
+        """从 config/gui_settings.json 恢复下拉选择"""
         try:
             if not os.path.exists(GUI_SETTINGS_FILE):
                 return
@@ -171,11 +208,14 @@ class CaptureWizard:
                 self.resolution = state["resolution"]
                 _w, _h = self.resolution.split("x")
                 self.frame_w, self.frame_h = int(_w), int(_h)
+            if state.get("purpose") in ("calibration", "production"):
+                self.purpose = state["purpose"]
+                self._update_output_dir()
         except Exception as e:
             log.warning(f"恢复采图向导状态失败，使用默认配置: {e}")
 
     def _save_viewer_state(self):
-        """保存下拉选择 (相机类型/分辨率) 到 config/gui_settings.json"""
+        """保存下拉选择到 config/gui_settings.json"""
         try:
             root = {}
             if os.path.exists(GUI_SETTINGS_FILE):
@@ -190,6 +230,7 @@ class CaptureWizard:
             node["viewer_state"] = {
                 "camera_type": self.camera_type,
                 "resolution": self.resolution,
+                "purpose": self.purpose,
             }
             node["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             os.makedirs(os.path.dirname(GUI_SETTINGS_FILE), exist_ok=True)
@@ -199,7 +240,6 @@ class CaptureWizard:
             log.warning(f"保存采图向导状态失败: {e}")
 
     def _select_camera_type(self, cam_key):
-        """切换相机类型：如果取流已运行则先停再切换"""
         if cam_key == self.camera_type:
             return
         if self.pipeline_running:
@@ -209,7 +249,6 @@ class CaptureWizard:
         log.info(f"相机类型已切换为: {dict(self.camera_options).get(cam_key, cam_key)}")
 
     def _change_resolution(self, res_key):
-        """切换分辨率：运行中则先停再按新分辨率重启"""
         if res_key == self.resolution:
             return
         was_running = self.pipeline_running
@@ -224,7 +263,6 @@ class CaptureWizard:
         log.info(f"分辨率已切换: {res_key}")
 
     def _toggle_camera(self):
-        """开启或关闭相机取流 (乒乓)"""
         if self.pipeline_running:
             self._stop_camera()
             self.set_toast("相机已关闭")
@@ -233,11 +271,9 @@ class CaptureWizard:
             self._start_camera()
 
     def _start_camera(self):
-        """按当前类型/分辨率启动取流; 失败 Toast 报错 (现场采图不能误采仿真帧, 无 Mock 降级)"""
         w, h = self.frame_w, self.frame_h
         try:
             if self.camera_type == "realsense":
-                # 8fps 高像素模式取流更稳 (延续原 1080P@8fps 现状), 同档内回退 8fps
                 self._cam_srv.start_realsense(
                     w, h, fps=8 if w > 1280 else 15,
                     fallbacks=((w, h, 8),),
@@ -256,46 +292,39 @@ class CaptureWizard:
         log.info(f"[OK] 相机已开启: {self.camera_type} @ {self.resolution} ({self.actual_stream_desc})")
 
     def _stop_camera(self):
-        """幂等关闭取流"""
         self._cam_srv.stop()
         self.pipeline_running = False
         self.color_sensor = None
 
     def get_frame(self, frame_idx: int):
-        """获取当前视频帧 (BGR): 仅取流运行时读取 (Mock 帧由服务内部生成); 未开启返回 None"""
         if self.pipeline_running:
             return self._cam_srv.read_frame(timeout_ms=2500)
         return None
 
     def save_image(self, raw_frame: np.ndarray) -> str:
-        """
-        保存采图快照：无标注高清原始帧存至工况场景图像目录 view_XXXX.png
-        (Tag 观测解算统一由离线建图管线 tag_map_builder 完成, 先采后验)
-        """
+        """保存采图快照：无标注原始帧存至当前用途对应目录 view_XXXX.png"""
         self.image_count += 1
         raw_filename = f"view_{self.image_count:04d}.png"
         raw_filepath = os.path.join(self.output_dir, raw_filename)
         cv2.imwrite(raw_filepath, raw_frame)
-        log.info(f"[CAPTURE] 快照 #{self.image_count} 拍摄成功: {raw_filepath}")
+        log.info(f"[CAPTURE] [{self.purpose}] 快照 #{self.image_count} 拍摄成功: {raw_filepath}")
 
-        # 同步更新归档场景元数据
+        # 同步更新工位元数据
         try:
-            if self.current_scene:
-                self.current_scene.refresh_stats()
-                self.current_scene.save_meta()
+            if self.current_workspace:
+                self.current_workspace.refresh_stats()
+                self.current_workspace.save_meta()
         except Exception as e:
-            log.warning(f"场景元数据刷新失败 (非致命): {e}")
+            log.warning(f"工位元数据刷新失败 (非致命): {e}")
 
         self.flash_timer = time.time()
         return raw_filepath
 
     def adjust_hardware_exposure(self, delta_us: float):
-        """微调 RealSense 物理感光曝光时间 (微秒，步进 2000us = 2ms)"""
         if self.color_sensor is None:
             self.set_toast("当前未检测到 RealSense 物理彩色传感器")
             return
         try:
-            # 若处于自动曝光，先切为手动曝光
             if self.color_sensor.supports(rs.option.enable_auto_exposure):
                 is_auto = self.color_sensor.get_option(rs.option.enable_auto_exposure)
                 if is_auto > 0.5:
@@ -303,7 +332,6 @@ class CaptureWizard:
             
             if self.color_sensor.supports(rs.option.exposure):
                 cur_exp = self.color_sensor.get_option(rs.option.exposure)
-                # D435 彩色相机 exposure 单位为 100微秒或毫秒，安全范围通常在 10 ~ 1000
                 new_exp = max(10.0, min(1000.0, cur_exp + delta_us))
                 self.color_sensor.set_option(rs.option.exposure, new_exp)
                 self.set_toast(f"硬件手动曝光: {int(new_exp)} (按 [ 压暗 / ] 提亮)")
@@ -311,7 +339,6 @@ class CaptureWizard:
             self.set_toast(f"调曝光失败: {e}")
 
     def toggle_auto_exposure(self):
-        """一键切换 RealSense 自动曝光与手动曝光"""
         if self.color_sensor is None:
             self.set_toast("当前非物理相机")
             return
@@ -327,7 +354,6 @@ class CaptureWizard:
 
     # ------------------------------ 鼠标交互 ------------------------------
     def _on_mouse(self, event, x, y, flags, param):
-        # 画布按窗口尺寸真矢量重绘, imshow 1:1 呈现, 窗口坐标即画布坐标 (零偏移)
         if event == cv2.EVENT_MOUSEMOVE:
             self.renderer.on_mouse_move(x, y)
         elif event == cv2.EVENT_LBUTTONDOWN:
@@ -335,24 +361,24 @@ class CaptureWizard:
             if hit is not None:
                 self._handle_action(*hit)
                 return
-            # 点击空白处收起下拉
             if self.active_dropdown is not None:
                 self.active_dropdown = None
 
     def _handle_action(self, btn_id, payload):
-        """工具栏按钮动作分发 (与 Robot 在线跟踪同名同义)"""
-        if btn_id == "TOGGLE_SCENE_DD":
-            self.active_dropdown = None if self.active_dropdown == "SCENE_DROPDOWN" \
-                else "SCENE_DROPDOWN"
-        elif btn_id.startswith("DD_SCENE_"):
+        if btn_id == "TOGGLE_WS_DD":
+            self.active_dropdown = None if self.active_dropdown == "WS_DROPDOWN" else "WS_DROPDOWN"
+        elif btn_id.startswith("DD_WS_"):
             self.active_dropdown = None
-            self.switch_scene(payload)
+            self.switch_workspace(payload)
+        elif btn_id == "TOGGLE_PURPOSE_DD":
+            self.active_dropdown = None if self.active_dropdown == "PURPOSE_DROPDOWN" else "PURPOSE_DROPDOWN"
+        elif btn_id.startswith("DD_PURPOSE_"):
+            self.active_dropdown = None
+            self.switch_purpose(payload)
         elif btn_id == "TOGGLE_CAM_DD":
-            self.active_dropdown = None if self.active_dropdown == "CAMERA_TYPE_DROPDOWN" \
-                else "CAMERA_TYPE_DROPDOWN"
+            self.active_dropdown = None if self.active_dropdown == "CAMERA_TYPE_DROPDOWN" else "CAMERA_TYPE_DROPDOWN"
         elif btn_id == "TOGGLE_RES_DD":
-            self.active_dropdown = None if self.active_dropdown == "RES_DROPDOWN" \
-                else "RES_DROPDOWN"
+            self.active_dropdown = None if self.active_dropdown == "RES_DROPDOWN" else "RES_DROPDOWN"
         elif btn_id.startswith("DD_CAM_"):
             self.active_dropdown = None
             self._select_camera_type(payload)
@@ -366,13 +392,12 @@ class CaptureWizard:
             self.is_running = False
 
     def run(self):
-        """运行采图主循环 (GUI 先行: 启动只加载界面, 相机等用户点击 [开启])"""
         self.is_running = True
-        win_key = "capture_wizard"  # 窗口 key 纯 ASCII (namedWindow ANSI API)
+        win_key = "capture_wizard"
         self.win_mgr.setup_window(win_key, mouse_callback=self._on_mouse)
-        self.win_mgr.set_unicode_title("采图向导 | flux_vision_3d")
+        self.win_mgr.set_unicode_title("采图向导 (工位与双用途) | flux_vision_3d")
 
-        log.info(f"多视角采图向导已启动，存储目录: {self.output_dir}")
+        log.info(f"多视角采图向导已启动，工位: {self.current_workspace_name}，用途: {self.purpose}，存储目录: {self.output_dir}")
 
         frame_idx = 0
         frames_shown = 0
@@ -385,25 +410,24 @@ class CaptureWizard:
                     frame_idx += 1
 
                 if raw_frame is not None:
-                    # 纯预览: 无任何检测叠加; 仅快门白闪反馈
                     if time.time() - self.flash_timer < 0.12:
                         disp = cv2.addWeighted(raw_frame, 0.4, np.full_like(raw_frame, 255), 0.6, 0)
                     else:
                         disp = raw_frame
                     canvas = self.renderer.compose_canvas(disp)
                 elif self.pipeline_running:
-                    # 取流已启动但帧未就绪
                     canvas = self.renderer.make_canvas()
                     cw, ch = self.win_mgr.canvas_w, self.win_mgr.canvas_h
                     draw_text(canvas, "取流中...", (cw // 2 - 60, ch // 2), 22, COL_YELLOW, True)
                 else:
-                    # 相机未开启: 窗口尺寸占位画布 (开启前后工具栏位置严格一致)
                     canvas = self.renderer.make_canvas()
                     cw, ch = self.win_mgr.canvas_w, self.win_mgr.canvas_h
                     draw_text(canvas, "相机未开启",
                               (cw // 2 - 120, ch // 2 - 50), 32, COLOR_ACCENT, True)
-                    draw_text(canvas, "请先选择相机类型和分辨率，然后点击 [开启] 按钮",
-                              (cw // 2 - 250, ch // 2 + 10), 18, COLOR_TEXT_SUB)
+                    draw_text(canvas, f"归档: 【{self.current_workspace_name}】/【{self.current_purpose_label}】",
+                              (cw // 2 - 150, ch // 2 + 10), 20, COL_YELLOW)
+                    draw_text(canvas, "点击 [开启] 预览画面，按 [空格] 拍摄保存无标注原始帧",
+                              (cw // 2 - 250, ch // 2 + 50), 16, COLOR_TEXT_SUB)
 
                 self.renderer.draw_toolbar(canvas)
                 self.renderer.draw_toast(canvas)
@@ -421,32 +445,33 @@ class CaptureWizard:
                     continue
                 k = chr(key & 0xFF).lower() if (key & 0xFF) < 128 else ""
 
-                if k in ("q", "x"):  # Q / X 退出 (ESC 由 poll_events 处理)
+                if k in ("q", "x"):
                     log.info(f"\n采图向导结束。当前数据集共计 {self.image_count} 帧。")
                     break
-                elif k == " ":  # Space 拍摄保存 (需相机已开启)
+                elif k == " ":
                     if raw_frame is not None:
                         self.save_image(raw_frame)
-                elif k == "[":  # 压暗曝光
+                elif k == "[":
                     self.adjust_hardware_exposure(-50.0)
-                elif k == "]":  # 提亮曝光
+                elif k == "]":
                     self.adjust_hardware_exposure(50.0)
-                elif k == "e":  # 切换自动曝光
+                elif k == "e":
                     self.toggle_auto_exposure()
 
         finally:
             self._stop_camera()
             cv2.destroyAllWindows()
-            log.info(f"[OK] 采图向导已退出 (当前数据集共计 {self.image_count} 帧)")
+            log.info(f"[OK] 采图向导已退出 (当前工位【{self.purpose}】共计 {self.image_count} 帧)")
 
 
 def main():
     parser = argparse.ArgumentParser(description="多视角采图向导 (纯预览 + 保存)")
-    parser.add_argument("--scene", type=str, default="", help="指定初始归档场景 ID")
-    parser.add_argument("--dir", "--output-dir", "--output_dir", dest="dir", type=str, default=None, help="保存采集图像的目录路径")
+    parser.add_argument("--workspace", "--scene", dest="workspace", type=str, default="", help="指定初始归档工位 ID")
+    parser.add_argument("--purpose", type=str, default="calibration", choices=["calibration", "production"], help="采集用途: calibration 标定 / production 生产")
+    parser.add_argument("--dir", "--output-dir", "--output_dir", dest="dir", type=str, default=None, help="自定义保存目录路径")
     args = parser.parse_args()
 
-    wizard = CaptureWizard(output_dir=args.dir, scene_id=args.scene)
+    wizard = CaptureWizard(output_dir=args.dir, workspace_id=args.workspace, purpose=args.purpose)
     wizard.run()
 
 

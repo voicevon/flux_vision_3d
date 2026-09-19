@@ -1,43 +1,46 @@
-# AprilTag 工况与场景管理中枢 (Scene Hub) 技术与操作指南
+# 工位工作空间 (Workspace) 与管理中枢技术指南
 
-> **文档版本**: v2.1 (2026-09)  
-> **适用模块**: `tools/scene_hub.py` (`tools/scene_hub/`) & `src/calibration/scene_manager.py`  
+> **文档版本**: v3.0 (2026-09)  
+> **适用模块**: `tools/scene_hub/` & `src/calibration/workspace_manager.py`  
 > **系统环境**: Windows 10/11 x64, Python 3.11+, OpenCV 4.x
 
 ---
 
 ## 1. 系统概述与设计哲学
 
-在工业 3D 视觉与多 AprilTag 空间标定任务中，工程现场面临多视角采样批次繁多、不同工况/光照条件数据混乱、平差前缺乏直观质量体检，以及**测试标定参数与生产系统运行地图界限不清**等痛点。
-
-**工况与场景管理中枢 (Tag Scene Hub)** 采用 1280x720 高清工业控制台架构，核心定位为**“工况管理与数据工作空间 (Data & Workspace Management Hub)”**：
-- **场景即工作空间**：场景是样本图像 `raw_images/`、元数据 `scene_meta.yaml`、空间平差地图 `tags_map.yaml` 与质检报告 `reports/` 的数据容器，与底层相机硬件取流解耦；
-- **专职采图工具委托**：Scene Hub 自身不维持相机取流循环，彻底避免占用 USB 硬件句柄。按 `[C]` 键即可秒级拉起专职采图向导 `capture_wizard.py`，采图完毕后自动平滑重新装载样本与刷新状态；
-- **全链路闭环流转**：无缝连接“**工况沙盒管理 $\rightarrow$ 采图向导抓拍 $\rightarrow$ 几何健康体检 $\rightarrow$ 离线平差求解 $\rightarrow$ 留一盲测验证 $\rightarrow$ 一键原子生效生产系统**”。
+在工业 3D 视觉与多 AprilTag 空间定位任务中，系统以**“工位工作空间 (Workspace)”**作为物理工位与环境沙盒的顶层概念：
+- **工位即完整环境沙盒**：每个 Workspace 自包含顶层公用资产（`tags_map.yaml` 空间几何地图、`tag_whitelist.yaml` 标靶白名单、`workspace_meta.yaml` 元数据）；
+- **标定与生产业务双轨自包含**：
+  - `calibration/`：专职管理标定采样图像 (`raw_images/`)、观测清单 (`tag_observations.yaml`)、平差质检报告 (`reports/`) 与残差场 (`visualized/`)；
+  - `production/`：专职管理生产与模拟生产采图 (`raw_images/`)、离线算法评估报告 (`reports/`) 与批处理结果 (`results/`)；
+- **核心基准资产解耦**：标定程序作为“生产者”，求解完成后将高精图谱写回工位顶层的 `tags_map.yaml`；生产与跟踪程序作为“消费者”，直接读取顶层地图，无需感知标定内部过程；
+- **专职采图向导双用途联动**：按 `[C]` 键拉起专职采图向导 `capture_wizard.py`，工具栏支持自由切换【标定】与【生产】用途，采集图像自动路由分流存储。
 
 ---
 
-## 2. 核心架构与【标定工况沙盒 vs 生产基准】机制
-
-系统严格遵循**“工况沙盒隔离、平差质检验证、生产原子发布”**的工业安全原则：
+## 2. 核心架构与工位资产流转
 
 ```mermaid
-flowchart LR
-    A[标定工况场景沙盒] -->|C 采图 / S 平差| A
-    A -->|P 生效到生产| B[★ 生产运行地图 (config/tags_map.yaml)]
-    B -->|在线主程序读取| C[3D 视觉测量与定位生产环境]
+flowchart TD
+    subgraph WS[工位工作空间 Workspace: data/workspaces/ws_id/]
+        M[tags_map.yaml 立体几何地图]
+        W[tag_whitelist.yaml 标靶白名单]
+        Meta[workspace_meta.yaml 工位元数据]
+
+        subgraph CALIB[calibration/ 标定专区]
+            CI[raw_images/ 标定采图] --> BA[两阶段 BA 离线平差求解]
+            BA -->|生产/输出成果| M
+        end
+
+        subgraph PROD[production/ 生产专区]
+            PI[raw_images/ 生产采图] --> DET[芦笋检测与位姿解算]
+        end
+    end
+
+    M -->|消费地图| DET
+    M -->|消费地图| TRK[Robot 在线跟踪]
+    M -->|一键发布| GPROD[★ 全局生产运行地图 config/tags_map.yaml]
 ```
-
-### 2.1 状态与机制定义
-
-1. **标定工况场景 (Calibration Scene)**:
-   - 本地独立文件夹保存原始图像与体检报告；多工况完全平权并行；
-   - 处于独立沙盒环境，修改、采图、平差求解绝不影响车间流水线生产；
-   - 任意场景只要完成平差解算，卡片上均可按 `[P]` 或点击直接发布。
-2. **生产运行基准 (Production Benchmark)**:
-   - 真正被系统生产管道（`config/tags_map.yaml`）加载的现场唯一真值地图；
-   - 顶部 Header 中间醒目展示：`生产运行地图: 【XXX】`；
-   - 对应的场景卡片右下角将获得金色荣誉徽章 `★ 生产运行`。
 
 ---
 

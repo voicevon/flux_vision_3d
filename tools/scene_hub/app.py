@@ -22,7 +22,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.calibration.scene_manager import CalibrationSceneManager
+from src.calibration.workspace_manager import WorkspaceManager
 from src.utils.gui_window_manager import GuiWindowManager
 from tools.scene_hub.hub_state import HubState
 from tools.scene_hub.hub_renderer import HubRenderer, HELP_MODAL_W, HELP_MODAL_H
@@ -61,7 +61,7 @@ class SceneHubApp:
             base_h=720,
             settings_file=settings_file
         )
-        self.scene_mgr = CalibrationSceneManager()
+        self.scene_mgr = WorkspaceManager()
         self.state = HubState(self.scene_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
         # 窗口内部 key 必须纯 ASCII (namedWindow ANSI API), 中文标题走 set_unicode_title
@@ -218,12 +218,9 @@ class SceneHubApp:
     def _launch_capture_wizard(self):
         """启动多视角交互式采图向导 (tools/capture/capture_wizard.py)"""
         sc = self.state.get_selected_scene()
-        target_dir = sc.raw_images_dir if sc else ""
         cmd = [sys.executable, os.path.join(PROJECT_ROOT, "tools", "capture", "capture_wizard.py")]
         if sc:
-            cmd.extend(["--scene", sc.scene_id])
-        if target_dir:
-            cmd.extend(["--output-dir", target_dir])
+            cmd.extend(["--workspace", sc.workspace_id])
         self._run_subtool(cmd, "多视角交互采图向导")
 
     def _on_mouse_event(self, event, x, y, flags, param):
@@ -466,7 +463,7 @@ class SceneHubApp:
             self.state.set_toast("未选中任何场景，无法生效！")
             return
 
-        ok, msg = self.scene_mgr.publish_to_production(sc.scene_id)
+        ok, msg = self.scene_mgr.publish_to_production(sc.workspace_id)
         self.state.refresh_scenes()
         if ok:
             toast = f"★ 生产生效成功！已将【{sc.name}】高精度地图覆盖发布至: config/tags_map.yaml"
@@ -477,14 +474,14 @@ class SceneHubApp:
     def _handle_open_directory(self):
         """在系统资源管理器中打开场景目录"""
         sc = self.state.get_selected_scene()
-        if sc and os.path.exists(sc.scene_dir):
+        if sc and os.path.exists(sc.workspace_dir):
             try:
                 if sys.platform == "win32":
-                    os.startfile(sc.scene_dir)
+                    os.startfile(sc.workspace_dir)
                 elif sys.platform == "darwin":
-                    subprocess.run(["open", sc.scene_dir])
+                    subprocess.run(["open", sc.workspace_dir])
                 else:
-                    subprocess.run(["xdg-open", sc.scene_dir])
+                    subprocess.run(["xdg-open", sc.workspace_dir])
                 self.state.set_toast(f"已在资源管理器中打开: {sc.name}")
             except Exception as e:
                 self.state.set_toast(f"打开目录异常: {e}")
@@ -495,7 +492,7 @@ class SceneHubApp:
         if not sc:
             return
 
-        ok, msg = self.scene_mgr.delete_scene(sc.scene_id)
+        ok, msg = self.scene_mgr.delete_workspace(sc.workspace_id)
         self.state.refresh_scenes()
         self.state.set_toast(msg)
 
@@ -528,8 +525,8 @@ class SceneHubApp:
         if not sc:
             return
         cmd = [sys.executable, "tools/studio/app.py",
-               "--scene", sc.scene_id,
-               "--images", sc.raw_images_dir,
+                "--workspace", sc.workspace_id,
+               "--images", sc.calib_raw_images_dir,
                "--map", sc.map_path]
         self._run_subtool(cmd, "Offline Studio 深度平差工作站")
 
@@ -577,18 +574,18 @@ class SceneHubApp:
             self.state.set_toast("已取消新建场景。")
             return
 
-        new_sc = self.scene_mgr.create_scene(alias=chosen_name, description=f"工况场景 {chosen_name}")
+        new_sc = self.scene_mgr.create_workspace(alias=chosen_name, description=f"工况工位 {chosen_name}")
         self.state.refresh_scenes()
         target_idx = 0
         for i, s in enumerate(self.state.scenes):
-            if s.scene_id == new_sc.scene_id:
+            if s.workspace_id == new_sc.workspace_id:
                 target_idx = i
                 break
         self.state.selected_scene_idx = target_idx
         self.state.selected_image_idx = 0
         self.state.image_strip_offset = 0
         self.state.load_current_scene_images()
-        self.state.set_toast(f"已成功新建场景: 【{new_sc.name}】({new_sc.scene_id})，按 [C] 可立即开始采图！")
+        self.state.set_toast(f"已成功新建工位: 【{new_sc.name}】({new_sc.workspace_id})，按 [C] 可立即开始采图！")
 
     def _handle_clone_scene(self):
         """克隆场景 (支持中文名称弹窗)"""
@@ -606,13 +603,13 @@ class SceneHubApp:
         if not chosen_name:
             return
 
-        cloned = self.scene_mgr.clone_scene(sc.scene_id, new_alias=chosen_name)
+        cloned = self.scene_mgr.clone_workspace(sc.workspace_id, new_alias=chosen_name)
         if cloned:
             # 立即刷新场景列表
             self.state.refresh_scenes()
             target_idx = 0
             for i, s in enumerate(self.state.scenes):
-                if s.scene_id == cloned.scene_id:
+                if s.workspace_id == cloned.workspace_id:
                     target_idx = i
                     break
             self.state.selected_scene_idx = target_idx

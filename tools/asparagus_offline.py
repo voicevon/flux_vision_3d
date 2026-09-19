@@ -121,15 +121,24 @@ class AsparagusOfflineApp:
     """芦笋离线验证 GUI 主应用: 样本列表/标注大图/检测结果/G-code 预览/批量解算"""
 
     def __init__(self, sample_dir: str = None):
-        self.sample_dir = sample_dir or DEFAULT_DIR
         self.sys_cfg = load_system_config()
         self.win_mgr = GuiWindowManager(app_id=APP_ID, base_w=BASE_W, base_h=BASE_H,
                                         min_w=900, min_h=600)
 
-        # 场景管理器感知
-        from src.calibration.scene_manager import CalibrationSceneManager
-        self.scene_mgr = CalibrationSceneManager()
+        # 场景/工位管理器感知
+        from src.calibration.workspace_manager import WorkspaceManager
+        self.scene_mgr = WorkspaceManager()
         self.current_scene_id = "__prod__"  # 默认使用全局生产地图
+
+        # 默认样本目录: 优先当前工位 production 采图，回退 snapshots
+        if sample_dir:
+            self.sample_dir = sample_dir
+        else:
+            cur_ws = self.scene_mgr.get_current_workspace()
+            if cur_ws and os.path.exists(cur_ws.prod_raw_images_dir) and glob.glob(os.path.join(cur_ws.prod_raw_images_dir, "*.png")):
+                self.sample_dir = cur_ws.prod_raw_images_dir
+            else:
+                self.sample_dir = DEFAULT_DIR
         self.active_dropdown = None
         self._dd_items = []
         self._scene_rect = None
@@ -172,7 +181,7 @@ class AsparagusOfflineApp:
             if tags_path and not os.path.isabs(tags_path):
                 tags_path = os.path.join(PROJECT_ROOT, tags_path)
         else:
-            sc = self.scene_mgr.get_scene_by_id(self.current_scene_id)
+            sc = self.scene_mgr.get_workspace_by_id(self.current_scene_id)
             tags_path = sc.map_path if sc else ""
 
         if tags_path and os.path.exists(tags_path) and os.path.getsize(tags_path) > 50:
@@ -187,19 +196,19 @@ class AsparagusOfflineApp:
 
     @property
     def scene_options(self):
-        """动态列出可选地图：首项为生产全局地图，后续为各标定场景地图"""
+        """动态列出可选地图：首项为生产全局地图，后续为各工位地图"""
         opts = [("__prod__", "★ 当前生产地图 (config/tags_map.yaml)")]
-        for s in self.scene_mgr.list_scenes():
+        for s in self.scene_mgr.list_workspaces():
             tag = "★ " if s.is_published else ""
             status = f"{s.global_rmse_px:.2f}px" if s.ba_solved else "未平差"
-            opts.append((s.scene_id, f"{tag}{s.name} ({s.image_count}帧, {status})"))
+            opts.append((s.workspace_id, f"{tag}{s.name} ({s.image_count}帧, {status})"))
         return opts
 
     @property
     def current_scene_name(self):
         if self.current_scene_id == "__prod__":
             return "生产地图"
-        sc = self.scene_mgr.get_scene_by_id(self.current_scene_id)
+        sc = self.scene_mgr.get_workspace_by_id(self.current_scene_id)
         return sc.name if sc else "默认"
 
     def switch_scene(self, scene_key: str):

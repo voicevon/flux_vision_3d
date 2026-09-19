@@ -116,18 +116,18 @@ class StudioWorkflowMixin:
         ManifestRepository.save_map(self.tags_map_data, self.map_path)
         target_sc = self.current_scene
         if self.scene_mgr and target_sc:
-            ok, msg = self.scene_mgr.publish_to_production(target_sc.scene_id)
+            ok, msg = self.scene_mgr.publish_to_production(target_sc.workspace_id)
             if ok:
                 self.set_toast(f"★ 成功将【{target_sc.name}】发布为生产全局地图！")
             else:
                 self.set_toast(f"发布失败: {msg}")
         else:
-            self.set_toast("未连接场景管理器，已保存至本场景地图")
+            self.set_toast("未连接工位管理器，已保存至本工位地图")
 
     def export_verification_report(self):
         """导出 Markdown 全景精度质检单"""
         if self.current_scene:
-            report_dir = self.current_scene.reports_dir
+            report_dir = self.current_scene.calib_reports_dir
         else:
             report_dir = os.path.join(PROJECT_ROOT, "data", "tag_calibration_verification")
         os.makedirs(report_dir, exist_ok=True)

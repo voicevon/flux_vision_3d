@@ -225,13 +225,13 @@ def main():
     def_manifest = "data/tag_calibration_images/tag_observations.yaml"
     def_output = "config/tags_map.yaml"
     try:
-        from src.calibration.scene_manager import CalibrationSceneManager
-        current_sc = CalibrationSceneManager().get_current_scene()
-        def_image_dir = current_sc.raw_images_dir
-        def_manifest = current_sc.manifest_path
-        def_output = current_sc.map_path
+        from src.calibration.workspace_manager import WorkspaceManager
+        current_ws = WorkspaceManager().get_current_workspace()
+        def_image_dir = current_ws.calib_raw_images_dir
+        def_manifest = current_ws.calib_manifest_path
+        def_output = current_ws.map_path
     except Exception as e:
-        log.warning(f"获取当前标定场景失败，使用默认路径: {e}")
+        log.warning(f"获取当前工位失败，使用默认路径: {e}")
 
     parser.add_argument("--image_dir", type=str, default=def_image_dir, help="多视角标定图片目录")
     parser.add_argument("--manifest", type=str, default=def_manifest, help="观测数据审核清单路径")

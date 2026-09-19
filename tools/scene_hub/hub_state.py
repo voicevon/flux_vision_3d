@@ -11,7 +11,7 @@ from collections import OrderedDict
 import cv2
 import numpy as np
 
-from src.calibration.scene_manager import CalibrationSceneManager, CalibrationScene
+from src.calibration.workspace_manager import WorkspaceManager, Workspace
 
 
 def imread_unicode(filepath: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
@@ -48,10 +48,10 @@ class HubState:
     VIEW_EXPANDED = "expanded"    # 模式2: 全宽大图 (左340, 右940大图铺满)
     VIEW_DASHBOARD = "dashboard"  # 模式3: 纯净健康看板 (左340固定, 右940大体检看板，无相册无预览)
 
-    def __init__(self, scene_mgr: CalibrationSceneManager = None, force_mock: bool = False):
-        self.scene_mgr = scene_mgr or CalibrationSceneManager()
+    def __init__(self, scene_mgr: WorkspaceManager = None, force_mock: bool = False):
+        self.scene_mgr = scene_mgr or WorkspaceManager()
 
-        self.scenes: list[CalibrationScene] = []
+        self.scenes: list[Workspace] = []
         self.prod_scene_id = ""
         self.selected_scene_idx = 0
 
@@ -88,9 +88,9 @@ class HubState:
         self.refresh_scenes()
 
     def refresh_scenes(self):
-        """刷新场景列表与生产场景标识"""
-        self.scenes = self.scene_mgr.list_scenes()
-        self.prod_scene_id = self.scene_mgr.get_production_scene_id()
+        """刷新工位列表与生产工位标识"""
+        self.scenes = self.scene_mgr.list_workspaces()
+        self.prod_scene_id = self.scene_mgr.get_production_workspace_id()
 
         # 确保选中索引不越界
         if not self.scenes:
@@ -100,17 +100,17 @@ class HubState:
 
         self.load_current_scene_images()
 
-    def get_production_scene(self) -> CalibrationScene | None:
-        """获取当前发布为生产运行的场景"""
+    def get_production_scene(self) -> Workspace | None:
+        """获取当前发布为生产运行的工位"""
         for sc in self.scenes:
-            if sc.scene_id == self.prod_scene_id:
+            if sc.workspace_id == self.prod_scene_id:
                 return sc
         for sc in self.scenes:
             if sc.is_published:
                 return sc
         return None
 
-    def get_selected_scene(self) -> CalibrationScene | None:
+    def get_selected_scene(self) -> Workspace | None:
         """获取当前高亮选中的场景"""
         if not self.scenes or self.selected_scene_idx >= len(self.scenes):
             return None
@@ -136,7 +136,7 @@ class HubState:
         if not sc.ba_solved or not os.path.exists(sc.map_path):
             self.set_toast("发布失败: 该场景尚未进行 BA 平差解算或地图文件缺失")
             return False
-        res = self.scene_mgr.publish_to_production(sc.scene_id)
+        res = self.scene_mgr.publish_to_production(sc.workspace_id)
         ok = res[0] if isinstance(res, (tuple, list)) else bool(res)
         msg = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else ""
         if ok:
@@ -147,13 +147,13 @@ class HubState:
         return ok
 
     def load_current_scene_images(self):
-        """载入当前选中场景的照片列表"""
+        """载入当前选中工位的照片列表"""
         sc = self.get_selected_scene()
-        if not sc or not os.path.exists(sc.raw_images_dir):
+        if not sc or not os.path.exists(sc.calib_raw_images_dir):
             self.current_images = []
             return
 
-        imgs = sorted(glob.glob(os.path.join(sc.raw_images_dir, "*.png")))
+        imgs = sorted(glob.glob(os.path.join(sc.calib_raw_images_dir, "*.png")))
         self.current_images = imgs
         if self.current_images:
             self.selected_image_idx = max(0, min(self.selected_image_idx, len(self.current_images) - 1))
@@ -266,9 +266,9 @@ class HubState:
         if not sc:
             return ""
 
-        os.makedirs(sc.raw_images_dir, exist_ok=True)
+        os.makedirs(sc.calib_raw_images_dir, exist_ok=True)
         # 获取现有帧的最大序号
-        existing = glob.glob(os.path.join(sc.raw_images_dir, "view_*.png"))
+        existing = glob.glob(os.path.join(sc.calib_raw_images_dir, "view_*.png"))
         max_idx = 0
         for f in existing:
             base = os.path.basename(f)
@@ -278,7 +278,7 @@ class HubState:
 
         new_idx = max_idx + 1
         filename = f"view_{new_idx:04d}.png"
-        filepath = os.path.join(sc.raw_images_dir, filename)
+        filepath = os.path.join(sc.calib_raw_images_dir, filename)
         imwrite_unicode(filepath, raw_frame)
 
         # 触发白闪动效
@@ -346,7 +346,7 @@ class HubState:
         clean = new_name.strip()
         if not clean:
             return False
-        ok = self.scene_mgr.rename_scene(sc.scene_id, clean)
+        ok = self.scene_mgr.rename_workspace(sc.workspace_id, clean)
         if ok:
             sc.name = clean
             self.refresh_scenes()

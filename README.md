@@ -288,7 +288,7 @@ flux_vision_3d/
 │
 ├── src/                           # 🧠 核心架构与领域驱动源码
 │   ├── calibration/               #    标定与空间平差核心引擎 (解耦架构)
-│   │   ├── scene_manager.py       #      场景沙盒管理器 (草稿/活动/生产三态状态机)
+│   │   ├── workspace_manager.py   #      工位工作空间管理器 (顶层资产/双业务沙盒/发布状态机)
 │   │   ├── ba_optimizer.py        #      两阶段 BA 平差优化器 (Cauchy核 + 尺度基线对齐)
 │   │   ├── covisibility_graph.py  #      多视角标靶共视网络图论建模与割点分析
 │   │   ├── manifest_repository.py #      标定清单与观测数据持久化仓储
@@ -341,8 +341,8 @@ flux_vision_3d/
 │       ├── diagnose_tag_frame.py  #    辅助诊断: 单帧漏检病因切片深度诊断
 │
 ├── tests/                         # ✅ 自动化单元测试与回归套件 (24 项测试集)
-│   ├── test_scene_hub.py          #    场景驾驶舱与取流测试 (14 项全绿通过)
-│   ├── test_scene_manager.py      #    场景生命周期与沙盒隔离测试
+│   ├── test_scene_hub.py          #    场景驾驶舱与取流测试 (17 项全绿通过)
+│   ├── test_workspace_manager.py  #    工位生命周期与双业务沙盒隔离测试
 │   ├── test_tag_offline_studio.py #    离线 Studio 交互状态与平差驱动测试
 │   ├── test_real_snapshot.py      #    真实工业快照全量测试 (20 组真实工业快照 100% 通过)
 │   ├── test_mock_pipeline.py      #    仿真管线脱机回归测试
@@ -353,7 +353,8 @@ flux_vision_3d/
 │
 └── data/                          # 📁 数据存储沙盒
     ├── snapshots/                 #    日常运行快照库 (RGB + 深度热力图 + 点云)
-    ├── calibration_scenes/        #    多工况标定场景沙盒库 (按工况独立隔离存储)
+    ├── workspaces/                #    工位工作空间总库 (物理沙盒隔离，顶层资产+标定/生产双业务)
+    │   └── <workspace_id>/        #    具体工位 (tags_map.yaml, tag_whitelist.yaml, calibration/, production/)
     └── apriltags_16h5/            #    生成的 AprilTag 矢量图与打印 PDF
 ```
 

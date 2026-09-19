@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""多视角采图向导 - 渲染器:
-顶部单排工具栏 (相机类型/分辨率/开启, 与 Robot 在线跟踪第一排左半部分同款) /
+"""
+多视角采图向导 - 渲染器:
+顶部单排工具栏:
+[工位: XXX ▼] [用途: 标定/生产 ▼] [相机类型 ▼] [分辨率 ▼] [开启/关闭] ... [退出 X]
 下拉浮层 / 画布合成 / Toast。
 只读 CaptureWizard 的状态并绘制, 不修改业务状态;
 按钮命中表 (buttons) 每帧由 draw_toolbar 重建, 供主控制器鼠标分发使用。
 """
 
 import time
-
 import cv2
 import numpy as np
 
-from src.utils.gui_theme import (
-    GuiTheme,
-)
+from src.utils.gui_theme import GuiTheme
 from src.utils.gui_components import (
     draw_dropdown_button,
     render_dropdown_popup,
@@ -33,9 +32,9 @@ COLOR_BTN_TEXT_HOVER = GuiTheme.BTN_TEXT_HOVER  # 按钮悬停文字
 COLOR_TEXT_SUB = GuiTheme.TEXT_SUB        # 副文字
 COLOR_ACCENT = GuiTheme.ACCENT            # 主题强调色
 COL_WHITE = GuiTheme.WHITE
-COL_YELLOW = (90, 200, 245)               # 提示文字 (数据可视化色, 本地保留)
+COL_YELLOW = (90, 200, 245)               # 提示文字
 
-TOOLBAR_H = 44  # 顶部工具栏高度 (单排: 相机类型/分辨率/开启 ... 退出)
+TOOLBAR_H = 44  # 顶部工具栏高度
 
 
 class CaptureRenderer:
@@ -45,6 +44,8 @@ class CaptureRenderer:
         self.wiz = wizard               # 主控制器状态引用 (只读)
         self.buttons = []               # [(btn_id, (x1,y1,x2,y2), payload), ...] 每帧重建
         self.mouse_pos = (-1, -1)
+        self._workspace_rect = None
+        self._purpose_rect = None
         self._camera_type_rect = None
         self._resolution_rect = None
 
@@ -61,32 +62,28 @@ class CaptureRenderer:
         return None
 
     def _is_hover(self, rect):
-        """鼠标是否悬停在 rect 上 (与 _draw_dropdown_button 的 hover 判定一致)"""
         x1, y1, x2, y2 = rect
         mx, my = self.mouse_pos
         return x1 <= mx <= x2 and y1 <= my <= y2
 
     def _hover_text(self, hovered, size, bold=False):
-        """hover 文字行为参数单源 (GuiTheme.BTN_BEHAVIOR): hover 时按主题加粗/放大"""
         if not hovered:
             return size, bold
         bh = GuiTheme.BTN_BEHAVIOR
         return int(size * bh["HOVER_SCALE"]), (bold or bh["HOVER_BOLD"])
 
-    # ------------------------------ 下拉控件 (统一接入 gui_components) ------------------------------
+    # ------------------------------ 下拉控件 ------------------------------
     def _draw_dropdown_button(self, canvas, rect, label, is_open):
-        """扁平化下拉按钮 (统一调用 gui_components)"""
         draw_dropdown_button(canvas, rect, label, is_open, self.mouse_pos, font_size=14)
 
     def _render_dropdown_popup(self, canvas, rect, options, active_key, btn_prefix):
-        """置顶悬浮下拉列表浮层 (统一调用 gui_components)"""
         btns = render_dropdown_popup(canvas, rect, options, active_key, btn_prefix=btn_prefix, item_h=30)
         self.buttons.extend(btns)
 
     # ------------------------------ 工具栏 ------------------------------
     def draw_toolbar(self, canvas):
-        """顶部单排工具栏 (与 Robot 在线跟踪第一排左半部分同款):
-        [相机类型 ▼] [分辨率 ▼] [开启/关闭] ... [退出 X]
+        """顶部单排工具栏:
+        [工位 ▼] [用途 ▼] [相机类型 ▼] [分辨率 ▼] [开启/关闭] ... [退出 X]
         """
         wiz = self.wiz
         tw = canvas.shape[1]
@@ -97,16 +94,25 @@ class CaptureRenderer:
         y1, y2 = 6, 38
         gap = 6
 
-        # 0. 归档场景下拉 (最左侧)
-        sc_x1, sc_x2 = 8, 8 + 190
-        sc_label = getattr(wiz, "current_scene_name", "默认场景")
-        self._draw_dropdown_button(canvas, (sc_x1, y1, sc_x2, y2), f"场景: {sc_label}",
-                                   is_open=(wiz.active_dropdown == "SCENE_DROPDOWN"))
-        self.buttons.append(("TOGGLE_SCENE_DD", (sc_x1, y1, sc_x2, y2), "SCENE_DROPDOWN"))
-        self._scene_rect = (sc_x1, y1, sc_x2, y2)
+        # 0. 工位选择下拉 (最左侧)
+        ws_x1, ws_x2 = 8, 8 + 175
+        ws_label = getattr(wiz, "current_workspace_name", "默认工位")
+        self._draw_dropdown_button(canvas, (ws_x1, y1, ws_x2, y2), f"工位: {ws_label}",
+                                   is_open=(wiz.active_dropdown == "WS_DROPDOWN"))
+        self.buttons.append(("TOGGLE_WS_DD", (ws_x1, y1, ws_x2, y2), "WS_DROPDOWN"))
+        self._workspace_rect = (ws_x1, y1, ws_x2, y2)
 
-        # 1. 相机类型下拉
-        cam_x1 = sc_x2 + gap
+        # 1. 用途选择下拉 (标定 / 生产)
+        pur_x1 = ws_x2 + gap
+        pur_x2 = pur_x1 + 125
+        pur_label = getattr(wiz, "current_purpose_label", "标定")
+        self._draw_dropdown_button(canvas, (pur_x1, y1, pur_x2, y2), f"用途: {pur_label}",
+                                   is_open=(wiz.active_dropdown == "PURPOSE_DROPDOWN"))
+        self.buttons.append(("TOGGLE_PURPOSE_DD", (pur_x1, y1, pur_x2, y2), "PURPOSE_DROPDOWN"))
+        self._purpose_rect = (pur_x1, y1, pur_x2, y2)
+
+        # 2. 相机类型下拉
+        cam_x1 = pur_x2 + gap
         cam_x2 = cam_x1 + 140
         cam_label = dict(wiz.camera_options).get(wiz.camera_type, wiz.camera_type)
         self._draw_dropdown_button(canvas, (cam_x1, y1, cam_x2, y2), cam_label,
@@ -114,7 +120,7 @@ class CaptureRenderer:
         self.buttons.append(("TOGGLE_CAM_DD", (cam_x1, y1, cam_x2, y2), "CAMERA_TYPE_DROPDOWN"))
         self._camera_type_rect = (cam_x1, y1, cam_x2, y2)
 
-        # 2. 分辨率下拉
+        # 3. 分辨率下拉
         res_x1 = cam_x2 + gap
         res_x2 = res_x1 + 105
         self._draw_dropdown_button(canvas, (res_x1, y1, res_x2, y2), wiz.resolution,
@@ -122,7 +128,7 @@ class CaptureRenderer:
         self.buttons.append(("TOGGLE_RES_DD", (res_x1, y1, res_x2, y2), "RES_DROPDOWN"))
         self._resolution_rect = (res_x1, y1, res_x2, y2)
 
-        # 3. 开启/关闭乒乓按钮 (悬停高亮, 与 tracker 同款三态)
+        # 4. 开启/关闭乒乓按钮
         sw_x1 = res_x2 + gap
         sw_x2 = sw_x1 + 65
         sw_hover = self._is_hover((sw_x1, y1, sw_x2, y2))
@@ -130,7 +136,7 @@ class CaptureRenderer:
             sw_bg, sw_border, sw_txt, sw_label = (55, 45, 30), (255, 160, 40), (255, 200, 80), "关闭"
         else:
             sw_bg, sw_border, sw_txt, sw_label = COLOR_CARD_BG, COLOR_BORDER, COLOR_TEXT_SUB, "开启"
-        if sw_hover:   # 悬停高亮不覆盖开/关语义色 (仅底色提亮 + 主题悬停描边)
+        if sw_hover:
             sw_bg, sw_border = COLOR_BTN_HOVER, COLOR_BORDER_HOVER
         cv2.rectangle(canvas, (sw_x1, y1), (sw_x2, y2), sw_bg, -1)
         cv2.rectangle(canvas, (sw_x1, y1), (sw_x2, y2), sw_border, 1)
@@ -138,7 +144,7 @@ class CaptureRenderer:
         draw_text(canvas, sw_label, (sw_x1 + 22, y1 + (y2 - y1 - 16) // 2 - 1), sw_size, sw_txt, True)
         self.buttons.append(("TOGGLE_CAMERA", (sw_x1, y1, sw_x2, y2), None))
 
-        # 4. 退出按钮 (最右, 悬停高亮)
+        # 5. 退出按钮 (最右, 悬停高亮)
         exit_x1, exit_x2 = tw - 90, tw - 8
         q_hover = self._is_hover((exit_x1, y1, exit_x2, y2))
         cv2.rectangle(canvas, (exit_x1, y1), (exit_x2, y2),
@@ -151,9 +157,12 @@ class CaptureRenderer:
         self.buttons.append(("QUIT", (exit_x1, y1, exit_x2, y2), None))
 
         # 展开的下拉浮层 (置顶最后绘制)
-        if wiz.active_dropdown == "SCENE_DROPDOWN" and getattr(self, "_scene_rect", None):
-            self._render_dropdown_popup(canvas, self._scene_rect,
-                                        wiz.scene_options, wiz.current_scene_id, "DD_SCENE_")
+        if wiz.active_dropdown == "WS_DROPDOWN" and getattr(self, "_workspace_rect", None):
+            self._render_dropdown_popup(canvas, self._workspace_rect,
+                                        wiz.workspace_options, wiz.current_workspace_id, "DD_WS_")
+        elif wiz.active_dropdown == "PURPOSE_DROPDOWN" and getattr(self, "_purpose_rect", None):
+            self._render_dropdown_popup(canvas, self._purpose_rect,
+                                        wiz.purpose_options, wiz.purpose, "DD_PURPOSE_")
         elif wiz.active_dropdown == "CAMERA_TYPE_DROPDOWN" and self._camera_type_rect:
             self._render_dropdown_popup(canvas, self._camera_type_rect,
                                         wiz.camera_options, wiz.camera_type, "DD_CAM_")
@@ -163,18 +172,15 @@ class CaptureRenderer:
 
     # ------------------------------ 画布合成 ------------------------------
     def make_canvas(self):
-        """按当前窗口物理尺寸生成底板画布 (imshow 严格 1:1, 鼠标坐标零偏移)"""
         cw = self.wiz.win_mgr.canvas_w
         ch = self.wiz.win_mgr.canvas_h
         return np.full((ch, cw, 3), COLOR_BG, dtype=np.uint8)
 
     def compose_canvas(self, frame):
-        """窗口尺寸底板 + 顶部工具栏区 + 视频帧等比缩放居中 (真矢量模式)"""
         cw = self.wiz.win_mgr.canvas_w
         ch = self.wiz.win_mgr.canvas_h
         canvas = np.full((ch, cw, 3), COLOR_BG, dtype=np.uint8)
 
-        # 视频帧等比 contain 缩放到工具栏下方区域并居中 (不裁剪, 保证 Tag 不出画)
         area_h = ch - TOOLBAR_H
         fh, fw = frame.shape[:2]
         scale = min(cw / fw, area_h / fh)
@@ -186,7 +192,6 @@ class CaptureRenderer:
         return canvas
 
     def draw_toast(self, canvas):
-        """底部居中临时通知 (沿用向导原 Toast 样式, 绘制在最终画布上)"""
         wiz = self.wiz
         h, w = canvas.shape[:2]
         if time.time() - wiz.status_toast_time < 2.5 and wiz.status_toast:
@@ -198,6 +203,5 @@ class CaptureRenderer:
 
     @staticmethod
     def _measure(text):
-        """文字测宽 (draw_text 同源渲染路径)"""
         from src.utils.text_rendering import measure_text
         return measure_text(text, font_size=16, bold=False)

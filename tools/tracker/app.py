@@ -180,8 +180,8 @@ class RobotOnlineTracker:
     def _default_map_path() -> str:
         """默认地图: 优先当前工况场景地图, 回退全局 config/tags_map.yaml"""
         try:
-            from src.calibration.scene_manager import CalibrationSceneManager
-            return CalibrationSceneManager().get_current_scene().map_path
+            from src.calibration.workspace_manager import WorkspaceManager
+            return WorkspaceManager().get_current_workspace().map_path
         except Exception:
             return os.path.join(PROJECT_ROOT, "config", "tags_map.yaml")
 

@@ -300,7 +300,7 @@ class HubRenderer:
             draw_text(canvas, display_title, (20, cy + 6), font_size=15, color=title_col, bold=is_selected)
 
             # 第二行：物理唯一 ID 与张数
-            id_subtitle = f"ID: {sc.scene_id[:14]} | {sc.image_count}帧"
+            id_subtitle = f"ID: {sc.workspace_id[:14]} | {sc.image_count}帧"
             put_text(canvas, id_subtitle, (20, cy + 39), cv2.FONT_HERSHEY_SIMPLEX, 0.38, self.COLOR_GRAY, 1, cv2.LINE_AA)
 
             # 第三行：平差精度指标
@@ -364,7 +364,7 @@ class HubRenderer:
         cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 58), (26, 31, 42), -1)
         cv2.rectangle(canvas, (box_x + 16, meta_y), (box_x + box_w - 16, meta_y + 58), self.COLOR_BORDER, 1)
         draw_text(canvas, f"当前场景: 【{sc.name}】", (box_x + 26, meta_y + 8), font_size=16, color=(0, 240, 220), bold=True)
-        draw_text(canvas, f"物理唯一ID: {sc.scene_id}", (box_x + 26, meta_y + 34), font_size=13, color=self.COLOR_GRAY)
+        draw_text(canvas, f"物理唯一ID: {sc.workspace_id}", (box_x + 26, meta_y + 34), font_size=13, color=self.COLOR_GRAY)
 
         # 4 大体检与健康指标卡片 (舒展间距)
         cards = [
@@ -567,9 +567,9 @@ class HubRenderer:
         cv2.rectangle(canvas, (box_x + 16, box_y + 14), (box_x + box_w - 16, box_y + 105), (45, 56, 78), 1)
 
         draw_text(canvas, f"当前场景: 【{sc.name}】", (box_x + 32, box_y + 24), font_size=18, color=(0, 240, 220), bold=True)
-        draw_text(canvas, f"物理 ASCII 沙盒 ID: {sc.scene_id}   |   原始相册: {sc.image_count} 帧",
+        draw_text(canvas, f"物理 ASCII 沙盒 ID: {sc.workspace_id}   |   原始相册: {sc.image_count} 帧",
                   (box_x + 32, box_y + 54), font_size=13, color=self.COLOR_GRAY)
-        draw_text(canvas, f"物理绝对路径: {sc.scene_dir}", (box_x + 32, box_y + 76), font_size=12, color=self.COLOR_DARK_GRAY)
+        draw_text(canvas, f"物理绝对路径: {sc.workspace_dir}", (box_x + 32, box_y + 76), font_size=12, color=self.COLOR_DARK_GRAY)
 
         # 质检放行徽章 (右上角 x: box_x + box_w - 380)
         badge_x = box_x + box_w - 380
@@ -828,7 +828,7 @@ class HubRenderer:
             return
 
         sc = state.scenes[state.context_menu_scene_idx]
-        is_prod = (sc.scene_id == state.prod_scene_id or sc.is_published)
+        is_prod = (sc.workspace_id == state.prod_scene_id or sc.is_published)
         mx, my = state.context_menu_pos
         mpos = (state.mouse_x, state.mouse_y)
 

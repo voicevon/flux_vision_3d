@@ -5,13 +5,18 @@ Scene Hub 自动化单元测试
 """
 
 import os
+import sys
 import shutil
 import tempfile
 import unittest
 import numpy as np
 import cv2
 
-from src.calibration.scene_manager import CalibrationSceneManager
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from src.calibration.workspace_manager import WorkspaceManager
 from src.calibration.camera_streamer import CameraStreamer
 from tools.scene_hub.hub_state import HubState
 from tools.scene_hub.hub_renderer import HubRenderer
@@ -21,21 +26,18 @@ class TestSceneHub(unittest.TestCase):
 
     def setUp(self):
         self.test_root = tempfile.mkdtemp(prefix="test_hub_")
-        self.test_dir = os.path.join(self.test_root, "scenes")
-        self.empty_legacy = os.path.join(self.test_root, "empty_legacy")
-        os.makedirs(self.test_dir, exist_ok=True)
-        os.makedirs(self.empty_legacy, exist_ok=True)
+        self.workspaces_dir = os.path.join(self.test_root, "workspaces")
+        os.makedirs(self.workspaces_dir, exist_ok=True)
         self.test_prod_map = os.path.join(self.test_root, "config", "tags_map.yaml")
         self.test_config_yaml = os.path.join(self.test_root, "config.yaml")
-        self.scene_mgr = CalibrationSceneManager(
-            scenes_dir=self.test_dir,
-            legacy_dir=self.empty_legacy,
+        self.scene_mgr = WorkspaceManager(
+            workspaces_dir=self.workspaces_dir,
             prod_map_path=self.test_prod_map,
             config_path=self.test_config_yaml
         )
-        # 创建两个测试场景
-        self.sc1 = self.scene_mgr.create_scene(alias="site_a", description="测试工况A")
-        self.sc2 = self.scene_mgr.create_scene(alias="site_b", description="测试工况B")
+        # 创建两个测试工位
+        self.sc1 = self.scene_mgr.create_workspace(alias="site_a", description="测试工况A")
+        self.sc2 = self.scene_mgr.create_workspace(alias="site_b", description="测试工况B")
 
     def tearDown(self):
         shutil.rmtree(self.test_root, ignore_errors=True)
@@ -57,14 +59,14 @@ class TestSceneHub(unittest.TestCase):
         state = HubState(self.scene_mgr, force_mock=True)
         self.assertEqual(len(state.scenes), 2)
         # 降序排序下，最新创建的 sc2 在 index 0，先创建的 sc1 在 index 1
-        self.assertEqual(state.scenes[0].scene_id, self.sc2.scene_id)
-        self.assertEqual(state.scenes[1].scene_id, self.sc1.scene_id)
+        self.assertEqual(state.scenes[0].workspace_id, self.sc2.workspace_id)
+        self.assertEqual(state.scenes[1].workspace_id, self.sc1.workspace_id)
         self.assertEqual(state.selected_scene_idx, 0)
 
         # 切换下一个场景 (index 0 -> 1)
         state.select_scene_by_offset(1)
         self.assertEqual(state.selected_scene_idx, 1)
-        self.assertEqual(state.get_selected_scene().scene_id, self.sc1.scene_id)
+        self.assertEqual(state.get_selected_scene().workspace_id, self.sc1.workspace_id)
 
         # 模拟选中场景具备平差结果并发布为生产运行
         cur_sc = state.get_selected_scene()
@@ -73,7 +75,7 @@ class TestSceneHub(unittest.TestCase):
         with open(cur_sc.map_path, "w", encoding="utf-8") as f:
             f.write("tags:\n  0:\n    id: 0\n    position: [0.0, 0.0, 0.0]\n    orientation: [0.0, 0.0, 0.0, 1.0]\n")
         self.assertTrue(state.publish_selected_to_production())
-        self.assertEqual(state.prod_scene_id, cur_sc.scene_id)
+        self.assertEqual(state.prod_scene_id, cur_sc.workspace_id)
 
     def test_hub_state_in_place_capture(self):
         """测试 HubState 原地连拍保存与归档"""
@@ -145,9 +147,9 @@ class TestSceneHub(unittest.TestCase):
         initial_count = len(state.scenes)
         self.assertEqual(initial_count, 2)
 
-        # 克隆场景
+        # 克隆工位
         cur_sc = state.get_selected_scene()
-        cloned = self.scene_mgr.clone_scene(cur_sc.scene_id, new_alias="对照组_工况测试")
+        cloned = self.scene_mgr.clone_workspace(cur_sc.workspace_id, new_alias="对照组_工况测试")
         self.assertIsNotNone(cloned)
         self.assertEqual(cloned.name, "对照组_工况测试")
 
@@ -155,10 +157,10 @@ class TestSceneHub(unittest.TestCase):
         state.refresh_scenes()
         self.assertEqual(len(state.scenes), initial_count + 1)
 
-        # 验证新场景在列表中且可被定位
+        # 验证新工位在列表中且可被定位
         target_idx = -1
         for idx, sc in enumerate(state.scenes):
-            if sc.scene_id == cloned.scene_id:
+            if sc.workspace_id == cloned.workspace_id:
                 target_idx = idx
                 break
         self.assertNotEqual(target_idx, -1)
@@ -387,8 +389,8 @@ class TestSceneHub(unittest.TestCase):
         # 1. 创建两张测试图片放入当前选中场景中
         sc = state.get_selected_scene()
         self.assertIsNotNone(sc)
-        img1 = os.path.join(sc.raw_images_dir, "test_view_01.png")
-        img2 = os.path.join(sc.raw_images_dir, "test_view_02.png")
+        img1 = os.path.join(sc.calib_raw_images_dir, "test_view_01.png")
+        img2 = os.path.join(sc.calib_raw_images_dir, "test_view_02.png")
         dummy = np.zeros((480, 640, 3), dtype=np.uint8)
         cv2.imwrite(img1, dummy)
         cv2.imwrite(img2, dummy)
