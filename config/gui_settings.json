@@ -7,7 +7,7 @@
     "scale_pct": 120,
     "canvas_w": 1110,
     "canvas_h": 1061,
-    "updated_at": "2026-09-20 15:17:11"
+    "updated_at": "2026-09-20 18:01:22"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -82,12 +82,12 @@
   },
   "asparagus_pose_studio": {
     "scale_pct": 120,
-    "canvas_w": 1536,
-    "canvas_h": 960,
-    "updated_at": "2026-09-20 15:17:07",
+    "canvas_w": 1920,
+    "canvas_h": 1017,
+    "updated_at": "2026-09-20 18:02:12",
     "studio_state": {
-      "pipeline_key": "segment_topology",
-      "selected_sample_name": "view_0005.png"
+      "pipeline_key": "sato_vesselness",
+      "selected_sample_name": "view_0001.png"
     }
   }
 }
