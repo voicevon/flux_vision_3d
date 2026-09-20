@@ -33,6 +33,7 @@ from src.utils.text_rendering import draw_text, measure_text
 from src.utils.logger import get_logger
 from src.vision.asparagus_analyzer import AsparagusAnalyzer
 from src.calibration.workspace_manager import WorkspaceManager
+from tools.spatial_mapping_studio.mapping_viewport_interactor import MappingViewportInteractor
 
 WINDOW_KEY = "AsparagusOffline"   # cv2 窗口内部 key (纯 ASCII, 中文标题经 SetWindowTextW 注入)
 APP_ID = "asparagus_offline"
@@ -131,11 +132,11 @@ class AsparagusOfflineApp:
         cur_ws = self.workspace_mgr.get_current_workspace()
         self.current_workspace_id = cur_ws.workspace_id if cur_ws else ""
 
-        # 默认样本目录: 优先当前工位 production 采图，回退 snapshots
+        # 默认样本目录: 严格取当前工位 production 采图；如果没有指定且无工位，才回退 DEFAULT_DIR
         if sample_dir:
             self.sample_dir = sample_dir
         else:
-            if cur_ws and os.path.exists(cur_ws.prod_raw_images_dir) and glob.glob(os.path.join(cur_ws.prod_raw_images_dir, "*.png")):
+            if cur_ws:
                 self.sample_dir = cur_ws.prod_raw_images_dir
             else:
                 self.sample_dir = DEFAULT_DIR
@@ -152,15 +153,18 @@ class AsparagusOfflineApp:
         self.sel_idx = -1            # 当前样本
         self.scroll_off = 0          # 样本列表滚动偏移
         self.targets = []
-        self.sel_target = 0          # 结果列表选中目标 (查看 G-code)
+        self.sel_target = 0          # 结果列表选中目标 (前3位中选中的那一个)
         self.vis_img = None          # 标注可视化 (原始分辨率)
         self.mode = "3d"             # "3d" | "2d"
         self.error = ""              # 当前样本加载/解算错误
         self.gcode_text = ""
 
-        # 批量状态 (每帧推进一个样本, 不阻塞 UI)
-        self.batch_queue = []
-        self.batch_results = []
+        # 视口显示图层切换 (0: 1.前景, 1: 距离场, 2: 峰脊线, 3: 2.骨架, 4: 3.位姿) - 纯显示切换，一次性全量解算
+        self.active_view_mode = 4
+        self.stage_vis = [None, None, None, None, None]
+
+        # 视口交互控制器: 参照 Spatial Mapping Studio 实现滚轮放大缩小与平移
+        self.viewport = MappingViewportInteractor(top_bar_h=52, bottom_bar_h=46, win_w=BASE_W, win_h=BASE_H)
 
         # 交互状态
         self.mouse_pos = (-1, -1)
@@ -204,31 +208,36 @@ class AsparagusOfflineApp:
         return ws.name if ws else "默认工位"
 
     def switch_workspace(self, workspace_key: str):
-        """动态切换标靶立体地图并重新解算当前样本 (自动持久化到 .active_workspace)"""
+        """动态切换标靶立体地图并同步刷新样本列表 (严格只检索目标工位 production/raw_images)"""
         self.current_workspace_id = workspace_key
         self.workspace_mgr.set_active_workspace(workspace_key)
 
         ws = self.workspace_mgr.get_workspace_by_id(workspace_key)
-        if ws and os.path.exists(ws.prod_raw_images_dir) and glob.glob(os.path.join(ws.prod_raw_images_dir, "*.png")):
+        if ws:
+            # 仅检索该工位 production/raw_images，如果没有就是没有
             self.sample_dir = ws.prod_raw_images_dir
-            self.rescan(auto_load=True)
+        else:
+            self.sample_dir = ""
 
         self._init_localizer()
+
+        # 强制重新扫描刷新列表，清空旧状态
+        self.rescan(auto_load=True)
+
         if self.tag_localizer:
             tag_cnt = len(getattr(self.tag_localizer, "tag_poses", {}))
             self.set_toast(f"已装载【{self.current_workspace_name}】地图 (包含 {tag_cnt} 个标靶)")
         else:
             self.set_toast(f"【{self.current_workspace_name}】尚未平差生成 tags_map.yaml，降级估算！")
-        
-        # 立即重新解算当前样本
-        if 0 <= self.sel_idx < len(self.samples):
-            self._select_sample(self.sel_idx)
 
     def rescan(self, auto_load=False):
-        """重新扫描样本目录, 可选自动载入最新样本"""
+        """重新扫描样本目录, 可选自动载入首个样本原图"""
         self.samples = scan_samples(self.sample_dir)
+        self.sel_idx = -1
+        self.targets, self.vis_img, self.gcode_text = [], None, ""
+        self.sel_target, self.error = 0, ""
         if auto_load and self.samples:
-            self._select_sample(0)
+            self._select_sample(0, analyze_now=False)
 
     def _keep_selection_visible(self, idx: int):
         """键盘切换样本时, 滚动偏移跟随选中行保持可见"""
@@ -256,20 +265,41 @@ class AsparagusOfflineApp:
         analyzer.set_hand_eye_matrix(self.sys_cfg["t_cam_to_scara"])
         return analyzer
 
-    def _select_sample(self, idx: int):
-        """载入样本并执行解算 (同步, 单帧解算为亚秒级)"""
+    def _select_sample(self, idx: int, analyze_now: bool = False):
+        """选中样本：载入原图显示；若 analyze_now=True 则立即触发识别定位"""
         if not (0 <= idx < len(self.samples)):
             return
         self.sel_idx = idx
         self._keep_selection_visible(idx)
         self.targets, self.vis_img, self.gcode_text = [], None, ""
+        self.stage_vis = [None, None, None, None, None]
         self.sel_target, self.error = 0, ""
+        self.viewport.reset()
         sample = self.samples[idx]
 
         color = cv2.imread(sample["png"])
         if color is None:
             self.error, self.mode = "彩色图读取失败", "2d"
             return
+        self.mode = "3d" if sample["depth"] else "2d"
+        self.vis_img = color.copy()
+
+        if analyze_now:
+            self.run_analyze()
+
+    def run_analyze(self):
+        """对当前选中的样本执行【识别定位】(一次性完成前景、骨架、位姿全部计算，结果数据全展示)"""
+        if not (0 <= self.sel_idx < len(self.samples)):
+            self.set_toast("请先在左侧列表中选择一张样本照片")
+            return
+
+        sample = self.samples[self.sel_idx]
+        color = cv2.imread(sample["png"])
+        if color is None:
+            self.error = "彩色图读取失败"
+            self.set_toast(self.error, True)
+            return
+
         depth = None
         if sample["depth"]:
             try:
@@ -284,97 +314,83 @@ class AsparagusOfflineApp:
 
         try:
             analyzer = self._build_analyzer(color.shape[1], color.shape[0])
-            self.targets = analyzer.analyze(color, depth)
-            self.vis_img = analyzer.draw_detections(color, self.targets)
+            # 无论当前在看哪个视图，后台一次性全量解算完所有算法步骤！
+            self.targets = analyzer.analyze(color, depth, stages=(True, True, True))
+            # 缓存 5 步视觉过程：[1.前景, 距离场, 峰脊线, 2.骨架, 3.位姿]
+            self.stage_vis = [
+                analyzer.vis_stage1,
+                getattr(analyzer, "vis_dist", None),
+                getattr(analyzer, "vis_peaks", None),
+                analyzer.vis_stage2,
+                analyzer.vis_stage3
+            ]
+            self.sel_target = 0
+            self._apply_view_mode()
         except Exception as exc:
             log.exception("样本解算异常")
             self.error = f"解算异常: {exc}"
+            self.set_toast(self.error, True)
             return
 
-        if self.mode == "3d" and self.targets:
-            top = next((t for t in self.targets if t.is_topmost), self.targets[0])
-            self.sel_target = self.targets.index(top)
-            self.gcode_text = top.generate_gcode(safe_z=self.sys_cfg["safe_z"],
-                                                 drop_x=self.sys_cfg["drop_x"],
-                                                 drop_y=self.sys_cfg["drop_y"])
+        if self.targets:
+            top = self.targets[self.sel_target]
+            if self.mode == "3d":
+                self.gcode_text = top.generate_gcode(safe_z=self.sys_cfg["safe_z"],
+                                                     drop_x=self.sys_cfg["drop_x"],
+                                                     drop_y=self.sys_cfg["drop_y"])
+            self.set_toast(f"识别定位完成: 提取前 {len(self.targets)} 位优选目标", duration=2.2)
+        else:
+            self.set_toast("未检出符合规格的芦笋目标", duration=2.2)
 
-    def start_batch(self):
-        """启动批量解算 (逐帧推进, 保持界面响应)"""
-        if not self.samples:
-            self.set_toast("样本目录为空, 无可批量解算")
+    def _select_view_mode(self, mode_idx: int):
+        """
+        独立切换视口显示的算法图层 (0: 1.前景, 1: 距离场, 2: 峰脊线, 3: 2.骨架, 4: 3.位姿)
+        纯粹切换视口显示内容，完全独立 (individual)；右侧所有识别结果和文本数据始终保持展示！
+        """
+        self.active_view_mode = mode_idx
+        if self.stage_vis[mode_idx] is None and (0 <= self.sel_idx < len(self.samples)):
+            self.run_analyze()
             return
-        self.batch_queue = list(range(len(self.samples)))
-        self.batch_results = []
-        self.set_toast(f"批量解算启动: 共 {len(self.batch_queue)} 个样本", duration=1.6)
+        self._apply_view_mode()
 
-    def _batch_step(self):
-        """批量解算推进: 每次调用处理一个样本"""
-        if not self.batch_queue:
+    def _apply_view_mode(self):
+        """刷新视口显示的图像内容"""
+        labels = [
+            "1.前景物料 (ExG + 传送带 ROI)",
+            "CV算法: 欧氏距离变换场 (Distance Transform 半径能量)",
+            "CV算法: 垂向极大值峰脊线 (Transverse NMS Ridge Peaks)",
+            "2.中轴骨架与单体验证 (Spine & Ridge Tracing)",
+            "3.位姿定位与顶层锁定 (Top 3 抓取目标)"
+        ]
+        idx = max(0, min(self.active_view_mode, len(labels) - 1))
+        if self.stage_vis[idx] is not None:
+            self.vis_img = self.stage_vis[idx]
+            self.set_toast(f"视口显示: {labels[idx]}", duration=1.5)
+        elif 0 <= self.sel_idx < len(self.samples):
+            color = cv2.imread(self.samples[self.sel_idx]["png"])
+            if color is not None:
+                self.vis_img = color.copy()
+
+    def _select_target(self, t_idx: int):
+        """在结果列表中切换选中的芦笋目标 (同步画布高亮与 G-code)"""
+        if not (0 <= t_idx < len(self.targets)):
             return
-        idx = self.batch_queue.pop(0)
-        sample = self.samples[idx]
-        entry = {"name": sample["name"], "mode": "-", "count": 0,
-                 "top": None, "error": ""}
-        try:
-            color = cv2.imread(sample["png"])
-            depth = None
-            if sample["depth"]:
-                depth = np.load(sample["depth"], allow_pickle=False)
-                if depth.shape[:2] != color.shape[:2]:
-                    depth = cv2.resize(depth, (color.shape[1], color.shape[0]),
-                                       interpolation=cv2.INTER_NEAREST)
-            analyzer = self._build_analyzer(color.shape[1], color.shape[0])
-            targets = analyzer.analyze(color, depth)
-            entry["mode"] = "3d" if depth is not None else "2d"
-            entry["count"] = len(targets)
-            if targets:
-                top = next((t for t in targets if t.is_topmost), targets[0])
-                entry["top"] = (top.length_mm, top.diam_mm, top.robot_r,
-                                top.robot_x, top.robot_y, top.robot_z)
-        except Exception as exc:
-            entry["error"] = str(exc)
-        self.batch_results.append(entry)
+        self.sel_target = t_idx
+        if 0 <= self.sel_idx < len(self.samples):
+            color = cv2.imread(self.samples[self.sel_idx]["png"])
+            if color is not None:
+                analyzer = self._build_analyzer(color.shape[1], color.shape[0])
+                self.vis_img = analyzer.draw_detections(color, self.targets, sel_target_idx=t_idx)
+                self.stage_vis[4] = self.vis_img
+                self.active_view_mode = 4
 
-        if not self.batch_queue:   # 收尾: 写汇总报表
-            report = self._write_batch_report()
-            if report:
-                self.set_toast(f"批量完成: 报告已保存 {os.path.basename(report)}", duration=4.0)
-
-    def _write_batch_report(self):
-        """批量结果落盘 Markdown 汇总报表"""
-        try:
-            os.makedirs(REPORT_DIR, exist_ok=True)
-            path = os.path.join(REPORT_DIR, f"asparagus_batch_report_{time.strftime('%Y%m%d_%H%M%S')}.md")
-            ok3d = sum(1 for r in self.batch_results if r["mode"] == "3d" and r["count"] > 0)
-            ok2d = sum(1 for r in self.batch_results if r["mode"] == "2d" and r["count"] > 0)
-            fails = sum(1 for r in self.batch_results if r["error"] or r["count"] == 0)
-            lines = [
-                "# 芦笋离线批量解算报告",
-                "",
-                f"- 时间: {time.strftime('%Y-%m-%d %H:%M:%S')}",
-                f"- 目录: {self.sample_dir}",
-                f"- 样本: {len(self.batch_results)} | 3D 成功: {ok3d} | 2D 预览: {ok2d} | 无检出/异常: {fails}",
-                "",
-                "| 样本 | 模式 | 检出 | 顶层 L/D (mm) | R (deg) | SCARA (X, Y, Z) |",
-                "|---|---|---|---|---|---|",
-            ]
-            for r in self.batch_results:
-                if r["error"]:
-                    lines.append(f"| {r['name']} | - | - | - | - | 异常: {r['error']} |")
-                elif r["top"]:
-                    l_mm, d_mm, rr, rx, ry, rz = r["top"]
-                    lines.append(f"| {r['name']} | {r['mode']} | {r['count']} "
-                                 f"| {l_mm}/{d_mm} | {rr} | ({rx}, {ry}, {rz}) |")
-                else:
-                    lines.append(f"| {r['name']} | {r['mode']} | 0 | - | - | 未检出目标 |")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines) + "\n")
-            log.info("批量解算报告已保存: %s", path)
-            return path
-        except Exception as exc:
-            log.error("批量报告保存失败: %s", exc)
-            self.set_toast("批量报告保存失败, 详见日志", True)
-            return None
+        t = self.targets[t_idx]
+        if self.mode == "3d":
+            self.gcode_text = t.generate_gcode(
+                safe_z=self.sys_cfg["safe_z"],
+                drop_x=self.sys_cfg["drop_x"],
+                drop_y=self.sys_cfg["drop_y"],
+            )
 
     def export_gcode(self):
         """导出当前选中目标的 G-code 到 reports/ 目录"""
@@ -397,11 +413,11 @@ class AsparagusOfflineApp:
         return {
             "s": s,
             "L": int(12 * s),            # 全局左边距
-            "list_w": int(280 * s),      # 左侧样本列表宽
-            "right_w": int(352 * s),     # 右侧结果面板宽
+            "list_w": int(140 * s),      # 左侧样本列表宽 (按用户要求缩减至一半)
+            "right_w": int(236 * s),     # 右侧结果面板宽 (按用户要求缩减至 2/3)
             "header_h": int(52 * s),
             "bottom_h": int(46 * s),
-            "row_h": int(44 * s),        # 样本/结果行高
+            "row_h": int(32 * s),        # 样本行高 (更紧凑一屏浏览更多)
             "btn_h": int(30 * s),
             "fs_title": max(14, int(20 * s)),
             "fs_sub": max(10, int(12 * s)),
@@ -449,6 +465,43 @@ class AsparagusOfflineApp:
         if enabled:
             self._buttons.append((rect, ("btn", label)))
 
+    def _draw_view_pill(self, canvas, rect, label, is_active: bool):
+        """舒适高质感分段视图切换药丸 (纯显示层切换，互斥单选，视觉反馈鲜明)"""
+        x1, y1, x2, y2 = rect
+        mx, my = self.mouse_pos
+        hover = x1 <= mx <= x2 and y1 <= my <= y2
+        m = self._metrics()
+
+        if is_active:
+            bg = (32, 68, 48)            # 沉稳翡翠绿底色
+            border = (0, 235, 120)        # 鲜亮高光绿边框
+            text_col = (255, 255, 255)    # 纯白加粗文字
+        elif hover:
+            bg = (34, 38, 46)
+            border = (110, 130, 155)
+            text_col = (235, 240, 245)
+        else:
+            bg = (24, 28, 34)
+            border = (52, 58, 68)
+            text_col = (165, 175, 185)
+
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), bg, -1)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), border, 2 if is_active else (1 if hover else 1))
+
+        # 激活项左侧绘制一个发光小圆点
+        (tw, th), _ = measure_text(label, font_size=m["fs_sub"])
+        if is_active:
+            dot_x = x1 + int(10 * m["s"])
+            dot_y = y1 + (y2 - y1) // 2
+            cv2.circle(canvas, (dot_x, dot_y), int(3.5 * m["s"]), (0, 235, 120), -1)
+            cv2.circle(canvas, (dot_x, dot_y), int(5 * m["s"]), (0, 235, 120), 1)
+            tx = dot_x + int(8 * m["s"])
+        else:
+            tx = x1 + ((x2 - x1) - tw) // 2
+
+        ty = y1 + ((y2 - y1) - th) // 2
+        draw_text(canvas, label, (tx, ty), m["fs_sub"], text_col, bold=is_active)
+
     def _draw_dropdown_button(self, canvas, rect, label, is_open=False):
         """扁平化下拉框按钮 (统一调用 gui_components)"""
         m = self._metrics()
@@ -476,11 +529,9 @@ class AsparagusOfflineApp:
         canvas = np.full((H, W, 3), GuiTheme.BG, dtype=np.uint8)
         self._buttons, self._sample_rows, self._result_rows = [], [], []
 
-        # 标题栏
-        draw_text(canvas, "芦笋抓取位姿离线验证", (m["L"], int(16 * m["s"])), m["fs_title"],
+        # 标题栏: 左上角显示“识别芦笋位姿”，不显示冗余目录路径
+        draw_text(canvas, "识别芦笋位姿", (m["L"], int(16 * m["s"])), m["fs_title"],
                   GuiTheme.TEXT, bold=True)
-        draw_text(canvas, f"目录: {self.sample_dir}  ·  样本 {len(self.samples)} 个",
-                  (m["L"], int(34 * m["s"])), m["fs_sub"], GuiTheme.TEXT_MUTED)
 
         list_p, img_p, right_p = self._panels(m)
         self._draw_sample_list(canvas, m, list_p)
@@ -488,24 +539,34 @@ class AsparagusOfflineApp:
         self._draw_result_panel(canvas, m, right_p)
 
         # 标题栏右侧按钮组 (从右向左布局)
-        bw = int(88 * m["s"])
+        btn_w = int(112 * m["s"])
         bx = W - m["L"]
-        batching = bool(self.batch_queue)
         buttons = [
-            ("批量解算 [B]", "batch", not batching),
-            ("停止 [S]", "stop", batching),
-            ("重新扫描 [R]", "rescan", True),
-            ("导出G-code [E]", "export", bool(self.gcode_text)),
             ("退出 [X]", "exit", True),
+            ("导出G-code [E]", "export", bool(self.gcode_text)),
+            ("识别定位 [空格]", "analyze", bool(self.samples and self.sel_idx >= 0)),
         ]
-        for label, _act, enabled in reversed(buttons):
-            bx -= bw + int(8 * m["s"])
-            self._draw_button(canvas, (bx, int(14 * m["s"]), bx + bw, int(14 * m["s"]) + m["btn_h"]),
+        for label, _act, enabled in buttons:
+            bx -= btn_w + int(8 * m["s"])
+            self._draw_button(canvas, (bx, int(14 * m["s"]), bx + btn_w, int(14 * m["s"]) + m["btn_h"]),
                               label, enabled=enabled)
 
-        # 按钮组最左侧：地图工位选择下拉按钮
-        sc_w = int(165 * m["s"])
-        bx -= sc_w + int(8 * m["s"])
+        # 视口算法流程全透明分段选择器：[ 1.前景 | 距离场 | 峰脊线 | 2.骨架 | 3.位姿 ]
+        view_names = ["1.前景", "距离场", "峰脊线", "2.骨架", "3.位姿"]
+        pill_w = int(60 * m["s"])
+        for v_i in (4, 3, 2, 1, 0):
+            bx -= pill_w + int(4 * m["s"])
+            pill_rect = (bx, int(14 * m["s"]), bx + pill_w, int(14 * m["s"]) + m["btn_h"])
+            self._draw_view_pill(canvas, pill_rect, view_names[v_i], is_active=(self.active_view_mode == v_i))
+            self._buttons.append((pill_rect, ("set_view_mode", v_i)))
+
+        # 分段选择器左侧提示标签：“显示:”
+        bx -= int(38 * m["s"])
+        draw_text(canvas, "显示:", (bx, int(22 * m["s"])), m["fs_sub"], GuiTheme.TEXT_MUTED)
+
+        # 最左侧：工位地图选择下拉按钮
+        sc_w = int(175 * m["s"])
+        bx -= sc_w + int(10 * m["s"])
         self._workspace_rect = (bx, int(14 * m["s"]), bx + sc_w, int(14 * m["s"]) + m["btn_h"])
         is_sc_open = (self.active_dropdown == "WORKSPACE_DROPDOWN")
         self._draw_dropdown_button(canvas, self._workspace_rect, f"地图: {self.current_workspace_name}", is_open=is_sc_open)
@@ -513,23 +574,13 @@ class AsparagusOfflineApp:
 
         # 底部状态栏
         yb = H - m["bottom_h"] + int(8 * m["s"])
-        if self.batch_queue:
-            done = len(self.batch_results)
-            total = done + len(self.batch_queue)
-            status = f"批量解算中... {done}/{total}  ·  3D 成功 " \
-                     f"{sum(1 for r in self.batch_results if r['mode'] == '3d' and r['count'])}"
-        elif self.batch_results:
-            ok = sum(1 for r in self.batch_results if r["count"])
-            status = f"上次批量: {len(self.batch_results)} 样本, 检出 {ok}, 报告见 reports/"
-        else:
-            calib = CALIB_LABELS.get(
-                self.targets[0].calibration_source if self.targets else "uncalibrated", "-")
-            n3d = sum(1 for smp in self.samples if smp["depth"])
-            status = f"样本 {len(self.samples)} 个 (3D 成对 {n3d} / 仅 2D {len(self.samples) - n3d})" \
-                     f"  ·  当前标定状态: {calib}"
+        calib = CALIB_LABELS.get(
+            self.targets[0].calibration_source if self.targets else "uncalibrated", "-")
+        n3d = sum(1 for smp in self.samples if smp["depth"])
+        status = f"工位【{self.current_workspace_name}】 · 生产样本 {len(self.samples)} 个 (3D成对 {n3d} / 2D {len(self.samples) - n3d}) · 标定状态: {calib}"
         draw_text(canvas, status, (m["L"], yb), m["fs_sub"], GuiTheme.TEXT_SUB)
-        draw_text(canvas, "[↑↓] 切换样本  ·  [ESC]/[X] 退出  ·  Ctrl+滚轮/± 缩放",
-                  (W - int(360 * m["s"]), yb), m["fs_sub"], GuiTheme.TEXT_MUTED)
+        draw_text(canvas, "[↑↓] 样本  ·  [空格] 识别定位  ·  右键拖拽  ·  滚轮无级缩放  ·  双击复位",
+                  (W - int(460 * m["s"]), yb), m["fs_sub"], GuiTheme.TEXT_MUTED)
 
         # Toast (底部居中)
         if self._toast_msg and time.time() < self._toast_until:
@@ -561,11 +612,11 @@ class AsparagusOfflineApp:
     def _draw_sample_list(self, canvas, m, rect):
         y = self._panel_bg(canvas, rect, f"样本列表 ({len(self.samples)})")
         if not self.samples:
-            draw_text(canvas, "目录无样本", (rect[0] + int(10 * m["s"]), y + int(10 * m["s"])),
+            draw_text(canvas, "当前工位无生产样本", (rect[0] + int(10 * m["s"]), y + int(10 * m["s"])),
                       m["fs_body"], GuiTheme.TEXT_MUTED)
-            draw_text(canvas, "请用 d435_viewer [S] 抓拍,",
+            draw_text(canvas, "请在采集向导中拍摄生产样本,",
                       (rect[0] + int(10 * m["s"]), y + int(32 * m["s"])), m["fs_small"], GuiTheme.TEXT_MUTED)
-            draw_text(canvas, "或 --dir 指定照片目录",
+            draw_text(canvas, "或通过上方地图下拉框切换工位",
                       (rect[0] + int(10 * m["s"]), y + int(50 * m["s"])), m["fs_small"], GuiTheme.TEXT_MUTED)
             return
 
@@ -587,15 +638,18 @@ class AsparagusOfflineApp:
             elif x1 < self.mouse_pos[0] < x2 and ry1 <= self.mouse_pos[1] <= ry2:
                 cv2.rectangle(canvas, (x1 + 2, ry1), (x2 - 2, ry2), GuiTheme.CARD_HOVER, -1)
 
-            name = smp["name"]
-            if len(name) > 26:
-                name = name[:12] + "..." + name[-11:]
-            draw_text(canvas, name, (x1 + int(10 * m["s"]), ry1 + int(5 * m["s"])),
-                      m["fs_small"], GuiTheme.WHITE if is_sel else GuiTheme.TEXT_SUB)
-            tag = "3D 成对" if smp["depth"] else "仅 2D"
-            tag_col = GuiTheme.OK if smp["depth"] else GuiTheme.WARN
-            draw_text(canvas, tag, (x1 + int(10 * m["s"]), ry1 + row_h - int(18 * m["s"])),
-                      m["fs_small"], tag_col)
+            raw_name = smp["name"]
+            short_name = raw_name.replace(".png", "").replace("view_", "")
+            if len(short_name) > 10:
+                short_name = short_name[-10:]
+            
+            draw_text(canvas, short_name, (x1 + int(8 * m["s"]), ry1 + int(6 * m["s"])),
+                      m["fs_small"], GuiTheme.WHITE if is_sel else GuiTheme.TEXT_SUB, bold=is_sel)
+            
+            tag = "3D" if smp["depth"] else "2D"
+            tag_col = GuiTheme.OK if smp["depth"] else GuiTheme.TEXT_MUTED
+            draw_text(canvas, tag, (x2 - int(24 * m["s"]), ry1 + int(6 * m["s"])),
+                      m["fs_small"], tag_col, bold=is_sel)
             self._sample_rows.append(((x1 + 2, ry1, x2 - 2, ry2), idx))
 
     def _draw_image_area(self, canvas, m, rect):
@@ -604,61 +658,94 @@ class AsparagusOfflineApp:
         cv2.rectangle(canvas, (x1, y1), (x2, y2), GuiTheme.BORDER, 1)
 
         if self.vis_img is None:
-            msg = self.error if self.error else ("选择左侧样本以载入解算" if self.samples else "无样本")
+            msg = self.error if self.error else ("请在左侧选择样本" if self.samples else "当前工位无样本")
             draw_text(canvas, msg, (x1 + int(16 * m["s"]), y1 + int(16 * m["s"])),
                       m["fs_body"], GuiTheme.ERR if self.error else GuiTheme.TEXT_MUTED)
             return
 
-        # 等比适配面板 (留 8px 内边距)
-        avail_w, avail_h = x2 - x1 - int(16 * m["s"]), y2 - y1 - int(16 * m["s"])
+        # 视口矩形与图像切片计算 (基于 MappingViewportInteractor)
+        vx, vy, vw, vh = x1 + 2, y1 + 2, x2 - x1 - 4, y2 - y1 - 4
         ih, iw = self.vis_img.shape[:2]
-        scale = min(avail_w / iw, avail_h / ih)
-        disp = cv2.resize(self.vis_img, (max(1, int(iw * scale)), max(1, int(ih * scale))),
-                          interpolation=cv2.INTER_AREA)
-        ox, oy = x1 + (x2 - x1 - disp.shape[1]) // 2, y1 + (y2 - y1 - disp.shape[0]) // 2
-        canvas[oy:oy + disp.shape[0], ox:ox + disp.shape[1]] = disp
+        rois = self.viewport.compute_viewport_render_rois((vx, vy, vw, vh), iw, ih)
 
-        mode_txt = "3D 完整链路" if self.mode == "3d" else "2D 预览 (无深度) — 尺寸按 640mm 标称距离估算"
-        mode_col = GuiTheme.OK if self.mode == "3d" else GuiTheme.WARN
+        if rois:
+            (src_x1, src_y1, src_x2, src_y2), (dst_x1, dst_y1, dst_x2, dst_y2) = rois
+            src_crop = self.vis_img[src_y1:src_y2, src_x1:src_x2]
+            dw = dst_x2 - dst_x1
+            dh = dst_y2 - dst_y1
+            if dw > 0 and dh > 0 and src_crop.size > 0:
+                interp = cv2.INTER_LINEAR if self.viewport.zoom_level > 1.0 else cv2.INTER_AREA
+                disp = cv2.resize(src_crop, (dw, dh), interpolation=interp)
+                canvas[dst_y1:dst_y2, dst_x1:dst_x2] = disp
+
+        # 视口底部状态提示
+        if self.targets:
+            mode_txt = f"{'3D 完整链路' if self.mode == '3d' else '2D 预览'} — 提取前 {len(self.targets)} 位目标 (已高亮目标 #{self.targets[self.sel_target].id})"
+            mode_col = GuiTheme.OK if self.mode == "3d" else GuiTheme.WARN
+        else:
+            mode_txt = "原图已载入 — 点击上方【识别定位】(或按空格键) 开始位姿解算"
+            mode_col = GuiTheme.GOLD
         draw_text(canvas, mode_txt, (x1 + int(8 * m["s"]), y2 - int(20 * m["s"])),
                   m["fs_small"], mode_col, bold=True)
 
+        # 视口右上角缩放比例悬浮指示 (滚轮缩放时即时反馈)
+        if abs(self.viewport.zoom_level - 1.0) > 0.01 or self.viewport.is_panning:
+            zoom_badge = f"缩放: {self.viewport.zoom_level:.1f}x [右键拖拽/双击复位]"
+            (zw, zh), _ = measure_text(zoom_badge, font_size=m["fs_small"])
+            cv2.rectangle(canvas, (x2 - zw - int(16 * m["s"]), y1 + int(8 * m["s"])),
+                          (x2 - int(6 * m["s"]), y1 + zh + int(14 * m["s"])), (20, 24, 30), -1)
+            cv2.rectangle(canvas, (x2 - zw - int(16 * m["s"]), y1 + int(8 * m["s"])),
+                          (x2 - int(6 * m["s"]), y1 + zh + int(14 * m["s"])), GuiTheme.BORDER, 1)
+            draw_text(canvas, zoom_badge, (x2 - zw - int(11 * m["s"]), y1 + int(11 * m["s"])),
+                      m["fs_small"], GuiTheme.ACCENT)
+
     def _draw_result_panel(self, canvas, m, rect):
-        y = self._panel_bg(canvas, rect, f"检测结果 ({len(self.targets)})")
+        y = self._panel_bg(canvas, rect, f"识别定位结果 (前3位: {len(self.targets)})")
         x1, _, x2, y2 = rect
         if not self.targets:
-            msg = self.error if self.error else "未检出符合规格的芦笋目标"
-            draw_text(canvas, msg, (x1 + int(10 * m["s"]), y + int(10 * m["s"])),
+            msg = self.error if self.error else ("点击【识别定位】开始分析" if (self.samples and self.sel_idx >= 0) else "未检出目标")
+            draw_text(canvas, msg, (x1 + int(10 * m["s"]), y + int(14 * m["s"])),
                       m["fs_body"], GuiTheme.ERR if self.error else GuiTheme.TEXT_MUTED)
             self._draw_gcode_box(canvas, m, rect)
             return
 
-        # 结果列表 (顶层目标排序在前, 每行双行文本)
+        # 结果列表: 遍历排名前 3 位目标，以卡片形式展示核心指标
+        card_h = int(60 * m["s"])
         for list_idx, t in enumerate(self.targets):
-            ry1 = y + list_idx * (m["row_h"] + int(4 * m["s"]))
-            if ry1 + m["row_h"] > y2 - int(200 * m["s"]):
+            ry1 = y + list_idx * (card_h + int(8 * m["s"]))
+            if ry1 + card_h > y2 - int(190 * m["s"]):
                 break   # 预留 G-code 区
-            ry2 = ry1 + m["row_h"]
+            ry2 = ry1 + card_h
             is_sel = (list_idx == self.sel_target)
             is_top = t.is_topmost
-            if is_sel:
-                cv2.rectangle(canvas, (x1 + 2, ry1), (x2 - 2, ry2), GuiTheme.CARD_SEL, -1)
-            elif x1 < self.mouse_pos[0] < x2 and ry1 <= self.mouse_pos[1] <= ry2:
-                cv2.rectangle(canvas, (x1 + 2, ry1), (x2 - 2, ry2), GuiTheme.CARD_HOVER, -1)
-            col = (GuiTheme.OK if is_top else GuiTheme.TEXT_SUB) if not is_sel else GuiTheme.WHITE
-            badge = "[TOP] " if is_top else ""
-            draw_text(canvas, f"{badge}#{t.id}  L:{t.length_mm}  D:{t.diam_mm}  R:{t.robot_r}",
-                      (x1 + int(10 * m["s"]), ry1 + int(4 * m["s"])), m["fs_small"], col, bold=is_top)
-            draw_text(canvas, f"SCARA ({t.robot_x}, {t.robot_y}, {t.robot_z})",
-                      (x1 + int(10 * m["s"]), ry1 + m["row_h"] - int(18 * m["s"])),
-                      m["fs_small"], GuiTheme.ACCENT if is_sel else GuiTheme.TEXT_MUTED)
-            self._result_rows.append(((x1 + 2, ry1, x2 - 2, ry2), list_idx))
+
+            # 卡片背景与高亮边框
+            bg_col = (28, 38, 32) if is_sel else (20, 24, 30)
+            border_col = (0, 255, 120) if is_sel else ((240, 180, 40) if is_top else (55, 65, 80))
+            cv2.rectangle(canvas, (x1 + 4, ry1), (x2 - 4, ry2), bg_col, -1)
+            cv2.rectangle(canvas, (x1 + 4, ry1), (x2 - 4, ry2), border_col, 2 if is_sel else 1)
+
+            badge = "#1最优" if is_top else f"#{t.id}候选"
+            badge_col = (0, 255, 120) if is_sel else ((240, 180, 40) if is_top else GuiTheme.TEXT_SUB)
+            draw_text(canvas, f"{badge} D:{t.diam_mm} L:{int(t.length_mm)}mm",
+                      (x1 + int(8 * m["s"]), ry1 + int(5 * m["s"])), m["fs_small"], badge_col, bold=True)
+
+            h_str = f"+{t.rel_height_mm}mm" if t.rel_height_mm > 0 else (f"Z:{int(t.grip_z)}" if t.grip_z > 0 else "--")
+            draw_text(canvas, f"方向:{t.yaw_deg}° 凸起:{h_str}",
+                      (x1 + int(8 * m["s"]), ry1 + int(23 * m["s"])), m["fs_small"],
+                      GuiTheme.WHITE if is_sel else GuiTheme.TEXT_SUB)
+
+            draw_text(canvas, f"S:({int(t.robot_x)},{int(t.robot_y)},{int(t.robot_z)}) R:{int(t.robot_r)}°",
+                      (x1 + int(8 * m["s"]), ry1 + int(41 * m["s"])), m["fs_small"],
+                      GuiTheme.ACCENT if is_sel else GuiTheme.TEXT_MUTED)
+
+            self._result_rows.append(((x1 + 4, ry1, x2 - 4, ry2), list_idx))
 
         self._draw_gcode_box(canvas, m, rect)
 
     def _draw_gcode_box(self, canvas, m, rect):
         x1, _, x2, y2 = rect
-        gh = int(190 * m["s"])
+        gh = int(185 * m["s"])
         gy1 = y2 - gh - int(6 * m["s"])
         cv2.rectangle(canvas, (x1 + int(4 * m["s"]), gy1), (x2 - int(4 * m["s"]), y2 - int(4 * m["s"])),
                       (16, 19, 24), -1)
@@ -668,7 +755,7 @@ class AsparagusOfflineApp:
             title = f"G-code 预览 (目标 #{self.targets[self.sel_target].id if self.targets else 1}) [E] 导出"
             draw_text(canvas, title, (x1 + int(12 * m["s"]), gy1 + int(5 * m["s"])),
                       m["fs_small"], GuiTheme.GOLD, bold=True)
-            yy = gy1 + int(26 * m["s"])
+            yy = gy1 + int(24 * m["s"])
             line_h = int(13 * m["s"])
             for line in self.gcode_text.splitlines():
                 if yy + line_h > y2 - int(8 * m["s"]):
@@ -695,32 +782,65 @@ class AsparagusOfflineApp:
         return None
 
     def _on_button(self, label):
-        if label.startswith("批量"):
-            self.start_batch()
-        elif label.startswith("停止"):
-            self.batch_queue = []
-            self.set_toast("批量解算已停止")
-        elif label.startswith("重新扫描"):
-            self.rescan()
-            self.set_toast(f"已重新扫描: {len(self.samples)} 个样本")
+        if label.startswith("识别定位"):
+            self.run_analyze()
         elif label.startswith("导出"):
             self.export_gcode()
         elif label.startswith("退出"):
             self._running = False
 
     def _on_mouse(self, event, x, y, flags, param):
-        if event == cv2.EVENT_MOUSEMOVE:
-            self.mouse_pos = (x, y)
+        self.mouse_pos = (x, y)
+        m = self._metrics()
+        list_p, img_p, _ = self._panels(m)
+
+        # 1. 鼠标滚轮事件 (严格区分左栏滚动 vs 中间视口以鼠标为中心缩放)
+        if event == cv2.EVENT_MOUSEWHEEL:
+            wheel_up = (flags > 0)
+
+            # A. 鼠标位于左栏样本列表：上下翻滚列表
+            if list_p[0] <= x <= list_p[2]:
+                if wheel_up:
+                    self.scroll_off = max(0, self.scroll_off - 2)
+                else:
+                    self.scroll_off += 2
+                return
+
+            # B. 鼠标位于中间图像视口：以光标为中心自适应无级缩放
+            elif img_p[0] <= x <= img_p[2] and img_p[1] <= y <= img_p[3]:
+                vx, vy, vw, vh = img_p[0] + 2, img_p[1] + 2, img_p[2] - img_p[0] - 4, img_p[3] - img_p[1] - 4
+                self.viewport.zoom_at(x, y, wheel_up, (vx, vy, vw, vh))
+                return
+
+            # C. 其他区域交给 WindowManager
+            handled, toast = self.win_mgr.handle_mouse_wheel(event, flags)
+            if handled and toast:
+                self.set_toast(toast)
             return
 
-        handled, toast = self.win_mgr.handle_mouse_wheel(event, flags)
-        if handled:
-            self.set_toast(toast)
-            return
+        # 2. 拖拽平移事件 (支持鼠标右键或中键按住拖拽，参照 Mapping Studio)
+        if event in (cv2.EVENT_RBUTTONDOWN, cv2.EVENT_MBUTTONDOWN):
+            if img_p[0] <= x <= img_p[2] and img_p[1] <= y <= img_p[3]:
+                self.viewport.start_pan(x, y)
+                return
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if self.viewport.update_pan(x, y):
+                return
+        elif event in (cv2.EVENT_RBUTTONUP, cv2.EVENT_MBUTTONUP):
+            if self.viewport.is_panning:
+                self.viewport.end_pan()
+                return
 
+        # 3. 双击事件 (视口内双击左键或右键一键重置缩放与平移)
+        if event in (cv2.EVENT_LBUTTONDBLCLK, cv2.EVENT_RBUTTONDBLCLK):
+            if img_p[0] <= x <= img_p[2] and img_p[1] <= y <= img_p[3]:
+                self.viewport.reset()
+                self.set_toast("视口已重置为适应窗口 (1.0x)")
+                return
+
+        # 4. 常规左键点击事件
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.mouse_pos = (x, y)
-            # 1. 优先判定置顶下拉浮层点击
+            # 优先判定置顶下拉浮层点击
             if self.active_dropdown and self._dd_items:
                 for rect, key in self._dd_items:
                     if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
@@ -729,7 +849,7 @@ class AsparagusOfflineApp:
                         return
                 self.active_dropdown = None
 
-            # 2. 常规按钮点击
+            # 按钮点击
             hit = self.hit_test(x, y)
             if hit:
                 act_type, act_val = hit
@@ -737,18 +857,16 @@ class AsparagusOfflineApp:
                     self.active_dropdown = None if self.active_dropdown == act_val else act_val
                 elif act_type == "btn":
                     self._on_button(act_val)
+                elif act_type == "set_view_mode":
+                    self._select_view_mode(act_val)
                 return
             for rect, idx in self._sample_rows:
                 if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
-                    self._select_sample(idx)
+                    self._select_sample(idx, analyze_now=False)
                     return
             for rect, t_idx in self._result_rows:
                 if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
-                    self.sel_target = t_idx
-                    if self.mode == "3d" and self.targets:
-                        self.gcode_text = self.targets[t_idx].generate_gcode(
-                            safe_z=self.sys_cfg["safe_z"],
-                            drop_x=self.sys_cfg["drop_x"], drop_y=self.sys_cfg["drop_y"])
+                    self._select_target(t_idx)
                     return
 
     def _handle_key(self, raw_key: int):
@@ -760,28 +878,22 @@ class AsparagusOfflineApp:
         key = chr(raw_key & 0xFF).lower() if (raw_key & 0xFF) < 128 else ""
         if key in ("x", "\x1b"):
             self._running = False
-        elif key == "b":
-            self.start_batch()
-        elif key == "s" and self.batch_queue:
-            self.batch_queue = []
-            self.set_toast("批量解算已停止")
-        elif key == "r":
-            self.rescan()
-            self.set_toast(f"已重新扫描: {len(self.samples)} 个样本")
+        elif key == " " or raw_key == 32 or raw_key in (10, 13):
+            self.run_analyze()
         elif key == "e":
             self.export_gcode()
         elif raw_key in (2490368, 65362, 38):      # 上
             if self.sel_idx > 0:
-                self._select_sample(self.sel_idx - 1)
+                self._select_sample(self.sel_idx - 1, analyze_now=False)
         elif raw_key in (2621440, 65364, 40):      # 下
             if self.sel_idx < len(self.samples) - 1:
-                self._select_sample(self.sel_idx + 1)
+                self._select_sample(self.sel_idx + 1, analyze_now=False)
 
     # ------------------------------ 主循环 ------------------------------
     def run(self):
         self.win_mgr.setup_window(WINDOW_KEY, self._on_mouse)
-        self.win_mgr.set_unicode_title("芦笋抓取位姿离线验证 - Asparagus Offline")
-        log.info("芦笋离线验证 GUI 已启动: %s (%d 个样本)", self.sample_dir, len(self.samples))
+        self.win_mgr.set_unicode_title("识别芦笋位姿 - Asparagus Offline")
+        log.info("芦笋位姿识别 GUI 已启动: %s (%d 个样本)", self.sample_dir, len(self.samples))
 
         while self._running:
             key = cv2.waitKey(30)
@@ -793,22 +905,19 @@ class AsparagusOfflineApp:
             if poll.toast_msg:
                 self.set_toast(poll.toast_msg)
 
-            if self.batch_queue:
-                self._batch_step()   # 每帧推进一个样本, UI 保持响应
-
             cv2.imshow(WINDOW_KEY, self.render())
 
         try:
             cv2.destroyWindow(WINDOW_KEY)
         except Exception:
             pass
-        log.info("芦笋离线验证 GUI 已退出")
+        log.info("芦笋位姿识别 GUI 已退出")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="芦笋抓取位姿离线验证 GUI (文件照片输入)")
+    parser = argparse.ArgumentParser(description="识别芦笋位姿 GUI (文件照片输入)")
     parser.add_argument("--dir", type=str, default=None,
-                        help="样本目录 (默认 data/snapshots/, 彩色 png + 可选对齐深度 npy)")
+                        help="样本目录 (默认当前工位 production/raw_images/, 彩色 png + 可选对齐深度 npy)")
     args = parser.parse_args()
     app = AsparagusOfflineApp(sample_dir=args.dir)
     app.run()
@@ -816,3 +925,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

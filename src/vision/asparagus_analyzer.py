@@ -116,6 +116,14 @@ class AsparagusAnalyzer:
         self.last_valid_tag_transform: Optional[np.ndarray] = None  # 历史锁定外参缓存
         self.last_tag_info: dict = {}  # 上一帧 AprilTag 定位的诊断信息
 
+        # CV 视觉识别流水线调试图与中间过程缓存
+        self.vis_stage1: Optional[np.ndarray] = None
+        self.vis_dist: Optional[np.ndarray] = None       # 欧氏距离变换场 (Radius Energy Map)
+        self.vis_peaks: Optional[np.ndarray] = None      # 垂向极大值峰脊线 (Transverse Ridge Peaks)
+        self.vis_stage2: Optional[np.ndarray] = None
+        self.vis_stage3: Optional[np.ndarray] = None
+        self.last_pipeline_targets: List[AsparagusTarget] = []
+
     def set_hand_eye_matrix(self, t_matrix: Optional[np.ndarray]):
         """
         设置或更新相机到 SCARA 机械臂基座的手眼标定矩阵 (4x4)
@@ -303,179 +311,339 @@ class AsparagusAnalyzer:
             
         return h_color
 
-    def segment_and_separate(self, color_bgr: np.ndarray, depth_mm: np.ndarray, rel_h: np.ndarray) -> List[np.ndarray]:
+    def extract_stage1_foreground(self, color_bgr: np.ndarray, depth_mm: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
         """
-        3D 深度浮凸主导 + 黑帽横向暗缝切分实例分离算法：
-        1. 提取高于台面 (rel_h > 8mm) 且具备植物色特征的前景物料区
-        2. 基于 Black-Hat 细长水平卷积核提取芦笋与芦笋接触面的纵向阴影缝隙
-        3. 用暗缝掩膜对并排粘连的连通块进行断开切分，输出单根芦笋实例轮廓列表
+        【阶段 1】前景物料提取 (ExG 超绿 + 传送带 ROI 约束)
+        :return: (fg_mask_full, (roi_x1, roi_x2, roi_y1, roi_y2))
         """
         h, w = color_bgr.shape[:2]
-        b, g, r = cv2.split(color_bgr)
-        hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)
-        
-        # 1. 前景掩膜：深度高于台面且属于植物色域 (兼顾嫩黄绿、深绿与白绿笋体)
-        color_valid = (g.astype(float) >= b.astype(float) * 0.90) | ((hsv[:, :, 0] >= 20) & (hsv[:, :, 0] <= 100))
-        fg_mask = (color_valid & (rel_h >= self.table_margin_mm) & (hsv[:, :, 2] > 25) & (depth_mm >= 350) & (depth_mm <= 780)).astype(np.uint8) * 255
-        
-        # 限制在中心作业有效 ROI
-        roi_mask = np.zeros((h, w), dtype=np.uint8)
-        roi_mask[int(h * 0.04):int(h * 0.96), int(w * 0.04):int(w * 0.96)] = 255
-        fg_mask = cv2.bitwise_and(fg_mask, roi_mask)
-        
-        k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 5))
-        fg_clean = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, k_close)
-        
-        # 2. 黑帽变换提取芦笋之间的水平暗缝
-        gray = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2GRAY)
-        k_seam = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 5))
-        black_hat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, k_seam)
-        _, seams = cv2.threshold(black_hat, 8, 255, cv2.THRESH_BINARY)
-        
-        k_dil = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
-        seams_dil = cv2.dilate(seams, k_dil, iterations=1)
-        
-        # 3. 切分粘连并做形态学去噪
-        cut_mask = cv2.bitwise_and(fg_clean, cv2.bitwise_not(seams_dil))
-        k_op = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3))
-        cut_clean = cv2.morphologyEx(cut_mask, cv2.MORPH_OPEN, k_op)
-        
-        cnts, _ = cv2.findContours(cut_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        return [c for c in cnts if cv2.contourArea(c) >= self.min_area]
+        # 传送带核心作业区域 ROI (自动剔除左右两侧支架和反光区域)
+        roi_x1 = int(w * 0.35)
+        roi_x2 = int(w * 0.81)
+        roi_y1 = int(h * 0.02)
+        roi_y2 = int(h * 0.98)
 
-    def segment_foreground(self, color_bgr: np.ndarray, depth_mm: np.ndarray) -> np.ndarray:
-        """
-        兼容外部接口调用的单张二值掩膜生成
-        """
-        plane_coeff = self.fit_table_plane(depth_mm)
-        rel_h = self.compute_relative_height(depth_mm, plane_coeff)
-        b, g, r = cv2.split(color_bgr)
-        hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)
-        color_valid = (g.astype(float) >= b.astype(float) * 0.90) | ((hsv[:, :, 0] >= 20) & (hsv[:, :, 0] <= 100))
-        fg = (color_valid & (rel_h >= self.table_margin_mm) & (hsv[:, :, 2] > 25) & (depth_mm >= 400) & (depth_mm <= 670)).astype(np.uint8) * 255
-        return fg
+        roi_bgr = color_bgr[roi_y1:roi_y2, roi_x1:roi_x2].astype(np.float32)
+        b, g, r = roi_bgr[:, :, 0], roi_bgr[:, :, 1], roi_bgr[:, :, 2]
 
-    def analyze(self, color_bgr: np.ndarray, depth_mm: Optional[np.ndarray]) -> List[AsparagusTarget]:
-        """
-        端到端全流程分析：
-          0. AprilTag 三级标定降级链解算当前帧坐标变换
-          1. 拟合工作台平面并计算逐像素相对高度
-          2. 黑帽暗缝检测切开并排粘连，分离出独立单根芦笋轮廓
-          3. 基于 fitLine 解算各根芦笋轴线角度与长径尺寸
-          4. 脊线深度采样与工作台倾斜补偿
-          5. 叠压拓扑分析，锁定最顶层可抓取目标 (Topmost Pickable Target)
-        :param depth_mm: 对齐深度矩阵 (uint16 mm)；传 None 时降级为纯照片 2D 预览模式
-        """
-        if depth_mm is None:
-            return self._analyze_2d(color_bgr)
-
-        # 步骤 0：三级标定降级链 — 解算当前帧最优坐标变换
-        frame_transform, frame_calib_source = self._resolve_calibration(color_bgr)
-
-        plane_coeff = self.fit_table_plane(depth_mm)
-        rel_h = self.compute_relative_height(depth_mm, plane_coeff)
-        contours = self.segment_and_separate(color_bgr, depth_mm, rel_h)
+        # 超绿特征 ExG 与亮度/色差联合约束
+        exg = 2.0 * g - r - b
+        gray = cv2.cvtColor(color_bgr[roi_y1:roi_y2, roi_x1:roi_x2], cv2.COLOR_BGR2GRAY)
         
-        targets: List[AsparagusTarget] = []
-        target_idx = 1
+        # 纯植物绿/嫩黄绿提取：ExG > 10 或 G 显著大于 B 且具有基本亮度
+        fg_roi = ((exg > 10.0) | ((g > b * 1.05) & (gray > 42))).astype(np.uint8) * 255
+
+        # 微弱开运算消除极微小反光毛刺 (严禁大闭运算，坚决保护并排芦笋之间的缝隙！)
+        k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        fg_roi = cv2.morphologyEx(fg_roi, cv2.MORPH_OPEN, k_open)
+
+        # 若有深度，排除非工作台深度区域 (350mm ~ 780mm)
+        if depth_mm is not None:
+            depth_roi = depth_mm[roi_y1:roi_y2, roi_x1:roi_x2]
+            valid_depth = (depth_roi >= 350) & (depth_roi <= 780)
+            # 仅在有深度的区域进行深度约束
+            fg_roi = np.where((depth_roi > 0) & (~valid_depth), 0, fg_roi)
+
+        fg_full = np.zeros((h, w), dtype=np.uint8)
+        fg_full[roi_y1:roi_y2, roi_x1:roi_x2] = fg_roi
+
+        # 阶段 1 可视化渲染：原图压暗 + 绿色荧光高亮物料 + ROI 引导框
+        vis = (color_bgr.astype(np.float32) * 0.45).astype(np.uint8)
+        green_layer = vis.copy()
+        green_layer[fg_full > 0] = (40, 235, 90)
+        vis = cv2.addWeighted(green_layer, 0.65, vis, 0.35, 0)
         
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < self.min_area:
+        # 绘制传送带作业 ROI
+        cv2.rectangle(vis, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
+        cv2.putText(vis, "CONVEYOR WORKSPACE ROI", (roi_x1 + 8, roi_y1 + 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 2)
+
+        # 统计前景像素面积
+        fg_pixels = int(np.count_nonzero(fg_full))
+        badge = f"STAGE 1: FOREGROUND (ExG+ROI) | Pixels: {fg_pixels}"
+        cv2.rectangle(vis, (12, 12), (520, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis, (12, 12), (520, 48), (0, 235, 90), 2)
+        put_text(vis, badge, (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 120), 2)
+
+        self.vis_stage1 = vis
+        return fg_full, (roi_x1, roi_x2, roi_y1, roi_y2)
+
+    def extract_stage2_spines(
+        self,
+        color_bgr: np.ndarray,
+        fg_mask: np.ndarray,
+        roi_box: Tuple[int, int, int, int],
+        depth_mm: Optional[np.ndarray] = None,
+        nominal_z_mm: float = 640.0
+    ) -> List[dict]:
+        """
+        【阶段 2】独立脊线骨架与单体验证 (Spine & Ridge Tracing)
+        原理：
+          在欧氏距离变换场 (Distance Transform) 中，不论多根芦笋如何并排挨着，
+          每一根芦笋的中轴线上都是截面半径的局部极大值峰（Ridge）。
+          沿垂向 (Y 轴) 提取局部极大值峰线，横向 (X 轴) 桥接，即可彻底切分并排粘连物料！
+        :return: 候选芦笋脊线字典列表
+        """
+        h, w = color_bgr.shape[:2]
+        roi_x1, roi_x2, roi_y1, roi_y2 = roi_box
+        fg_roi = fg_mask[roi_y1:roi_y2, roi_x1:roi_x2]
+
+        if np.count_nonzero(fg_roi) < 200:
+            self.vis_stage2 = color_bgr.copy()
+            return []
+
+        # 1. 距离变换 (计算前景像素到背景边界的最短欧氏距离，值即代表截面半径)
+        dist = cv2.distanceTransform(fg_roi, cv2.DIST_L2, 5)
+
+        # 生成【距离变换场】可视化图 (COLORMAP_TURBO 热力图，直观展现物料半径能量分布与贴合鞍部)
+        vis_d = (color_bgr.astype(np.float32) * 0.25).astype(np.uint8)
+        dist_norm = np.clip(dist / 28.0 * 255.0, 0, 255).astype(np.uint8)
+        dist_color = cv2.applyColorMap(dist_norm, cv2.COLORMAP_TURBO)
+        roi_patch = vis_d[roi_y1:roi_y2, roi_x1:roi_x2]
+        fg_bool = fg_roi > 0
+        roi_patch[fg_bool] = dist_color[fg_bool]
+        vis_d[roi_y1:roi_y2, roi_x1:roi_x2] = roi_patch
+        cv2.rectangle(vis_d, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
+        cv2.rectangle(vis_d, (12, 12), (560, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_d, (12, 12), (560, 48), (40, 230, 240), 2)
+        put_text(vis_d, "CV: DISTANCE TRANSFORM (Radius Field & Seam Valleys)",
+                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (40, 230, 240), 2)
+        self.vis_dist = vis_d
+
+        # 2. 垂向局部极大值提取 (沿垂直芦笋长轴跨度方向做非极大值抑制 NMS，在贴合处天然出现凹陷谷底，只在物料中轴取峰值)
+        kernel_v = np.ones((7, 1), np.uint8)
+        dist_dil_v = cv2.dilate(dist, kernel_v)
+        peaks = (dist == dist_dil_v) & (dist >= 4.0)
+
+        # 生成【极大值峰脊线】可视化图 (点亮非极大值抑制后的中轴峰值点阵，证明并排缝隙处的数学解耦)
+        vis_p = (color_bgr.astype(np.float32) * 0.35).astype(np.uint8)
+        cnts_fg, _ = cv2.findContours(fg_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cf in cnts_fg:
+            cv2.drawContours(vis_p, [cf + np.array([roi_x1, roi_y1])], -1, (60, 110, 75), 1)
+        py, px = np.where(peaks)
+        for y_pt, x_pt in zip(py, px):
+            gx, gy = x_pt + roi_x1, y_pt + roi_y1
+            cv2.drawMarker(vis_p, (gx, gy), (0, 255, 255), cv2.MARKER_CROSS, 4, 1)
+        cv2.rectangle(vis_p, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
+        cv2.rectangle(vis_p, (12, 12), (580, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_p, (12, 12), (580, 48), (0, 255, 255), 2)
+        put_text(vis_p, "CV: TRANSVERSE NMS RIDGE PEAKS (De-coupling Seams)",
+                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 255), 2)
+        self.vis_peaks = vis_p
+
+        # 3. 沿芦笋主轴方向横向形态学闭运算桥接 (形成连续中轴骨架)
+        k_h = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 1))
+        peaks_connected = cv2.morphologyEx(peaks.astype(np.uint8) * 255, cv2.MORPH_CLOSE, k_h)
+
+        cnts, _ = cv2.findContours(peaks_connected, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        scale = (nominal_z_mm / self.fx) if depth_mm is None else None
+
+        candidates = []
+        # 可视化图底图
+        vis = color_bgr.copy()
+        overlay = vis.copy()
+
+        # 调色盘区分不同芦笋实例
+        palette = [
+            (255, 120, 40), (40, 230, 240), (240, 100, 220), (80, 240, 120),
+            (255, 210, 40), (120, 160, 255), (200, 255, 80), (255, 80, 140)
+        ]
+
+        cand_id = 1
+        for c in cnts:
+            pts = c.reshape(-1, 2)
+            if len(pts) < 8:
                 continue
-            
-            # 使用 fitLine 进行鲁棒主轴拟合，消除 minAreaRect 的 90 度跳变歧义
-            [vx, vy, x0, y0] = cv2.fitLine(cnt, cv2.DIST_L2, 0, 0.01, 0.01)
-            vx_val, vy_val = float(vx[0]), float(vy[0])
-            cx_val, cy_val = float(x0[0]), float(y0[0])
-            
-            # 计算轴线朝向角 (范围 [-90°, 90°])
-            angle_rad = np.arctan2(vy_val, vx_val)
-            yaw_deg = float(np.degrees(angle_rad))
+
+            rect = cv2.minAreaRect(c)
+            (rcx, rcy), (rw, rh), _ = rect
+            l_approx = max(rw, rh)
+            if l_approx < 80:
+                continue
+
+            # 主轴拟合
+            [vx, vy, x0, y0] = cv2.fitLine(c, cv2.DIST_L2, 0, 0.01, 0.01)
+            vx, vy = float(vx[0]), float(vy[0])
+            if abs(vx) < 0.45:
+                continue  # 芦笋应大致平行传送带输送方向
+            if vx < 0:
+                vx, vy = -vx, -vy
+
+            # 投影计算脊线长度
+            proj = np.dot(pts - np.array([rcx, rcy]), np.array([vx, vy]))
+            min_p, max_p = float(np.min(proj)), float(np.max(proj))
+            len_px = float(max_p - min_p)
+            if len_px < 100:
+                continue
+
+            # 在脊线上多点采样距离场半径
+            sampled_radii = []
+            spine_pts_img = []
+            for s in np.linspace(min_p * 0.15, max_p * 0.85, 16):
+                sx = int(round(rcx + s * vx))
+                sy = int(round(rcy + s * vy))
+                if 0 <= sx < fg_roi.shape[1] and 0 <= sy < fg_roi.shape[0]:
+                    sampled_radii.append(float(dist[sy, sx]))
+                    spine_pts_img.append((sx + roi_x1, sy + roi_y1))
+
+            if not sampled_radii:
+                continue
+
+            avg_rad = float(np.median(sampled_radii))
+            diam_px = float(avg_rad * 2.0)
+
+            # 图像绝对中心
+            global_cx = float(rcx + roi_x1)
+            global_cy = float(rcy + roi_y1)
+
+            # 物理尺度换算与先验尺寸过滤
+            if depth_mm is not None:
+                # 采样脊线上的真实深度
+                sample_depths = []
+                for (px_x, px_y) in spine_pts_img:
+                    if 0 <= px_x < w and 0 <= px_y < h:
+                        d_val = depth_mm[px_y, px_x]
+                        if 350 <= d_val <= 780:
+                            sample_depths.append(d_val)
+                z_ref = float(np.median(sample_depths)) if len(sample_depths) >= 4 else nominal_z_mm
+                local_scale = z_ref / self.fx
+            else:
+                z_ref = nominal_z_mm
+                local_scale = scale
+
+            l_mm = float(len_px * local_scale)
+            d_mm = float(diam_px * local_scale)
+
+            # 物理尺寸合规性校验：充分支持 6mm ~ 48mm 粗细 (涵盖特级粗笋 35mm)，长度 > 100mm
+            if not (6.0 <= d_mm <= 48.0 and 100.0 <= l_mm <= 600.0):
+                continue
+
+            yaw_deg = float(np.degrees(np.arctan2(vy, vx)))
             if yaw_deg > 90.0: yaw_deg -= 180.0
             elif yaw_deg < -90.0: yaw_deg += 180.0
-            
-            # 沿轴线与垂轴投影计算长径
-            pts = cnt.reshape(-1, 2).astype(float)
-            diff = pts - np.array([cx_val, cy_val])
-            proj_len = np.dot(diff, np.array([vx_val, vy_val]))
-            proj_wid = np.dot(diff, np.array([-vy_val, vx_val]))
-            
-            length_px = float(np.max(proj_len) - np.min(proj_len))
-            diam_px = float(np.max(proj_wid) - np.min(proj_wid))
-            
-            aspect_ratio = length_px / max(1.0, diam_px)
-            if aspect_ratio < self.min_aspect_ratio:
-                continue
-            
-            # 提取中轴脊线采样掩膜
-            c_mask = np.zeros(color_bgr.shape[:2], dtype=np.uint8)
-            cv2.drawContours(c_mask, [cnt], -1, 255, -1)
-            k_erode = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-            spine_mask = cv2.erode(c_mask, k_erode, iterations=1)
-            
-            # 深度统计采样
-            valid_depth_mask = (spine_mask > 0) & (depth_mm > 350) & (depth_mm < 700)
-            spine_depths = depth_mm[valid_depth_mask]
-            if len(spine_depths) < 10:
-                spine_depths = depth_mm[(c_mask > 0) & (depth_mm > 350) & (depth_mm < 700)]
-            
-            if len(spine_depths) == 0:
-                continue
-            
-            # 取前 15% 分位数作为最顶面高度 Z_top (抗反光噪点)
-            z_top = float(np.percentile(spine_depths, 15))
-            z_med = float(np.median(spine_depths))
-            
-            # --- 3D 空间真实欧氏测距 (彻底消除 ±30° 大倾角透视短缩误差) ---
-            # 芦笋两端点在图像上的精确亚像素坐标
-            p_min, p_max = float(np.min(proj_len)), float(np.max(proj_len))
-            u1, v1 = cx_val + p_min * vx_val, cy_val + p_min * vy_val
-            u2, v2 = cx_val + p_max * vx_val, cy_val + p_max * vy_val
-            
-            # 结合传送带平面方程估计两端点的真实深度 Z1, Z2
-            if plane_coeff is not None:
-                # 局部台面高度减去物料凸起
-                z1 = float(plane_coeff[0] * u1 + plane_coeff[1] * v1 + plane_coeff[2] - (z_med / self.fx * 2.0))
-                z2 = float(plane_coeff[0] * u2 + plane_coeff[1] * v2 + plane_coeff[2] - (z_med / self.fx * 2.0))
-            else:
-                z1 = z_med
-                z2 = z_med
-            
-            # 反投影至 3D 空间计算无损真实欧氏长度
-            x1_3d = (u1 - self.cx) * z1 / self.fx
-            y1_3d = (v1 - self.cy) * z1 / self.fy
-            x2_3d = (u2 - self.cx) * z2 / self.fx
-            y2_3d = (v2 - self.cy) * z2 / self.fy
-            
-            length_mm = float(np.sqrt((x1_3d - x2_3d)**2 + (y1_3d - y2_3d)**2 + (z1 - z2)**2))
-            
-            # 直径按中心深度尺度解算
-            scale_center = z_med / self.fx
-            diam_mm = float(diam_px * scale_center)
-            
-            # 过滤不符合芦笋物理尺寸的杂散区域
-            if not (self.min_length_mm <= length_mm <= self.max_length_mm):
-                continue
-            if not (self.min_diam_mm <= diam_mm <= self.max_diam_mm):
-                continue
-            
-            # 计算相机坐标系下的 3D 抓取中心点 (X, Y, Z)
-            grip_x = float((cx_val - self.cx) * z_med / self.fx)
-            grip_y = float((cy_val - self.cy) * z_med / self.fy)
-            grip_z = float(z_top)
-            
-            # 计算相对工作台的凸起净高度 (mm)
-            if plane_coeff is not None:
-                table_z_local = plane_coeff[0] * cx_val + plane_coeff[1] * cy_val + plane_coeff[2]
-                rel_height_mm = float(table_z_local - z_top)
-            else:
-                rel_height_mm = float(640.0 - z_top)
-            
-            rect = cv2.minAreaRect(cnt)
-            box_corners = cv2.boxPoints(rect).astype(np.int32)
 
-            # 计算机械臂 SCARA 抓取坐标系参数 (三级标定降级链坐标变换)
+            # 构造紧凑外接定向矩形角点
+            u_vec = np.array([vx, vy])
+            v_vec = np.array([-vy, vx])
+            half_l = len_px * 0.5
+            half_w = max(diam_px * 0.5, 4.0)
+
+            c_pt = np.array([global_cx, global_cy])
+            p1 = c_pt - half_l * u_vec - half_w * v_vec
+            p2 = c_pt + half_l * u_vec - half_w * v_vec
+            p3 = c_pt + half_l * u_vec + half_w * v_vec
+            p4 = c_pt - half_l * u_vec + half_w * v_vec
+            box_corners = np.array([p1, p2, p3, p4], dtype=np.int32)
+
+            color_theme = palette[(cand_id - 1) % len(palette)]
+
+            # 阶段 2 可视化绘制：半透明定向外框 + 脊线中轴 + 采样半径圈
+            cv2.fillPoly(overlay, [box_corners], color_theme)
+            cv2.polylines(vis, [box_corners], True, color_theme, 2)
+            
+            # 白色高亮中心脊线
+            sp_p1 = (int(global_cx - half_l * vx), int(global_cy - half_l * vy))
+            sp_p2 = (int(global_cx + half_l * vx), int(global_cy + half_l * vy))
+            cv2.line(vis, sp_p1, sp_p2, (255, 255, 255), 2)
+
+            # 采样圆指示
+            for (px_x, px_y) in spine_pts_img[::4]:
+                cv2.circle(vis, (px_x, px_y), max(2, int(diam_px * 0.5)), (255, 255, 200), 1)
+
+            # 实例标签
+            tag_str = f"#{cand_id} D:{d_mm:.1f} L:{l_mm:.0f}"
+            put_text(vis, tag_str, (int(global_cx - 30), int(global_cy - half_w - 6)),
+                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+
+            candidates.append({
+                'id': cand_id,
+                'center_px': (global_cx, global_cy),
+                'length_px': len_px,
+                'diam_px': diam_px,
+                'length_mm': round(l_mm, 1),
+                'diam_mm': round(d_mm, 1),
+                'yaw_deg': round(yaw_deg, 1),
+                'axis_vector': (vx, vy),
+                'box_corners': box_corners,
+                'z_ref': z_ref,
+                'spine_pts': spine_pts_img
+            })
+            cand_id += 1
+
+        # 混合半透明图层
+        vis = cv2.addWeighted(overlay, 0.25, vis, 0.75, 0)
+        badge2 = f"STAGE 2: SPINES & RIDGES | Identified Instances: {len(candidates)}"
+        cv2.rectangle(vis, (12, 12), (540, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis, (12, 12), (540, 48), (40, 230, 240), 2)
+        put_text(vis, badge2, (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (40, 230, 240), 2)
+
+        self.vis_stage2 = vis
+        return candidates
+
+    def estimate_stage3_poses(
+        self,
+        color_bgr: np.ndarray,
+        depth_mm: Optional[np.ndarray],
+        spines: List[dict],
+        plane_coeff: Optional[np.ndarray] = None,
+        frame_transform: Optional[np.ndarray] = None,
+        frame_calib_source: str = "uncalibrated"
+    ) -> List[AsparagusTarget]:
+        """
+        【阶段 3】位姿解算与排名前三位 (Top 3) 可抓取物料输出
+        :return: 严格按优先级排序的排名前三位 AsparagusTarget 列表
+        """
+        targets: List[AsparagusTarget] = []
+
+        for sp in spines:
+            cx_val, cy_val = sp['center_px']
+            vx_val, vy_val = sp['axis_vector']
+            length_px = sp['length_px']
+            diam_px = sp['diam_px']
+            length_mm = sp['length_mm']
+            diam_mm = sp['diam_mm']
+            yaw_deg = sp['yaw_deg']
+            box_corners = sp['box_corners']
+            z_ref = sp['z_ref']
+
+            if depth_mm is not None:
+                # 采样沿中轴脊线的顶层深度
+                spine_pts = sp.get('spine_pts', [])
+                valid_ds = []
+                for (px_x, px_y) in spine_pts:
+                    if 0 <= px_x < color_bgr.shape[1] and 0 <= px_y < color_bgr.shape[0]:
+                        dv = depth_mm[px_y, px_x]
+                        if 350 <= dv <= 780:
+                            valid_ds.append(dv)
+                
+                if len(valid_ds) >= 3:
+                    z_top = float(np.percentile(valid_ds, 15))
+                    z_med = float(np.median(valid_ds))
+                else:
+                    z_top = z_ref
+                    z_med = z_ref
+
+                # 计算相机坐标系下的 3D 抓取中心点 (X, Y, Z)
+                grip_x = float((cx_val - self.cx) * z_med / self.fx)
+                grip_y = float((cy_val - self.cy) * z_med / self.fy)
+                grip_z = float(z_top)
+
+                # 计算相对工作台的凸起净高度 (mm)
+                if plane_coeff is not None:
+                    table_z_local = plane_coeff[0] * cx_val + plane_coeff[1] * cy_val + plane_coeff[2]
+                    rel_height_mm = float(table_z_local - z_top)
+                else:
+                    rel_height_mm = float(640.0 - z_top)
+            else:
+                z_top = 0.0
+                z_med = z_ref
+                grip_x = float((cx_val - self.cx) * z_ref / self.fx)
+                grip_y = float((cy_val - self.cy) * z_ref / self.fy)
+                grip_z = 0.0
+                rel_height_mm = 0.0
+
+            # SCARA 抓取坐标系转换
             if frame_transform is not None:
                 p_cam_h = np.array([grip_x, grip_y, grip_z, 1.0])
                 p_robot_h = frame_transform @ p_cam_h
@@ -483,7 +651,6 @@ class AsparagusAnalyzer:
                 robot_y = float(p_robot_h[1])
                 robot_z = float(p_robot_h[2])
 
-                # 经过标定旋转矩阵变换芦笋主轴方向，解算夹爪在 SCARA 水平面的目标旋转角
                 r_mat = frame_transform[:3, :3]
                 v_cam = np.array([vx_val, vy_val, 0.0])
                 v_robot = r_mat @ v_cam
@@ -492,23 +659,20 @@ class AsparagusAnalyzer:
                 if robot_r > 90.0: robot_r -= 180.0
                 elif robot_r < -90.0: robot_r += 180.0
             else:
-                # [核心安全防撞机制] 未标定安全模式：
-                # 机械臂 Z 轴绝对禁止直接使用相机镜头深度 (grip_z ~530mm)，否则必撞机毁机！
-                # 强制采用相对传送带凸起净高度 (rel_height_mm, 通常 15~40mm) 作为安全下探参考
                 robot_x = float(grip_x)
                 robot_y = float(grip_y)
                 robot_z = float(rel_height_mm)
                 robot_r = float(yaw_deg)
 
             target = AsparagusTarget(
-                id=target_idx,
+                id=sp['id'],
                 center_px=(cx_val, cy_val),
                 length_px=length_px,
                 diam_px=diam_px,
                 yaw_deg=round(yaw_deg, 1),
                 axis_vector=(vx_val, vy_val),
                 box_corners=box_corners,
-                contour=cnt,
+                contour=box_corners,
                 length_mm=round(length_mm, 1),
                 diam_mm=round(diam_mm, 1),
                 grip_x=round(grip_x, 1),
@@ -524,159 +688,167 @@ class AsparagusAnalyzer:
                 calibration_source=frame_calib_source
             )
             targets.append(target)
-            target_idx += 1
-            
-        # 叠压拓扑分析与最顶层判决：
-        # 判据：相对工作台面凸起高度最高（rel_height_mm 最大）者为最顶层优先抓取目标
+
+        # 排序：优先按相对台面凸起高度降序；纯 2D 时按面积和居中度排序
         if len(targets) > 0:
-            targets.sort(key=lambda t: t.rel_height_mm, reverse=True)
-            targets[0].is_topmost = True
+            if depth_mm is not None:
+                targets.sort(key=lambda t: t.rel_height_mm, reverse=True)
+            else:
+                targets.sort(key=lambda t: (t.length_px * t.diam_px), reverse=True)
+
+            # 严格保留排名前三位 (Top 3)
+            targets = targets[:3]
+            for rank_i, t in enumerate(targets):
+                t.id = rank_i + 1
+                t.is_topmost = (rank_i == 0)
+
+        self.last_pipeline_targets = targets
+        self.vis_stage3 = self.draw_detections(color_bgr, targets, sel_target_idx=0)
+        return targets
+
+    def analyze(
+        self,
+        color_bgr: np.ndarray,
+        depth_mm: Optional[np.ndarray],
+        stages: Tuple[bool, bool, bool] = (True, True, True)
+    ) -> List[AsparagusTarget]:
+        """
+        三阶段透明流水线端到端解算入口
+        :param stages: (run_stage1, run_stage2, run_stage3) 是否执行各阶段
+        :return: 最终排名前三位的识别目标 (若未执行阶段 3 则返回空列表)
+        """
+        run_s1, run_s2, run_s3 = stages
+
+        # 标定与平面拟合准备
+        frame_transform, frame_calib_source = self._resolve_calibration(color_bgr)
+        plane_coeff = self.fit_table_plane(depth_mm) if depth_mm is not None else None
+
+        # 阶段 1：前景物料提取
+        if not run_s1:
+            self.vis_stage1 = None
+            self.vis_stage2 = None
+            self.vis_stage3 = None
+            return []
+
+        fg_mask, roi_box = self.extract_stage1_foreground(color_bgr, depth_mm)
+
+        # 阶段 2：独立脊线骨架与单体验证
+        if not run_s2:
+            self.vis_stage2 = None
+            self.vis_stage3 = None
+            return []
+
+        nominal_z = 640.0
+        if plane_coeff is not None and abs(plane_coeff[2]) > 300:
+            nominal_z = float(plane_coeff[2])
+
+        spines = self.extract_stage2_spines(
+            color_bgr, fg_mask, roi_box, depth_mm=depth_mm, nominal_z_mm=nominal_z
+        )
+
+        # 阶段 3：位姿解算与 Top 3 输出
+        if not run_s3:
+            self.vis_stage3 = None
+            return []
+
+        targets = self.estimate_stage3_poses(
+            color_bgr, depth_mm, spines,
+            plane_coeff=plane_coeff,
+            frame_transform=frame_transform,
+            frame_calib_source=frame_calib_source
+        )
 
         return targets
 
-    def _analyze_2d(self, color_bgr: np.ndarray, nominal_z_mm: float = 640.0) -> List[AsparagusTarget]:
+    def draw_detections(self, image: np.ndarray, targets: List[AsparagusTarget], sel_target_idx: int = 0) -> np.ndarray:
         """
-        纯照片 2D 降级分析 (无深度数据)：
-          - 仅用植物色域分割 + 黑帽暗缝切分，输出轴线倾角与轮廓几何；
-          - 物理尺寸按标称工作距离 (nominal_z_mm) 估算，仅作 2D 预览参考；
-          - 无深度不做顶层判决 (is_topmost 全为 False)，不输出抓取 G-code。
-        """
-        h, w = color_bgr.shape[:2]
-        b, g, r = cv2.split(color_bgr)
-        hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)
-
-        # 植物色域前景 (无深度约束, 收紧为绿主导或高饱和黄绿色域, 排除灰底/台面)
-        color_valid = ((g.astype(float) >= b.astype(float) * 1.08) & (g.astype(float) >= r.astype(float) * 1.08)) \
-            | ((hsv[:, :, 0] >= 20) & (hsv[:, :, 0] <= 100) & (hsv[:, :, 1] >= 40) & (hsv[:, :, 2] >= 40))
-        fg_mask = (color_valid & (hsv[:, :, 2] > 25)).astype(np.uint8) * 255
-        roi_mask = np.zeros((h, w), dtype=np.uint8)
-        roi_mask[int(h * 0.04):int(h * 0.96), int(w * 0.04):int(w * 0.96)] = 255
-        fg_mask = cv2.bitwise_and(fg_mask, roi_mask)
-        fg_clean = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (7, 5)))
-
-        # 黑帽暗缝切分粘连
-        gray = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2GRAY)
-        black_hat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (31, 5)))
-        _, seams = cv2.threshold(black_hat, 8, 255, cv2.THRESH_BINARY)
-        seams_dil = cv2.dilate(seams, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3)), iterations=1)
-        cut_mask = cv2.bitwise_and(fg_clean, cv2.bitwise_not(seams_dil))
-        cut_clean = cv2.morphologyEx(cut_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3)))
-
-        cnts, _ = cv2.findContours(cut_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        targets: List[AsparagusTarget] = []
-        target_idx = 1
-        scale = nominal_z_mm / self.fx   # 标称距离下的 mm/px 尺度
-        for cnt in cnts:
-            area = cv2.contourArea(cnt)
-            if area < self.min_area:
-                continue
-
-            [vx, vy, x0, y0] = cv2.fitLine(cnt, cv2.DIST_L2, 0, 0.01, 0.01)
-            vx_val, vy_val = float(vx[0]), float(vy[0])
-            cx_val, cy_val = float(x0[0]), float(y0[0])
-
-            angle_rad = np.arctan2(vy_val, vx_val)
-            yaw_deg = float(np.degrees(angle_rad))
-            if yaw_deg > 90.0: yaw_deg -= 180.0
-            elif yaw_deg < -90.0: yaw_deg += 180.0
-
-            pts = cnt.reshape(-1, 2).astype(float)
-            diff = pts - np.array([cx_val, cy_val])
-            proj_len = np.dot(diff, np.array([vx_val, vy_val]))
-            proj_wid = np.dot(diff, np.array([-vy_val, vx_val]))
-            length_px = float(np.max(proj_len) - np.min(proj_len))
-            diam_px = float(np.max(proj_wid) - np.min(proj_wid))
-
-            if length_px / max(1.0, diam_px) < self.min_aspect_ratio:
-                continue
-
-            length_mm = float(length_px * scale)
-            diam_mm = float(diam_px * scale)
-            if not (self.min_length_mm <= length_mm <= self.max_length_mm):
-                continue
-            if not (self.min_diam_mm <= diam_mm <= self.max_diam_mm):
-                continue
-
-            rect = cv2.minAreaRect(cnt)
-            box_corners = cv2.boxPoints(rect).astype(np.int32)
-
-            targets.append(AsparagusTarget(
-                id=target_idx,
-                center_px=(cx_val, cy_val),
-                length_px=length_px,
-                diam_px=diam_px,
-                yaw_deg=round(yaw_deg, 1),
-                axis_vector=(vx_val, vy_val),
-                box_corners=box_corners,
-                contour=cnt,
-                length_mm=round(length_mm, 1),
-                diam_mm=round(diam_mm, 1),
-                grip_x=round((cx_val - self.cx) * nominal_z_mm / self.fx, 1),
-                grip_y=round((cy_val - self.cy) * nominal_z_mm / self.fy, 1),
-                grip_z=0.0,
-                z_top=0.0,
-                rel_height_mm=0.0,
-                robot_x=round((cx_val - self.cx) * nominal_z_mm / self.fx, 1),
-                robot_y=round((cy_val - self.cy) * nominal_z_mm / self.fy, 1),
-                robot_z=0.0,
-                robot_r=round(yaw_deg, 1),
-                is_topmost=False,
-                calibration_source="2d_preview"
-            ))
-            target_idx += 1
-
-        return targets
-
-    def draw_detections(self, image: np.ndarray, targets: List[AsparagusTarget]) -> np.ndarray:
-        """
-        在图像上绘制芦笋轮廓、中轴线、长径尺寸、抓取夹爪十字与最顶层卡片
+        在图像上绘制排名前三位的芦笋目标：
+        高亮当前选中/顶层的芦笋 (荧光光晕、加粗双线轮廓、夹爪准星、详细数据卡片)，
+        其余备选目标以对比色标注编号与简明尺寸。
         """
         annotated = image.copy()
-        
-        for t in targets:
+        if not targets:
+            return annotated
+
+        # 确保选中序号合法
+        sel_idx = max(0, min(sel_target_idx, len(targets) - 1))
+
+        # 1. 针对选中的目标先绘制半透明发光填充遮罩 (高亮可选取的芦笋)
+        sel_t = targets[sel_idx]
+        overlay = annotated.copy()
+        cv2.fillPoly(overlay, [sel_t.box_corners], (0, 230, 110))
+        cv2.addWeighted(overlay, 0.28, annotated, 0.72, 0, annotated)
+
+        # 2. 依次绘制各目标 (先画非选中的，后画高亮选中的，保证高亮图层置顶)
+        draw_order = [i for i in range(len(targets)) if i != sel_idx] + [sel_idx]
+
+        for idx in draw_order:
+            t = targets[idx]
+            is_sel = (idx == sel_idx)
             is_top = t.is_topmost
-            color = (0, 255, 120) if is_top else (220, 180, 50)
-            thickness = 3 if is_top else 1
-            
-            # 1. 绘制最小外接矩形框
-            cv2.polylines(annotated, [t.box_corners], True, color, thickness)
-            
-            # 2. 绘制沿芦笋中心轴线的指引线 (与芦笋主干严格平行)
+
             cx_int, cy_int = int(t.center_px[0]), int(t.center_px[1])
             vx, vy = t.axis_vector
-            half_len = int(t.length_px * 0.45)
-            p1 = (int(cx_int - half_len * vx), int(cy_int - half_len * vy))
-            p2 = (int(cx_int + half_len * vx), int(cy_int + half_len * vy))
-            cv2.line(annotated, p1, p2, (0, 255, 255) if is_top else (180, 180, 180), 2)
-            
-            # 3. 绘制垂直于轴线的夹爪示意短线 (展示机械臂开合面)
-            half_diam = int(max(15, t.diam_px * 0.75))
-            perp_p1 = (int(cx_int - half_diam * (-vy)), int(cy_int - half_diam * vx))
-            perp_p2 = (int(cx_int + half_diam * (-vy)), int(cy_int + half_diam * vx))
-            cv2.line(annotated, perp_p1, perp_p2, (0, 0, 255) if is_top else (200, 200, 0), 2)
-            
-            # 4. 绘制抓取瞄准十字
-            marker_color = (0, 0, 255) if is_top else (200, 200, 0)
-            cv2.circle(annotated, (cx_int, cy_int), 6, marker_color, -1)
-            cv2.drawMarker(annotated, (cx_int, cy_int), (255, 255, 255), cv2.MARKER_CROSS, 14, 2)
-            
-            # 5. 标注尺寸与位姿标签
-            if is_top:
-                label_header = f"[TOPMOST] L:{t.length_mm}mm D:{t.diam_mm}mm (+{t.rel_height_mm}mm)"
-                label_pose = f"Grip (X:{t.grip_x}, Y:{t.grip_y}, Z:{t.grip_z})mm | R:{t.yaw_deg}deg"
-                
-                # 顶部高亮大文本卡片
-                cv2.rectangle(annotated, (cx_int - 170, cy_int - 56), (cx_int + 230, cy_int - 6), (20, 20, 20), -1)
-                cv2.rectangle(annotated, (cx_int - 170, cy_int - 56), (cx_int + 230, cy_int - 6), (0, 255, 120), 2)
-                put_text(annotated, label_header, (cx_int - 160, cy_int - 35),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 120), 2)
-                put_text(annotated, label_pose, (cx_int - 160, cy_int - 16),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.43, (0, 255, 255), 1)
+
+            if is_sel:
+                # 高亮选中的目标：双层发光外框
+                cv2.polylines(annotated, [t.box_corners], True, (0, 255, 120), 4)
+                cv2.polylines(annotated, [t.box_corners], True, (255, 255, 255), 1)
+
+                # 中心主轴线 (亮黄粗线)
+                half_len = int(t.length_px * 0.46)
+                p1 = (int(cx_int - half_len * vx), int(cy_int - half_len * vy))
+                p2 = (int(cx_int + half_len * vx), int(cy_int + half_len * vy))
+                cv2.line(annotated, p1, p2, (0, 255, 255), 3)
+
+                # 夹爪开合面线 (亮红)
+                half_diam = int(max(18, t.diam_px * 0.85))
+                perp_p1 = (int(cx_int - half_diam * (-vy)), int(cy_int - half_diam * vx))
+                perp_p2 = (int(cx_int + half_diam * (-vy)), int(cy_int + half_diam * vx))
+                cv2.line(annotated, perp_p1, perp_p2, (0, 50, 255), 3)
+
+                # 抓取瞄准十字准星与瞄准光圈
+                cv2.circle(annotated, (cx_int, cy_int), 14, (0, 255, 120), 2)
+                cv2.circle(annotated, (cx_int, cy_int), 6, (0, 0, 255), -1)
+                cv2.drawMarker(annotated, (cx_int, cy_int), (255, 255, 255), cv2.MARKER_CROSS, 20, 2)
+
+                # 详细数据悬浮卡片 (包含用户关心的：直径、长度、方向、高度)
+                badge = f"TOP #1 [最优选取]" if is_top else f"#{t.id} [当前选取]"
+                line1 = f"{badge}  D:{t.diam_mm}mm  L:{t.length_mm}mm"
+                h_str = f"H:+{t.rel_height_mm}mm" if t.rel_height_mm > 0 else "H:--"
+                line2 = f"方向:{t.yaw_deg}deg  高度:{h_str}"
+                line3 = f"SCARA ({t.robot_x}, {t.robot_y}, {t.robot_z}) R:{t.robot_r}"
+
+                card_w, card_h = 290, 72
+                bx1 = max(10, min(annotated.shape[1] - card_w - 10, cx_int - card_w // 2))
+                by1 = max(10, cy_int - card_h - 22)
+                bx2, by2 = bx1 + card_w, by1 + card_h
+
+                cv2.rectangle(annotated, (bx1, by1), (bx2, by2), (18, 22, 28), -1)
+                cv2.rectangle(annotated, (bx1, by1), (bx2, by2), (0, 255, 120), 2)
+                put_text(annotated, line1, (bx1 + 10, by1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 120), 2)
+                put_text(annotated, line2, (bx1 + 10, by1 + 42), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 255), 1)
+                put_text(annotated, line3, (bx1 + 10, by1 + 62), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 220), 1)
+
             else:
-                label_simple = f"#{t.id} L:{t.length_mm} D:{t.diam_mm} R:{t.yaw_deg}"
-                put_text(annotated, label_simple, (cx_int - 45, cy_int - 12),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
+                # 备选目标：清晰天蓝色框与紧凑标签
+                cv2.polylines(annotated, [t.box_corners], True, (240, 180, 40), 2)
+
+                # 轴线与十字
+                half_len = int(t.length_px * 0.40)
+                p1 = (int(cx_int - half_len * vx), int(cy_int - half_len * vy))
+                p2 = (int(cx_int + half_len * vx), int(cy_int + half_len * vy))
+                cv2.line(annotated, p1, p2, (200, 200, 200), 2)
+                cv2.drawMarker(annotated, (cx_int, cy_int), (240, 180, 40), cv2.MARKER_CROSS, 12, 1)
+
+                h_val = f"+{t.rel_height_mm}mm" if t.rel_height_mm > 0 else "--"
+                label = f"#{t.id} D:{t.diam_mm} L:{t.length_mm} R:{t.yaw_deg} H:{h_val}"
+                (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+                lx = max(6, min(annotated.shape[1] - lw - 10, cx_int - lw // 2))
+                ly = max(lh + 6, cy_int - 12)
+                cv2.rectangle(annotated, (lx - 4, ly - lh - 4), (lx + lw + 4, ly + 4), (20, 20, 20), -1)
+                cv2.rectangle(annotated, (lx - 4, ly - lh - 4), (lx + lw + 4, ly + 4), (240, 180, 40), 1)
+                put_text(annotated, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (240, 220, 160), 1)
 
         return annotated
 

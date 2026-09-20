@@ -7,7 +7,7 @@
     "scale_pct": 120,
     "canvas_w": 1110,
     "canvas_h": 1061,
-    "updated_at": "2026-09-20 08:44:41"
+    "updated_at": "2026-09-20 09:47:50"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -34,11 +34,11 @@
     "scale_pct": 200,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-20 08:44:37",
+    "updated_at": "2026-09-20 08:51:14",
     "hub_state": {
-      "selected_workspace_id": "20260920_080724_TESTtest",
-      "selected_workspace_name": "TEST  test_对照组",
-      "updated_at": "2026-09-20 08:44:36"
+      "selected_workspace_id": "20260916_145246_Home_real",
+      "selected_workspace_name": "Home_real",
+      "updated_at": "2026-09-20 08:49:35"
     }
   },
   "hardware_config": {
@@ -51,7 +51,7 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-20 06:48:41",
+    "updated_at": "2026-09-20 08:49:30",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1920x1080",
@@ -62,7 +62,7 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-20 06:47:24"
+    "updated_at": "2026-09-20 09:48:33"
   },
   "d435_viewer": {
     "scale_pct": 100,
