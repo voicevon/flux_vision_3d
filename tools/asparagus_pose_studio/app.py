@@ -24,33 +24,27 @@ from src.vision.pipelines import PipelineRegistry, BaseAsparagusPipeline, Pipeli
 from tools.spatial_mapping_studio.mapping_viewport_interactor import MappingViewportInteractor
 from tools.asparagus_pose_studio.data_io import (
     APP_ID, BASE_H, BASE_W, DEFAULT_DIR, REPORT_DIR, WINDOW_KEY,
-    load_system_config, scan_samples, export_gcode_file
+    load_system_config, scan_samples, export_gcode_file,
+    load_studio_settings, save_studio_settings
 )
 from tools.asparagus_pose_studio.renderer import AsparagusPoseStudioRenderer
 
 log = get_logger(__name__)
 
 
-def _get_workspace_manager() -> WorkspaceManager:
-    """动态获取 WorkspaceManager 实例，兼容历史测试中对 tools.asparagus_offline.WorkspaceManager 的 patch"""
-    mod = sys.modules.get("tools.asparagus_offline")
-    if mod and hasattr(mod, "WorkspaceManager"):
-        cls = getattr(mod, "WorkspaceManager")
-        return cls()
-    return WorkspaceManager()
-
-
 class AsparagusPoseStudioApp:
     """芦笋位姿工作室 GUI 主应用"""
 
-    def __init__(self, sample_dir: Optional[str] = None):
+    def __init__(self, sample_dir: Optional[str] = None, settings_file: Optional[str] = None):
+        self.settings_file = settings_file
         self.sys_cfg = load_system_config()
         self.win_mgr = GuiWindowManager(
-            app_id=APP_ID, base_w=BASE_W, base_h=BASE_H, min_w=900, min_h=600
+            app_id=APP_ID, base_w=BASE_W, base_h=BASE_H, min_w=900, min_h=600,
+            settings_file=settings_file
         )
 
         # 工位管理器感知
-        self.workspace_mgr = _get_workspace_manager()
+        self.workspace_mgr = WorkspaceManager()
         cur_ws = self.workspace_mgr.get_current_workspace()
         self.current_workspace_id = cur_ws.workspace_id if cur_ws else ""
 
@@ -69,6 +63,17 @@ class AsparagusPoseStudioApp:
         self.tag_localizer = None
         self._init_localizer()
 
+        # 状态持久化加载 (算法路线、上次选中的样本)
+        self._persisted_state = load_studio_settings(self.settings_file)
+        persisted_pipe = self._persisted_state.get("pipeline_key")
+        valid_pipes = dict(PipelineRegistry.list_options())
+        if persisted_pipe and persisted_pipe in valid_pipes:
+            self.pipeline_key = persisted_pipe
+        else:
+            self.pipeline_key = "ridge_tracing"
+
+        self._persisted_sample_name = self._persisted_state.get("selected_sample_name", "")
+
         # 样本与解算状态
         self.samples = []
         self.sel_idx = -1
@@ -81,7 +86,6 @@ class AsparagusPoseStudioApp:
         self.gcode_text = ""
 
         # 多技术路线算法流水线
-        self.pipeline_key = "ridge_tracing"
         self.pipeline: Optional[BaseAsparagusPipeline] = None
         self.pipeline_result: Optional[PipelineResult] = None
         self.active_step_key = "stage3_poses"
@@ -100,6 +104,19 @@ class AsparagusPoseStudioApp:
         self._running = True
 
         self.rescan(auto_load=True)
+
+    def _save_persisted_state(self):
+        """持久化保存当前的算法路线与选中的样本名"""
+        sel_name = ""
+        if 0 <= self.sel_idx < len(self.samples):
+            sel_name = self.samples[self.sel_idx]["name"]
+        elif self._persisted_sample_name:
+            sel_name = self._persisted_sample_name
+
+        save_studio_settings({
+            "pipeline_key": self.pipeline_key,
+            "selected_sample_name": sel_name
+        }, settings_file=self.settings_file)
 
     # ------------------------------ 数据与标定 ------------------------------
     def _init_localizer(self):
@@ -163,7 +180,13 @@ class AsparagusPoseStudioApp:
         self.targets, self.vis_img, self.gcode_text = [], None, ""
         self.sel_target, self.error = 0, ""
         if auto_load and self.samples:
-            self._select_sample(0, analyze_now=False)
+            target_idx = 0
+            if self._persisted_sample_name:
+                for i, smp in enumerate(self.samples):
+                    if smp["name"] == self._persisted_sample_name:
+                        target_idx = i
+                        break
+            self._select_sample(target_idx, analyze_now=False)
 
     def _keep_selection_visible(self, idx: int):
         """键盘切换样本时保持选中项在列表中可见"""
@@ -205,6 +228,7 @@ class AsparagusPoseStudioApp:
             return
         self.pipeline_key = pipeline_key
         self._init_pipeline()
+        self._save_persisted_state()
         self.set_toast(f"已切换算法路线: 【{self.current_pipeline_name}】")
         if 0 <= self.sel_idx < len(self.samples):
             self.run_analyze()
@@ -227,6 +251,9 @@ class AsparagusPoseStudioApp:
         self.sel_target, self.error = 0, ""
         self.viewport.reset()
         sample = self.samples[idx]
+
+        self._persisted_sample_name = sample["name"]
+        self._save_persisted_state()
 
         color = cv2.imread(sample["png"])
         if color is None:

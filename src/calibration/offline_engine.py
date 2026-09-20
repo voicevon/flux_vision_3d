@@ -171,6 +171,3 @@ class OfflineVerificationEngine:
             pass
 
         return False, None, None
-
-# 别名导出 (向前向后兼容)
-OfflineEngine = OfflineVerificationEngine

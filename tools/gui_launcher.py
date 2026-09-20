@@ -180,11 +180,11 @@ def build_tools_catalog() -> List[ToolCardMeta]:
         ToolCardMeta(
             key_id="asparagus_offline",
             shortcut="4",
-            title="芦笋抓取位置",
-            subtitle="生产样本与位姿离线解算",
+            title="芦笋位姿工作室",
+            subtitle="生产样本与位姿解算",
             category="B — 标定建图与生产验证",
             is_gui=True,
-            command=[sys.executable, "tools/asparagus_offline.py"],
+            command=[sys.executable, "-m", "tools.asparagus_pose_studio"],
             tag_color=COLOR_B,
             summary="离线解算芦笋空间位姿，验证抓取算法并预览 SCARA 机械臂 G-code。",
             details=[

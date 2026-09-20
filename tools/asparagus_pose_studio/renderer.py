@@ -140,15 +140,7 @@ class AsparagusPoseStudioRenderer:
         cv2.rectangle(canvas, (x1, y1), (x2, y2), border, 2 if is_active else 1)
 
         (tw, th), _ = measure_text(label, font_size=m["fs_sub"])
-        if is_active:
-            dot_x = x1 + int(10 * m["s"])
-            dot_y = y1 + (y2 - y1) // 2
-            cv2.circle(canvas, (dot_x, dot_y), int(3.5 * m["s"]), (0, 235, 120), -1)
-            cv2.circle(canvas, (dot_x, dot_y), int(5 * m["s"]), (0, 235, 120), 1)
-            tx = dot_x + int(8 * m["s"])
-        else:
-            tx = x1 + ((x2 - x1) - tw) // 2
-
+        tx = x1 + ((x2 - x1) - tw) // 2
         ty = y1 + ((y2 - y1) - th) // 2
         draw_text(canvas, label, (tx, ty), m["fs_sub"], text_col, bold=is_active)
 

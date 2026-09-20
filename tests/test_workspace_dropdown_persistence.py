@@ -10,7 +10,7 @@ if PROJECT_ROOT not in sys.path:
 from src.calibration.workspace_manager import WorkspaceManager
 from tools.capture.capture_wizard import CaptureWizard
 from tools.spatial_mapping_studio.app import SpatialMappingStudioApp
-from tools.asparagus_offline import AsparagusOfflineApp
+from tools.asparagus_pose_studio import AsparagusPoseStudioApp
 
 class TestWorkspaceDropdownPersistence(unittest.TestCase):
     def setUp(self):
@@ -51,15 +51,15 @@ class TestWorkspaceDropdownPersistence(unittest.TestCase):
         self.assertEqual(app.current_workspace_id, self.ws_c.workspace_id)
         self.assertEqual(self.mgr.get_current_workspace_id(), self.ws_c.workspace_id)
 
-    @patch('tools.asparagus_offline.WorkspaceManager')
-    def test_asparagus_offline_persists_workspace(self, mock_ws_mgr_cls):
+    @patch('tools.asparagus_pose_studio.app.WorkspaceManager')
+    def test_asparagus_pose_studio_persists_workspace(self, mock_ws_mgr_cls):
         mock_ws_mgr_cls.return_value = self.mgr
-        app = AsparagusOfflineApp()
+        app = AsparagusPoseStudioApp()
         app.switch_workspace(self.ws_a.workspace_id)
         self.assertEqual(app.current_workspace_id, self.ws_a.workspace_id)
         self.assertEqual(self.mgr.get_current_workspace_id(), self.ws_a.workspace_id)
 
-    @patch('tools.asparagus_offline.WorkspaceManager')
+    @patch('tools.asparagus_pose_studio.app.WorkspaceManager')
     @patch('tools.capture.capture_wizard.CameraService')
     @patch('tools.capture.capture_wizard.WorkspaceManager')
     @patch('tools.spatial_mapping_studio.app.WorkspaceManager')
@@ -84,8 +84,8 @@ class TestWorkspaceDropdownPersistence(unittest.TestCase):
         studio.switch_workspace(self.ws_c.workspace_id)
         self.assertEqual(self.mgr.get_current_workspace_id(), self.ws_c.workspace_id)
 
-        # 4. 芦笋抓取工具无参启动，自动加载最新持久化的工位 C
-        offline = AsparagusOfflineApp()
+        # 4. 芦笋位姿工作室无参启动，自动加载最新持久化的工位 C
+        offline = AsparagusPoseStudioApp()
         self.assertEqual(offline.current_workspace_id, self.ws_c.workspace_id)
 
 if __name__ == '__main__':

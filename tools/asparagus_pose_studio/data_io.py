@@ -22,6 +22,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 DEFAULT_DIR = os.path.join(PROJECT_ROOT, "data", "snapshots")
 REPORT_DIR = os.path.join(PROJECT_ROOT, "reports")
+GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
 
 WINDOW_KEY = "AsparagusPoseStudio"   # cv2 窗口内部 key (纯 ASCII, 标题经 win32 API 动态设置)
 APP_ID = "asparagus_pose_studio"
@@ -34,6 +35,55 @@ CALIB_LABELS = {
     "2d_preview": "2D 预览 (无深度)",
     "uncalibrated": "未标定 - 防撞保护",
 }
+
+
+def load_studio_settings(settings_file: Optional[str] = None) -> Dict[str, Any]:
+    """
+    从 config/gui_settings.json 读取芦笋位姿工作室的持久化偏好 (算法路线、样本选中)
+    """
+    path = settings_file or GUI_SETTINGS_FILE
+    if not os.path.exists(path):
+        return {}
+    try:
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            root = json.load(f)
+        if not isinstance(root, dict):
+            return {}
+        data = root.get(APP_ID, {})
+        return data.get("studio_state") or {}
+    except Exception as exc:
+        log.warning("读取 gui_settings.json 失败: %s", exc)
+        return {}
+
+
+def save_studio_settings(state: Dict[str, Any], settings_file: Optional[str] = None):
+    """
+    将芦笋位姿工作室的偏好状态安全持久化至 config/gui_settings.json
+    """
+    path = settings_file or GUI_SETTINGS_FILE
+    try:
+        import json
+        root = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    root = json.load(f)
+                if not isinstance(root, dict):
+                    root = {}
+            except Exception:
+                root = {}
+        node = root.setdefault(APP_ID, {})
+        studio_state = node.setdefault("studio_state", {})
+        studio_state.update(state)
+        node["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(root, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        log.warning("保存 gui_settings.json 失败: %s", exc)
+
 
 
 def load_system_config(config_path: Optional[str] = None) -> Dict[str, Any]:

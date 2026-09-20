@@ -7,7 +7,7 @@
     "scale_pct": 120,
     "canvas_w": 1110,
     "canvas_h": 1061,
-    "updated_at": "2026-09-20 12:22:46"
+    "updated_at": "2026-09-20 13:16:04"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -78,6 +78,16 @@
       "auto_range": false,
       "cmap_min": 0.48,
       "cmap_max": 0.66
+    }
+  },
+  "asparagus_pose_studio": {
+    "scale_pct": 100,
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-20 13:17:23",
+    "studio_state": {
+      "pipeline_key": "ridge_tracing",
+      "selected_sample_name": "color_20260920_120000.png"
     }
   }
 }

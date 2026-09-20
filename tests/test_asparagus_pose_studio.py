@@ -110,7 +110,8 @@ class TestApp(unittest.TestCase):
         """测试主应用初始化、样本切换与画布渲染"""
         with tempfile.TemporaryDirectory() as tmpdir:
             _create_dummy_samples(tmpdir)
-            app = AsparagusPoseStudioApp(sample_dir=tmpdir)
+            cfg_file = os.path.join(tmpdir, "settings.json")
+            app = AsparagusPoseStudioApp(sample_dir=tmpdir, settings_file=cfg_file)
             self.assertEqual(len(app.samples), 2)
             self.assertEqual(app.sel_idx, 0)
             self.assertEqual(app.mode, "2d")
@@ -134,6 +135,36 @@ class TestApp(unittest.TestCase):
             app._handle_key(ord("x"))
             self.assertFalse(app._running)
 
+    def test_pipeline_and_sample_persistence(self):
+        """测试算法路线与选定样本的跨次持久化保存与自动恢复"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sample_dir = os.path.join(tmpdir, "samples")
+            os.makedirs(sample_dir, exist_ok=True)
+            _create_dummy_samples(sample_dir)
+            settings_path = os.path.join(tmpdir, "gui_settings.json")
+
+            # 第一次启动: 默认选中首项 (sample_test.png)
+            app1 = AsparagusPoseStudioApp(sample_dir=sample_dir, settings_file=settings_path)
+            self.assertEqual(app1.samples[app1.sel_idx]["name"], "sample_test.png")
+
+            # 切换到第二个样本 (color_20260920_120000.png)
+            app1._select_sample(1)
+            self.assertEqual(app1.samples[app1.sel_idx]["name"], "color_20260920_120000.png")
+
+            # 切换算法路线
+            available_pipes = [k for k, _ in app1.pipeline_options]
+            target_pipe = available_pipes[-1] if len(available_pipes) > 1 else "ridge_tracing"
+            app1.switch_pipeline(target_pipe)
+
+            # 第二次启动: 读取同一 settings_file
+            app2 = AsparagusPoseStudioApp(sample_dir=sample_dir, settings_file=settings_path)
+            # 验证算法自动恢复
+            self.assertEqual(app2.pipeline_key, target_pipe)
+            # 验证自动定位并选中了上次选中的样本
+            self.assertEqual(app2.sel_idx, 1)
+            self.assertEqual(app2.samples[app2.sel_idx]["name"], "color_20260920_120000.png")
+
 
 if __name__ == "__main__":
     unittest.main()
+

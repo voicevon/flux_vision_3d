@@ -16,25 +16,26 @@ from tools.asparagus_pose_studio.data_io import (
     CONFIG_PATH,
     DEFAULT_DIR,
     REPORT_DIR,
+    GUI_SETTINGS_FILE,
     WINDOW_KEY,
     export_gcode_file,
     find_depth_pair,
     load_system_config,
+    load_studio_settings,
+    save_studio_settings,
     scan_samples,
 )
 from tools.asparagus_pose_studio.renderer import AsparagusPoseStudioRenderer
 from tools.asparagus_pose_studio.app import AsparagusPoseStudioApp, main
 
-# 向后兼容别名
-AsparagusOfflineApp = AsparagusPoseStudioApp
-
 __all__ = [
     "AsparagusPoseStudioApp",
-    "AsparagusOfflineApp",
     "AsparagusPoseStudioRenderer",
     "find_depth_pair",
     "scan_samples",
     "load_system_config",
+    "load_studio_settings",
+    "save_studio_settings",
     "export_gcode_file",
     "WorkspaceManager",
     "main",
@@ -44,6 +45,7 @@ __all__ = [
     "BASE_H",
     "DEFAULT_DIR",
     "REPORT_DIR",
+    "GUI_SETTINGS_FILE",
     "CONFIG_PATH",
     "CALIB_LABELS",
 ]
