@@ -1,9 +1,7 @@
 """
-芦笋感知算法规划路线占位流水线 (Stub Pipelines: C1, C2, Y1)
+芦笋感知算法规划路线占位流水线 (Stub Pipeline: Y1)
 =========================================================
 为算法目录预注册后续演进路线：
-  - 算法 C1: 形态学骨架细化法 (Skeleton Thinning)
-  - 算法 C2: Frangi管状滤波法 (Frangi Vesselness)
   - 算法 Y1: YOLO深度学习法 (YOLO Deep Learning)
 运行时提供无缝插拔降级与开发状态展示，避免应用异常。
 """
