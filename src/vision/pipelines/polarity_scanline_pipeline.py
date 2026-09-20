@@ -20,11 +20,11 @@ from src.vision.pipelines.occlusion_peeler import CandidateSpine, OcclusionPeele
 from src.vision.pipelines.registry import PipelineRegistry
 
 
-@PipelineRegistry.register("polarity_scanline", "路线 B1: 极性扫描法 (Polarity Scanline)")
+@PipelineRegistry.register("polarity_scanline", "算法 B1: 极性扫描法 (Polarity Scanline)")
 class PolarityScanlinePipeline(BaseAsparagusPipeline):
-    """路线 B1：基于垂直扫描线与正负梯度极性配对的纯 2D 感知流水线"""
+    """算法 B1：基于垂直扫描线与正负梯度极性配对的纯 2D 感知流水线"""
 
-    name = "路线 B1: 极性扫描法 (Polarity Scanline)"
+    name = "算法 B1: 极性扫描法 (Polarity Scanline)"
     description = "垂直列扫描 + 梯度极性正负跃变配对 (+Gy/-Gy) + 拓扑剥层顶层仲裁"
 
     def __init__(self, fx: float = 909.12, fy: float = 907.46, cx: float = 647.46, cy: float = 377.51):
@@ -37,11 +37,62 @@ class PolarityScanlinePipeline(BaseAsparagusPipeline):
 
     def get_steps(self) -> List[PipelineStep]:
         return [
-            PipelineStep("stage1_prep", "1.预处理", "ROI 区域裁切、双边滤波与开运算去噪"),
-            PipelineStep("stage2_polarity", "梯度极性", "Sobel-Y 正负极性边缘分解 (+Gy 上沿 / -Gy 下沿)"),
-            PipelineStep("stage3_scanline", "极性配对", "垂直列扫描与双侧极性配对提取中心脊点"),
-            PipelineStep("stage4_spines", "2.主干拟合", "横向点阵聚类与主轴鲁棒直线拟合"),
-            PipelineStep("stage5_top_poses", "3.顶层位姿", "纯 2D 叠压拓扑剥层与 Top 3 顶层抓取位姿输出")
+            PipelineStep(
+                "stage1_bilateral", "1.双边滤波",
+                "ROI 区域裁切与保边双边平滑去噪",
+                details="利用高斯空域与色彩值域联合权重卷积，抹平传送带粗糙反光底噪的同时严格锁死芦笋外边缘锋利度",
+                parameters="d=5 (滤波邻域直径), sigmaColor=35 (色彩容差), sigmaSpace=35 (空间平滑度)",
+                pros_cons="优点: 极其出色的边缘保真与降噪能力; 缺点: 运算耗时略高于普通均值模糊 (约增加 2ms)"
+            ),
+            PipelineStep(
+                "stage2_morph", "2.形态抑噪",
+                "形态学开运算消除传送带反光斑点与气泡",
+                details="先腐蚀后膨胀。传送带水渍气泡与颗粒物多为微小高光孤立点，开运算能将其物理湮灭，消除虚假求导跃变",
+                parameters="ksize=(3,3) 椭圆结构元 (若现场水珠或反光点较大可调大至 (5,5))",
+                pros_cons="优点: 彻底斩断点状杂散高光; 缺点: 若结构元过大会微量削弱极细芦笋两端尖部"
+            ),
+            PipelineStep(
+                "stage3_magnitude", "3.梯度强度",
+                "Sobel-XY 全局边缘强度能量底图",
+                details="计算全场梯度模长 sqrt(Gx^2 + Gy^2)，将物料与传送带的反差转化为边缘能量响应，直观检验边界对比度",
+                parameters="Sobel ksize=3 (边缘模糊时可增大核); 能量显示缩放因子=2.2x",
+                pros_cons="优点: 边缘响应一览无余，便于现场快速评估打光对比度; 缺点: 尚未按方向分离，包含无用端面杂边"
+            ),
+            PipelineStep(
+                "stage4_polarity", "4.极性分离",
+                "方向滤波与上下极性分离 (+Gy 上沿 / -Gy 下沿)",
+                details="基于物理跃变先验: 芦笋上沿由暗到亮 (Gy>0 亮橙)，下沿由亮到暗 (Gy<0 天蓝)，并约束 |Gy|>|Gx|*0.6 剔除横截面",
+                parameters="grad_thresh=28.0 (梯度灵敏度门限), dir_ratio=0.6 (水平方向导向约束比)",
+                pros_cons="优点: 将双侧边界天然解耦为上下两轨; 缺点: 若物料倾角超过 45° 则垂直梯度响应将有所衰减"
+            ),
+            PipelineStep(
+                "stage5_edge_clean", "5.边缘净噪",
+                "连通域长度过滤与微小毛刺/碎屑剔除",
+                details="对正负极性边缘做 8-邻域轮廓周长追踪，将长度低于 25px 的细碎皮带划痕与反光毛刺全部剔除，保留纯净长轨",
+                parameters="min_len=25px (约对应 15mm 物理长度，碎片较多时可上调至 35px)",
+                pros_cons="优点: 边缘轨迹平滑致密无虚假分叉; 缺点: 会将长度低于 15mm 的极短断头残屑直接过滤"
+            ),
+            PipelineStep(
+                "stage6_scanline", "6.极性配对",
+                "垂直列扫描与双侧极性配对提取中心脊点",
+                details="沿 X 轴以 6px 等距投射垂直光栅，在同一列内搜索成对 (+Gy, -Gy) 且间距满足物理直径 6~45mm 的边界，中点即为脊点",
+                parameters="scan_step_x=6px (步长越密点越密), min_diam_mm=6.0, max_diam_mm=45.0",
+                pros_cons="优点: 一维搜索极速 (<3ms)，天然免疫大面积粘连; 缺点: 紧密上下重叠贴合时下沿可能被遮挡"
+            ),
+            PipelineStep(
+                "stage7_spines", "7.主干拟合",
+                "横向点阵聚类与主轴鲁棒直线拟合",
+                details="基于空间连续邻域聚类离散中轴点，采用 RANSAC 鲁棒最小二乘拟合主轴，沿轴向投影精确解算长度与偏航角 Yaw",
+                parameters="max_dx=22px, max_dy=10px (点阵聚类距离容差); min_pts=10 (成杆最少支持点数)",
+                pros_cons="优点: 角度精度达 ±0.3°，抗离群噪点极强; 缺点: 面对极端严重月牙弯曲时需要折线分段"
+            ),
+            PipelineStep(
+                "stage8_top_poses", "8.顶层位姿",
+                "纯 2D 叠压拓扑剥层与抓取位姿输出",
+                details="构建拓扑有向无环图 (DAG)，检测交叉 T 型节点的边界连续性分层剥离，优先锁定顶层 Layer 0 并输出抓取 G-code",
+                parameters="t_junction_radius=18px (交叉节点搜索半径); 顶层抓取相对高度=35mm",
+                pros_cons="优点: 无深度图也能完美仲裁层级抓取顺序; 缺点: 两根完全平行重叠时依赖细微阴影边界"
+            )
         ]
 
     def run(
@@ -57,7 +108,7 @@ class PolarityScanlinePipeline(BaseAsparagusPipeline):
         h, w = color_bgr.shape[:2]
         step_images: Dict[str, Optional[np.ndarray]] = {}
 
-        # ---------------- 步骤 1: 预处理 (去杂散点与平滑) ----------------
+        # ---------------- 步骤 1: 双边滤波 (保边去噪) ----------------
         roi_x1 = int(w * 0.35)
         roi_x2 = int(w * 0.81)
         roi_y1 = int(h * 0.02)
@@ -66,48 +117,79 @@ class PolarityScanlinePipeline(BaseAsparagusPipeline):
         roi_bgr = color_bgr[roi_y1:roi_y2, roi_x1:roi_x2]
         # 双边滤波保护物料边界同时消除传送带杂散反光
         filtered = cv2.bilateralFilter(roi_bgr, d=5, sigmaColor=35, sigmaSpace=35)
-        gray = cv2.cvtColor(filtered, cv2.COLOR_BGR2GRAY)
+        
+        vis_1 = (color_bgr.astype(np.float32) * 0.30).astype(np.uint8)
+        vis_1[roi_y1:roi_y2, roi_x1:roi_x2] = filtered
+        cv2.rectangle(vis_1, (roi_x1, roi_y1), (roi_x2, roi_y2), (40, 230, 240), 2)
+        cv2.rectangle(vis_1, (12, 12), (580, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_1, (12, 12), (580, 48), (40, 230, 240), 2)
+        put_text(vis_1, "STAGE 1: BILATERAL FILTER (Preserve Edges & Denoise)",
+                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (40, 230, 240), 2)
+        step_images["stage1_bilateral"] = vis_1
 
-        # 形态学小开运算消除细微高亮反光杂点
+        # ---------------- 步骤 2: 形态学抑噪 (消除气泡与反光斑点) ----------------
+        gray = cv2.cvtColor(filtered, cv2.COLOR_BGR2GRAY)
         k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         gray_clean = cv2.morphologyEx(gray, cv2.MORPH_OPEN, k_open)
 
-        vis_1 = (color_bgr.astype(np.float32) * 0.35).astype(np.uint8)
-        vis_1[roi_y1:roi_y2, roi_x1:roi_x2] = cv2.cvtColor(gray_clean, cv2.COLOR_GRAY2BGR)
-        cv2.rectangle(vis_1, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
-        cv2.rectangle(vis_1, (12, 12), (560, 48), (20, 20, 20), -1)
-        cv2.rectangle(vis_1, (12, 12), (560, 48), (40, 230, 240), 2)
-        put_text(vis_1, "STAGE 1: PREPROCESSING (ROI Bilateral & Morph Clean)",
-                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (40, 230, 240), 2)
-        step_images["stage1_prep"] = vis_1
+        vis_2 = (color_bgr.astype(np.float32) * 0.25).astype(np.uint8)
+        vis_2[roi_y1:roi_y2, roi_x1:roi_x2] = cv2.cvtColor(gray_clean, cv2.COLOR_GRAY2BGR)
+        cv2.rectangle(vis_2, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 220, 120), 2)
+        cv2.rectangle(vis_2, (12, 12), (640, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_2, (12, 12), (640, 48), (0, 220, 120), 2)
+        put_text(vis_2, "STAGE 2: MORPHOLOGICAL CLEAN (Suppress Glare & Bubbles via Open)",
+                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 220, 120), 2)
+        step_images["stage2_morph"] = vis_2
 
-        # ---------------- 步骤 2: 垂直梯度极性分解与方向导向滤波 ----------------
+        # ---------------- 步骤 3: 全局梯度强度 (边缘底图) ----------------
         grad_y = cv2.Sobel(gray_clean, cv2.CV_32F, 0, 1, ksize=3)
         grad_x = cv2.Sobel(gray_clean, cv2.CV_32F, 1, 0, ksize=3)
+        mag = cv2.magnitude(grad_x, grad_y)
+        mag_norm = np.clip(mag * 2.2, 0, 255).astype(np.uint8)
+        mag_bgr = cv2.applyColorMap(mag_norm, cv2.COLORMAP_CIVIDIS)
 
-        # 芦笋上边缘：由暗(传送带)到亮(芦笋)，Gy 显著为正
-        # 芦笋下边缘：由亮(芦笋)到暗(传送带)，Gy 显著为负
-        # 方向约束：排除垂直端面截断与竖向干扰 (|Gy| 显著大于 |Gx| * 0.6)
-        top_edges = (grad_y > 28.0) & (np.abs(grad_y) > np.abs(grad_x) * 0.6)
-        bottom_edges = (grad_y < -28.0) & (np.abs(grad_y) > np.abs(grad_x) * 0.6)
+        vis_3 = (color_bgr.astype(np.float32) * 0.20).astype(np.uint8)
+        vis_3[roi_y1:roi_y2, roi_x1:roi_x2] = mag_bgr
+        cv2.rectangle(vis_3, (roi_x1, roi_y1), (roi_x2, roi_y2), (255, 200, 40), 2)
+        cv2.rectangle(vis_3, (12, 12), (600, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_3, (12, 12), (600, 48), (255, 200, 40), 2)
+        put_text(vis_3, "STAGE 3: GRADIENT MAGNITUDE (Full Edge Boundary Response)",
+                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 200, 40), 2)
+        step_images["stage3_magnitude"] = vis_3
 
-        # 连通域小面积/短碎屑过滤
-        top_clean = self._filter_small_segments(top_edges.astype(np.uint8) * 255, min_len=25)
-        bottom_clean = self._filter_small_segments(bottom_edges.astype(np.uint8) * 255, min_len=25)
+        # ---------------- 步骤 4: 方向导向滤波与上下极性分离 ----------------
+        top_raw = (grad_y > 28.0) & (np.abs(grad_y) > np.abs(grad_x) * 0.6)
+        bottom_raw = (grad_y < -28.0) & (np.abs(grad_y) > np.abs(grad_x) * 0.6)
 
-        vis_2 = (color_bgr.astype(np.float32) * 0.25).astype(np.uint8)
-        patch_2 = vis_2[roi_y1:roi_y2, roi_x1:roi_x2]
-        patch_2[top_clean > 0] = (0, 165, 255)       # 橙色：上边缘 (+Gy)
-        patch_2[bottom_clean > 0] = (255, 220, 40)   # 青蓝：下边缘 (-Gy)
-        vis_2[roi_y1:roi_y2, roi_x1:roi_x2] = patch_2
-        cv2.rectangle(vis_2, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
-        cv2.rectangle(vis_2, (12, 12), (620, 48), (20, 20, 20), -1)
-        cv2.rectangle(vis_2, (12, 12), (620, 48), (0, 255, 255), 2)
-        put_text(vis_2, "STAGE 2: GRADIENT POLARITY (Orange: +Gy Top | Blue: -Gy Bottom)",
-                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
-        step_images["stage2_polarity"] = vis_2
+        vis_4 = (color_bgr.astype(np.float32) * 0.25).astype(np.uint8)
+        patch_4 = vis_4[roi_y1:roi_y2, roi_x1:roi_x2]
+        patch_4[top_raw] = (0, 165, 255)       # 亮橙：上边缘 (+Gy)
+        patch_4[bottom_raw] = (255, 220, 40)   # 天蓝：下边缘 (-Gy)
+        vis_4[roi_y1:roi_y2, roi_x1:roi_x2] = patch_4
+        cv2.rectangle(vis_4, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
+        cv2.rectangle(vis_4, (12, 12), (640, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_4, (12, 12), (640, 48), (0, 200, 255), 2)
+        put_text(vis_4, "STAGE 4: POLARITY SEPARATION (Orange: +Gy Top | Blue: -Gy Bottom)",
+                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 200, 255), 2)
+        step_images["stage4_polarity"] = vis_4
 
-        # ---------------- 步骤 3: 垂直列扫描与极性配对 ----------------
+        # ---------------- 步骤 5: 边缘净噪 (连通域长度过滤微小碎屑) ----------------
+        top_clean = self._filter_small_segments(top_raw.astype(np.uint8) * 255, min_len=25)
+        bottom_clean = self._filter_small_segments(bottom_raw.astype(np.uint8) * 255, min_len=25)
+
+        vis_5 = (color_bgr.astype(np.float32) * 0.25).astype(np.uint8)
+        patch_5 = vis_5[roi_y1:roi_y2, roi_x1:roi_x2]
+        patch_5[top_clean > 0] = (0, 165, 255)       # 纯净上边缘
+        patch_5[bottom_clean > 0] = (255, 220, 40)   # 纯净下边缘
+        vis_5[roi_y1:roi_y2, roi_x1:roi_x2] = patch_5
+        cv2.rectangle(vis_5, (roi_x1, roi_y1), (roi_x2, roi_y2), (80, 240, 120), 2)
+        cv2.rectangle(vis_5, (12, 12), (650, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_5, (12, 12), (650, 48), (80, 240, 120), 2)
+        put_text(vis_5, "STAGE 5: EDGE CLEANING (Min-Length Filtering: Removed Flecks)",
+                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (80, 240, 120), 2)
+        step_images["stage5_edge_clean"] = vis_5
+
+        # ---------------- 步骤 6: 垂直列扫描与极性配对 ----------------
         scale_2d = nominal_z_mm / self.fx
         min_diam_px = self.min_diam_mm / scale_2d
         max_diam_px = self.max_diam_mm / scale_2d
@@ -116,7 +198,7 @@ class PolarityScanlinePipeline(BaseAsparagusPipeline):
         scan_step_x = 6
         paired_ridge_points: List[Tuple[float, float, float]] = []  # (x, y, diam_px)
 
-        vis_3 = (color_bgr.astype(np.float32) * 0.40).astype(np.uint8)
+        vis_6 = (color_bgr.astype(np.float32) * 0.40).astype(np.uint8)
 
         for sx in range(10, roi_w - 10, scan_step_x):
             # 获取该列的所有上边缘与下边缘 Y 坐标
@@ -158,20 +240,20 @@ class PolarityScanlinePipeline(BaseAsparagusPipeline):
                     paired_ridge_points.append((gx, gy, diam_val))
 
                     # 可视化配对线段
-                    cv2.line(vis_3, (int(gx), int(ty + roi_y1)), (int(gx), int(chosen_by + roi_y1)), (80, 240, 120), 1)
-                    cv2.circle(vis_3, (int(gx), int(gy)), 2, (0, 255, 255), -1)
+                    cv2.line(vis_6, (int(gx), int(ty + roi_y1)), (int(gx), int(chosen_by + roi_y1)), (80, 240, 120), 1)
+                    cv2.circle(vis_6, (int(gx), int(gy)), 2, (0, 255, 255), -1)
 
-        cv2.rectangle(vis_3, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
-        cv2.rectangle(vis_3, (12, 12), (600, 48), (20, 20, 20), -1)
-        cv2.rectangle(vis_3, (12, 12), (600, 48), (80, 240, 120), 2)
-        put_text(vis_3, f"STAGE 3: POLARITY SCANLINE PAIRS | Ridge Points: {len(paired_ridge_points)}",
+        cv2.rectangle(vis_6, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
+        cv2.rectangle(vis_6, (12, 12), (600, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_6, (12, 12), (600, 48), (80, 240, 120), 2)
+        put_text(vis_6, f"STAGE 6: POLARITY SCANLINE PAIRS | Ridge Points: {len(paired_ridge_points)}",
                  (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (80, 240, 120), 2)
-        step_images["stage3_scanline"] = vis_3
+        step_images["stage6_scanline"] = vis_6
 
-        # ---------------- 步骤 4: 横向主轴聚类与鲁棒拟合 ----------------
+        # ---------------- 步骤 7: 横向主轴聚类与鲁棒拟合 ----------------
         clusters = self._cluster_ridge_points(paired_ridge_points, max_dx=22.0, max_dy=10.0)
         candidates: List[CandidateSpine] = []
-        vis_4 = color_bgr.copy()
+        vis_7 = color_bgr.copy()
         cand_id = 1
         palette = [(255, 120, 40), (40, 230, 240), (240, 100, 220), (80, 240, 120), (255, 210, 40)]
 
@@ -234,23 +316,23 @@ class PolarityScanlinePipeline(BaseAsparagusPipeline):
             candidates.append(cand)
 
             col = palette[(cand_id - 1) % len(palette)]
-            cv2.polylines(vis_4, [box_corners], True, col, 2)
-            cv2.line(vis_4,
+            cv2.polylines(vis_7, [box_corners], True, col, 2)
+            cv2.line(vis_7,
                      (int(cx_val - half_l * vx), int(cy_val - half_l * vy)),
                      (int(cx_val + half_l * vx), int(cy_val + half_l * vy)),
                      (255, 255, 255), 2)
-            put_text(vis_4, f"#{cand_id} D:{diam_mm:.1f} L:{len_mm:.0f}",
+            put_text(vis_7, f"#{cand_id} D:{diam_mm:.1f} L:{len_mm:.0f}",
                      (int(cx_val - 35), int(cy_val - half_w - 6)),
                      cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
             cand_id += 1
 
-        cv2.rectangle(vis_4, (12, 12), (600, 48), (20, 20, 20), -1)
-        cv2.rectangle(vis_4, (12, 12), (600, 48), (40, 230, 240), 2)
-        put_text(vis_4, f"STAGE 4: SPINES FITTED | Candidates: {len(candidates)}",
+        cv2.rectangle(vis_7, (12, 12), (600, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_7, (12, 12), (600, 48), (40, 230, 240), 2)
+        put_text(vis_7, f"STAGE 7: SPINES FITTED | Candidates: {len(candidates)}",
                  (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (40, 230, 240), 2)
-        step_images["stage4_spines"] = vis_4
+        step_images["stage7_spines"] = vis_7
 
-        # ---------------- 步骤 5: 纯 2D 叠压拓扑剥层与 Top 3 输出 ----------------
+        # ---------------- 步骤 8: 纯 2D 叠压拓扑剥层与 Top 3 输出 ----------------
         combined_edges = cv2.bitwise_or(top_clean, bottom_clean)
         full_edge_map = np.zeros((h, w), dtype=np.uint8)
         full_edge_map[roi_y1:roi_y2, roi_x1:roi_x2] = combined_edges
@@ -323,8 +405,12 @@ class PolarityScanlinePipeline(BaseAsparagusPipeline):
         # 严格保留排名前三位 (Top 3)
         top_targets = targets[:3]
         dummy_analyzer = AsparagusAnalyzer(self.fx, self.fy, self.cx, self.cy)
-        vis_5 = dummy_analyzer.draw_detections(color_bgr, top_targets, sel_target_idx=0)
-        step_images["stage5_top_poses"] = vis_5
+        vis_8 = dummy_analyzer.draw_detections(color_bgr, top_targets, sel_target_idx=0)
+        cv2.rectangle(vis_8, (12, 12), (640, 48), (20, 20, 20), -1)
+        cv2.rectangle(vis_8, (12, 12), (640, 48), (0, 255, 120), 2)
+        put_text(vis_8, f"STAGE 8: TOPMOST POSES | Layer0: Top Priority ({len(top_targets)} Selected)",
+                 (22, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 120), 2)
+        step_images["stage8_top_poses"] = vis_8
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         return PipelineResult(

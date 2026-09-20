@@ -13,9 +13,12 @@ import numpy as np
 @dataclass
 class PipelineStep:
     """单个算法流水线内部步骤的声明"""
-    key: str          # 内部唯一键，如 "dist_transform"
-    name: str         # UI 药丸控件标签，如 "距离场"
-    description: str  # 算法原理说明，用于状态栏或 Toast 提示
+    key: str                    # 内部唯一键，如 "stage1_prep"
+    name: str                   # UI 药丸控件标签，如 "1.双边滤波"
+    description: str            # 简要简介 (第 1 行)
+    details: str = ""           # 深度原理解析 (为什么要有此步，解决什么物理/视觉问题)
+    parameters: str = ""        # 核心调节参数与工程建议值 (参数名、默认值、调优方向)
+    pros_cons: str = ""         # 优缺点与现场边界条件 (优势 / 局限)
 
 
 @dataclass

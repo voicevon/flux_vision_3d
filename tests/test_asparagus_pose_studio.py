@@ -103,6 +103,30 @@ class TestRenderer(unittest.TestCase):
         self.assertLess(list_p[2], img_p[0])
         self.assertLess(img_p[2], right_p[0])
 
+    def test_topbar_layout_and_no_duplicate_dropdowns(self):
+        """测试第一排工具栏严格顺序排布且不存在重复下拉框"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_dummy_samples(tmpdir)
+            cfg_file = os.path.join(tmpdir, "settings.json")
+            app = AsparagusPoseStudioApp(sample_dir=tmpdir, settings_file=cfg_file)
+            canvas = np.zeros((800, 1280, 3), dtype=np.uint8)
+            buttons, _, _, _ = AsparagusPoseStudioRenderer.render_scene(canvas, app)
+
+            ws_dd_buttons = [b for b in buttons if b[1] == ("toggle_dd", "WORKSPACE_DROPDOWN")]
+            pipe_dd_buttons = [b for b in buttons if b[1] == ("toggle_dd", "PIPELINE_DROPDOWN")]
+            exit_buttons = [b for b in buttons if b[1] == ("btn", "退出 [X]")]
+
+            self.assertEqual(len(ws_dd_buttons), 1, "工位地图下拉按钮必须且仅有1个")
+            self.assertEqual(len(pipe_dd_buttons), 1, "算法路线下拉按钮必须且仅有1个")
+            self.assertEqual(len(exit_buttons), 1, "退出按钮必须且仅有1个")
+
+            # 验证横向位置顺序: 地图下拉.x < 算法下拉.x < 退出.x
+            ws_rect = ws_dd_buttons[0][0]
+            pipe_rect = pipe_dd_buttons[0][0]
+            exit_rect = exit_buttons[0][0]
+            self.assertLess(ws_rect[0], pipe_rect[0], "地图下拉应在算法下拉左侧")
+            self.assertLess(pipe_rect[2], exit_rect[0], "算法下拉应在退出按钮左侧")
+
 
 class TestApp(unittest.TestCase):
 
@@ -163,6 +187,50 @@ class TestApp(unittest.TestCase):
             # 验证自动定位并选中了上次选中的样本
             self.assertEqual(app2.sel_idx, 1)
             self.assertEqual(app2.samples[app2.sel_idx]["name"], "color_20260920_120000.png")
+
+    def test_auto_analysis_and_step_pill_switch(self):
+        """测试加载样本和切换算法时自动触发分析，以及步骤药丸切换"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sample_dir = os.path.join(tmpdir, "samples")
+            os.makedirs(sample_dir, exist_ok=True)
+            _create_dummy_samples(sample_dir)
+            settings_path = os.path.join(tmpdir, "gui_settings.json")
+
+            app = AsparagusPoseStudioApp(sample_dir=sample_dir, settings_file=settings_path)
+            # 初始启动已自动触发分析
+            self.assertIsNotNone(app.pipeline_result)
+            self.assertIsNotNone(app.pipeline_result.step_snapshots)
+            self.assertIn("stage3_poses", app.pipeline_result.step_snapshots)
+
+            # 切换算法路线，自动重新分析
+            app.switch_pipeline("ridge_tracing")
+            self.assertIsNotNone(app.pipeline_result)
+            self.assertIsNotNone(app.pipeline_result.step_snapshots)
+            self.assertIn("stage3_poses", app.pipeline_result.step_snapshots)
+
+            # 步骤切换
+            app._select_step("stage1_fg")
+            self.assertEqual(app.active_step_key, "stage1_fg")
+
+            # 切换至算法 C1 (骨架细化法)
+            app.switch_pipeline("skeleton_thinning")
+            self.assertEqual(app.pipeline_key, "skeleton_thinning")
+            self.assertIsNotNone(app.pipeline_result)
+            self.assertIn("stage3_skeleton", app.pipeline_result.step_snapshots)
+
+            # 切换至算法 C2 (Frangi管状滤波法)
+            app.switch_pipeline("frangi_vesselness")
+            self.assertEqual(app.pipeline_key, "frangi_vesselness")
+            self.assertIsNotNone(app.pipeline_result)
+            self.assertIn("stage3_vesselness", app.pipeline_result.step_snapshots)
+
+            # 模拟鼠标 Hover 在第一枚药丸上，验证 Tooltip 气泡提示框渲染无异常
+            app.mouse_pos = (app.viewport.win_w // 3, 58)
+            canvas_hover = app.render()
+            self.assertIsNotNone(canvas_hover)
+
+            # 验证顶部双排布局 header_h 为 86
+            self.assertEqual(app.viewport.top_bar_h, 86)
 
 
 if __name__ == "__main__":

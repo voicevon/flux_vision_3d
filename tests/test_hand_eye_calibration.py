@@ -81,11 +81,10 @@ class TestHandEyeMatrixAndSafety(unittest.TestCase):
         # 构造模拟深度图与图像 (1 根芦笋)
         h, w = 480, 640
         analyzer.update_intrinsics(fx=500.0, fy=500.0, cx=320.0, cy=240.0)
-        color = np.zeros((h, w, 3), dtype=np.uint8)
-        color[:, :] = [30, 110, 40]  # 典型芦笋黄绿色
+        color = np.full((h, w, 3), 40, dtype=np.uint8)
+        color[200:230, 240:480] = [30, 180, 40]
         depth = np.full((h, w), 640, dtype=np.uint16)  # 底板 640mm
-        # 在中央放置一根芦笋 (580mm，凸起 60mm)
-        depth[200:230, 200:440] = 580
+        depth[200:230, 240:480] = 580                  # 芦笋 580mm
 
         targets = analyzer.analyze(color, depth)
         self.assertGreater(len(targets), 0)

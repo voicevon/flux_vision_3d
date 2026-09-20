@@ -30,10 +30,10 @@ class AsparagusPoseStudioRenderer:
             "L": int(12 * s),            # 全局左边距
             "list_w": int(140 * s),      # 左侧样本列表宽
             "right_w": int(236 * s),     # 右侧结果面板宽
-            "header_h": int(52 * s),
+            "header_h": int(86 * s),     # 双排工具栏高度 (第一排全局操作，第二排算法步骤视图)
             "bottom_h": int(46 * s),
             "row_h": int(32 * s),        # 样本行高
-            "btn_h": int(30 * s),
+            "btn_h": int(28 * s),        # 按钮基准高度
             "fs_title": max(14, int(20 * s)),
             "fs_sub": max(10, int(12 * s)),
             "fs_body": max(11, int(13 * s)),
@@ -145,6 +145,88 @@ class AsparagusPoseStudioRenderer:
         draw_text(canvas, label, (tx, ty), m["fs_sub"], text_col, bold=is_active)
 
     @classmethod
+    def _draw_step_tooltip(
+        cls,
+        canvas: np.ndarray,
+        m: Dict[str, Any],
+        step_obj: Any,
+        pill_rect: Tuple[int, int, int, int],
+        is_hovered: bool,
+        img_panel_rect: Tuple[int, int, int, int]
+    ):
+        """在步骤药丸正下方渲染多行专业知识卡片 (Tooltip: 简介、原理解析、核心参数、优缺点)"""
+        pad_x = int(14 * m["s"])
+        pad_y = int(10 * m["s"])
+        line_h = int(21 * m["s"])
+
+        # 整理行内容: (标签, 颜色, 内容)
+        content_rows = [
+            ("功能定位", (240, 245, 250), step_obj.description)
+        ]
+        if getattr(step_obj, "details", ""):
+            content_rows.append(("算法原理", (120, 215, 255), step_obj.details))
+        if getattr(step_obj, "parameters", ""):
+            content_rows.append(("核心参数", (255, 210, 70), step_obj.parameters))
+        if getattr(step_obj, "pros_cons", ""):
+            content_rows.append(("优缺边界", (180, 245, 160), step_obj.pros_cons))
+
+        # 动态测量最宽行以确定卡片宽度
+        max_line_w = 0
+        for tag, _, text in content_rows:
+            (tw, _), _ = measure_text(f"[{tag}]  {text}", font_size=m["fs_small"])
+            if tw > max_line_w:
+                max_line_w = tw
+
+        # 卡片宽度与高度约束
+        viewport_w = img_panel_rect[2] - img_panel_rect[0]
+        tip_w = min(max_line_w + pad_x * 2 + int(10 * m["s"]), viewport_w - int(16 * m["s"]))
+        tip_w = max(tip_w, int(360 * m["s"]))
+        tip_h = pad_y * 2 + int(24 * m["s"]) + len(content_rows) * line_h
+
+        # 水平居中对齐药丸，并紧贴限制在视口横向边界内
+        pill_cx = (pill_rect[0] + pill_rect[2]) // 2
+        tip_x1 = pill_cx - tip_w // 2
+        tip_x1 = max(img_panel_rect[0] + int(8 * m["s"]), min(tip_x1, img_panel_rect[2] - tip_w - int(8 * m["s"])))
+        tip_x2 = tip_x1 + tip_w
+
+        tip_y1 = pill_rect[3] + int(6 * m["s"])
+        tip_y2 = tip_y1 + tip_h
+
+        # 半透深黑工业科技底框
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (tip_x1, tip_y1), (tip_x2, tip_y2), (14, 18, 24), -1)
+        cv2.addWeighted(overlay, 0.92, canvas, 0.08, 0, canvas)
+
+        # 高光外边框与小三角指示箭头
+        border_col = (0, 235, 140) if is_hovered else (70, 160, 230)
+        cv2.rectangle(canvas, (tip_x1, tip_y1), (tip_x2, tip_y2), border_col, 1)
+
+        tri_pts = np.array([
+            [pill_cx, pill_rect[3] + int(1 * m["s"])],
+            [pill_cx - int(6 * m["s"]), tip_y1],
+            [pill_cx + int(6 * m["s"]), tip_y1]
+        ], dtype=np.int32)
+        cv2.fillPoly(canvas, [tri_pts], (14, 18, 24))
+        cv2.polylines(canvas, [tri_pts], True, border_col, 1)
+
+        # 1. 顶部标题栏徽章
+        cur_y = tip_y1 + pad_y
+        draw_text(canvas, f"[*] 步骤详解 · {step_obj.name}",
+                  (tip_x1 + pad_x, cur_y), m["fs_body"], border_col, bold=True)
+        cur_y += int(24 * m["s"])
+        cv2.line(canvas, (tip_x1 + pad_x, cur_y - int(4 * m["s"])),
+                 (tip_x2 - pad_x, cur_y - int(4 * m["s"])), (40, 50, 65), 1)
+
+        # 2. 依次输出格式化的知识行
+        for tag, val_col, text in content_rows:
+            tag_label = f"[{tag}] "
+            (lw, _), _ = measure_text(tag_label, font_size=m["fs_small"])
+            draw_text(canvas, tag_label, (tip_x1 + pad_x, cur_y), m["fs_small"], val_col, bold=True)
+            draw_text(canvas, text, (tip_x1 + pad_x + lw + int(4 * m["s"]), cur_y),
+                      m["fs_small"], val_col, bold=False)
+            cur_y += line_h
+
+    @classmethod
     def render_scene(
         cls,
         canvas: np.ndarray,
@@ -162,9 +244,11 @@ class AsparagusPoseStudioRenderer:
         m = cls.compute_metrics(canvas.shape[1])
         W, H = canvas.shape[1], canvas.shape[0]
 
-        # 1. 标题文字
-        draw_text(canvas, "芦笋位姿工作室 - Asparagus Pose Studio",
-                  (m["L"], int(16 * m["s"])), m["fs_title"], GuiTheme.TEXT, bold=True)
+        # 1. 标题文字 (第一排最左侧 Logo)
+        title_str = "芦笋位姿工作室"
+        draw_text(canvas, title_str,
+                  (m["L"], int(15 * m["s"])), m["fs_title"], GuiTheme.TEXT, bold=True)
+        (tw_title, _), _ = measure_text(title_str, font_size=m["fs_title"])
 
         list_p, img_p, right_p = cls.compute_panels(W, H, m)
 
@@ -173,59 +257,106 @@ class AsparagusPoseStudioRenderer:
         cls._draw_image_area(canvas, m, img_p, app_state)
         cls._draw_result_panel(canvas, m, right_p, app_state, result_rows)
 
-        # 3. 顶部右侧主要功能按钮组
-        btn_w = int(112 * m["s"])
-        bx = W - m["L"]
-        top_btns = [
-            ("退出 [X]", "exit", True),
-            ("导出G-code [E]", "export", bool(app_state.gcode_text)),
-            ("识别定位 [空格]", "analyze", bool(app_state.samples and app_state.sel_idx >= 0)),
-        ]
-        for label, _act, enabled in top_btns:
-            bx -= btn_w + int(8 * m["s"])
-            rect = (bx, int(14 * m["s"]), bx + btn_w, int(14 * m["s"]) + m["btn_h"])
-            cls.draw_button(canvas, rect, label, app_state.mouse_pos, m, enabled=enabled)
-            if enabled:
-                buttons.append((rect, ("btn", label)))
+        # 3. 第一排工具栏排布：
+        #    左侧紧随 Logo: 地图下拉按钮 -> 算法下拉按钮
+        #    最右侧: 退出 -> 导出 G-code
+        r1_y1 = int(12 * m["s"])
+        r1_y2 = r1_y1 + m["btn_h"]
 
-        # 4. 动态算法步骤药丸 (由 pipeline.get_steps() 动态产生)
-        steps = app_state.pipeline.get_steps() if app_state.pipeline else []
-        pill_w = int(58 * m["s"])
-        for s_obj in reversed(steps):
-            bx -= pill_w + int(4 * m["s"])
-            pill_rect = (bx, int(14 * m["s"]), bx + pill_w, int(14 * m["s"]) + m["btn_h"])
-            cls.draw_view_pill(
-                canvas, pill_rect, s_obj.name,
-                is_active=(app_state.active_step_key == s_obj.key),
-                mouse_pos=app_state.mouse_pos, m=m
-            )
-            buttons.append((pill_rect, ("set_step", s_obj.key)))
+        left_x = m["L"] + tw_title + int(20 * m["s"])
 
-        if steps:
-            bx -= int(38 * m["s"])
-            draw_text(canvas, "显示:", (bx, int(22 * m["s"])), m["fs_sub"], GuiTheme.TEXT_MUTED)
+        # 地图下拉按钮 (紧靠 Logo 右侧)
+        sc_w = int(170 * m["s"])
+        workspace_rect = (left_x, r1_y1, left_x + sc_w, r1_y2)
+        app_state._workspace_rect = workspace_rect
+        is_sc_open = (app_state.active_dropdown == "WORKSPACE_DROPDOWN")
+        draw_dropdown_button(
+            canvas, workspace_rect, f"地图: {app_state.current_workspace_name}",
+            is_sc_open, app_state.mouse_pos, font_size=m["fs_sub"]
+        )
+        buttons.append((workspace_rect, ("toggle_dd", "WORKSPACE_DROPDOWN")))
+        left_x += sc_w + int(10 * m["s"])
 
-        # 5. 算法路线下拉按钮
-        pipe_w = int(185 * m["s"])
-        bx -= pipe_w + int(8 * m["s"])
-        pipeline_rect = (bx, int(14 * m["s"]), bx + pipe_w, int(14 * m["s"]) + m["btn_h"])
+        # 算法下拉按钮 (紧随地图右侧)
+        pipe_w = int(210 * m["s"])
+        pipeline_rect = (left_x, r1_y1, left_x + pipe_w, r1_y2)
         app_state._pipeline_rect = pipeline_rect
         is_pipe_open = (app_state.active_dropdown == "PIPELINE_DROPDOWN")
         curr_pipe_name = app_state.current_pipeline_name
         short_pipe = curr_pipe_name.split(":")[0] if ":" in curr_pipe_name else curr_pipe_name
-        draw_dropdown_button(canvas, pipeline_rect, f"算法: {short_pipe}", is_pipe_open, app_state.mouse_pos, font_size=m["fs_sub"])
+        draw_dropdown_button(
+            canvas, pipeline_rect, f"算法: {short_pipe}",
+            is_pipe_open, app_state.mouse_pos, font_size=m["fs_sub"]
+        )
         buttons.append((pipeline_rect, ("toggle_dd", "PIPELINE_DROPDOWN")))
 
-        # 6. 工位地图下拉按钮
-        sc_w = int(160 * m["s"])
-        bx -= sc_w + int(8 * m["s"])
-        workspace_rect = (bx, int(14 * m["s"]), bx + sc_w, int(14 * m["s"]) + m["btn_h"])
-        app_state._workspace_rect = workspace_rect
-        is_sc_open = (app_state.active_dropdown == "WORKSPACE_DROPDOWN")
-        draw_dropdown_button(canvas, workspace_rect, f"地图: {app_state.current_workspace_name}", is_sc_open, app_state.mouse_pos, font_size=m["fs_sub"])
-        buttons.append((workspace_rect, ("toggle_dd", "WORKSPACE_DROPDOWN")))
+        # 第一排最右侧：退出 [X] 与 导出 G-code [E]
+        bx = W - m["L"]
 
-        # 7. 底部状态栏
+        # 退出按钮
+        btn_exit_w = int(96 * m["s"])
+        bx -= btn_exit_w
+        exit_rect = (bx, r1_y1, bx + btn_exit_w, r1_y2)
+        cls.draw_button(canvas, exit_rect, "退出 [X]", app_state.mouse_pos, m, enabled=True)
+        buttons.append((exit_rect, ("btn", "退出 [X]")))
+
+        # 导出 G-code 按钮
+        btn_exp_w = int(116 * m["s"])
+        bx -= btn_exp_w + int(8 * m["s"])
+        exp_rect = (bx, r1_y1, bx + btn_exp_w, r1_y2)
+        cls.draw_button(canvas, exp_rect, "导出G-code [E]", app_state.mouse_pos, m, enabled=bool(app_state.gcode_text))
+        if app_state.gcode_text:
+            buttons.append((exp_rect, ("btn", "导出G-code [E]")))
+
+        # 4. 第二排：视口上方算法阶段步骤药丸视图与悬停提示框
+        r2_y1 = int(48 * m["s"])
+        r2_y2 = r2_y1 + m["btn_h"]
+        steps = app_state.pipeline.get_steps() if app_state.pipeline else []
+
+        # 在图像视口左侧对齐排布步骤视图
+        pill_x = img_p[0]
+        (lbl_w, lbl_h), _ = measure_text("步骤视图:", font_size=m["fs_sub"])
+        draw_text(canvas, "步骤视图:", (pill_x, r2_y1 + (m["btn_h"] - lbl_h) // 2), m["fs_sub"], GuiTheme.TEXT_MUTED)
+        pill_x += lbl_w + int(10 * m["s"])
+
+        hovered_step = None
+        hovered_rect = None
+        active_step = None
+        active_rect = None
+        mx, my = app_state.mouse_pos
+
+        for s_obj in steps:
+            (tw, _), _ = measure_text(s_obj.name, font_size=m["fs_sub"])
+            pill_w = max(int(68 * m["s"]), tw + int(18 * m["s"]))
+            pill_rect = (pill_x, r2_y1, pill_x + pill_w, r2_y2)
+            is_active = (app_state.active_step_key == s_obj.key)
+            if is_active:
+                active_step = s_obj
+                active_rect = pill_rect
+
+            if pill_rect[0] <= mx <= pill_rect[2] and pill_rect[1] <= my <= pill_rect[3]:
+                hovered_step = s_obj
+                hovered_rect = pill_rect
+
+            cls.draw_view_pill(
+                canvas, pill_rect, s_obj.name,
+                is_active=is_active,
+                mouse_pos=app_state.mouse_pos, m=m
+            )
+            buttons.append((pill_rect, ("set_step", s_obj.key)))
+            pill_x += pill_w + int(8 * m["s"])
+
+        # 鼠标悬停优先，否则显示当前选中激活步骤的提示气泡框
+        target_step = hovered_step or active_step
+        target_rect = hovered_rect or active_rect
+        if target_step and target_rect and target_step.description:
+            cls._draw_step_tooltip(
+                canvas, m, target_step, target_rect,
+                is_hovered=(hovered_step is not None),
+                img_panel_rect=img_p
+            )
+
+        # 5. 底部状态栏
         yb = H - m["bottom_h"] + int(8 * m["s"])
         calib = CALIB_LABELS.get(
             app_state.targets[0].calibration_source if app_state.targets else "uncalibrated", "-"
@@ -239,7 +370,7 @@ class AsparagusPoseStudioRenderer:
         draw_text(canvas, status, (m["L"], yb), m["fs_sub"], GuiTheme.TEXT_SUB)
         draw_text(
             canvas,
-            "[↑↓] 样本  ·  [空格] 识别定位  ·  右键拖拽  ·  滚轮无级缩放  ·  双击复位",
+            "[↑↓] 样本  ·  [空格] 重新解算  ·  右键拖拽  ·  滚轮无级缩放  ·  双击复位",
             (W - int(460 * m["s"]), yb), m["fs_sub"], GuiTheme.TEXT_MUTED
         )
 
@@ -356,8 +487,12 @@ class AsparagusPoseStudioRenderer:
             )
             mode_col = GuiTheme.OK if app_state.mode == "3d" else GuiTheme.WARN
         else:
-            mode_txt = "原图已载入 — 点击上方【识别定位】(或按空格键) 开始位姿解算"
-            mode_col = GuiTheme.GOLD
+            mode_txt = (
+                f"未检出符合规格目标 (当前算法: {app_state.current_pipeline_name})"
+                if (app_state.samples and app_state.sel_idx >= 0)
+                else "请在左侧列表选择样本照片"
+            )
+            mode_col = GuiTheme.WARN if (app_state.samples and app_state.sel_idx >= 0) else GuiTheme.GOLD
         draw_text(canvas, mode_txt, (x1 + int(8 * m["s"]), y2 - int(20 * m["s"])),
                   m["fs_small"], mode_col, bold=True)
 

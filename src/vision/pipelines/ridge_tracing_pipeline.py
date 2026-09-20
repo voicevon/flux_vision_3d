@@ -20,11 +20,11 @@ from src.vision.pipelines.base_pipeline import BaseAsparagusPipeline, PipelineRe
 from src.vision.pipelines.registry import PipelineRegistry
 
 
-@PipelineRegistry.register("ridge_tracing", "路线 A: 距离场脊线法 (Ridge Tracing)")
+@PipelineRegistry.register("ridge_tracing", "算法 A: 距离场脊线法 (Ridge Tracing)")
 class RidgeTracingPipeline(BaseAsparagusPipeline):
-    """路线 A：距离场脊线感知流水线"""
+    """算法 A：距离场脊线感知流水线"""
 
-    name = "路线 A: 距离场脊线法 (Ridge Tracing)"
+    name = "算法 A: 距离场脊线法 (Ridge Tracing)"
     description = "通过欧氏距离变换与垂向极大值峰脊追踪，利用能量鞍部天然解耦并排并贴合的芦笋"
 
     def __init__(self, fx: float = 909.12, fy: float = 907.46, cx: float = 647.46, cy: float = 377.51):
@@ -36,11 +36,41 @@ class RidgeTracingPipeline(BaseAsparagusPipeline):
 
     def get_steps(self) -> List[PipelineStep]:
         return [
-            PipelineStep("stage1_fg", "1.前景", "ExG 超绿指数与传送带物理 ROI 作业区约束"),
-            PipelineStep("stage1_dist", "距离场", "欧氏距离变换场 (Distance Transform 半径能量分布)"),
-            PipelineStep("stage2_peaks", "峰脊线", "垂向局部极大值抑制峰脊点阵 (解耦并排贴合缝隙)"),
-            PipelineStep("stage2_spines", "2.骨架", "横向桥接中轴脊线、采样截面半径圆与紧凑多边形"),
-            PipelineStep("stage3_poses", "3.位姿", "三维空间位姿解算、SCARA抓取坐标与Top 3顶层锁定")
+            PipelineStep(
+                "stage1_fg", "1.前景",
+                "ExG 超绿指数与传送带物理 ROI 作业区约束",
+                details="计算 2G - R - B 超绿特征，将绿色芦笋从黑色/深灰色输送带背景中无阈值剥离",
+                parameters="ExG 阈值=12.0; ROI=[0.35W, 0.81W]",
+                pros_cons="优点: 极其契合新鲜蔬菜色彩特征; 缺点: 面对黄化或泥沙包裹芦笋需配合亮度补偿"
+            ),
+            PipelineStep(
+                "stage1_dist", "距离场",
+                "欧氏距离变换场 (Distance Transform 半径能量分布)",
+                details="计算前景每个像素到最近背景的欧氏距离，中轴处数值最大，鞍部形成天然分割谷底",
+                parameters="cv2.DIST_L2, 算子大小=5x5",
+                pros_cons="优点: 赋予并排贴合芦笋天然解耦鞍部; 缺点: 边缘锯齿会带来距离场毛刺"
+            ),
+            PipelineStep(
+                "stage2_peaks", "峰脊线",
+                "垂向局部极大值抑制峰脊点阵 (解耦并排贴合缝隙)",
+                details="沿垂直截面提取距离场局域最大值，抑制平坦区域，只提取中心中轴关键脊点",
+                parameters="min_peak_radius=3.0px; nms_window=5px",
+                pros_cons="优点: 离散化极快，完全消除并排芦笋粘连; 缺点: 严重空洞内部可能产生假极大值"
+            ),
+            PipelineStep(
+                "stage2_spines", "2.骨架",
+                "横向桥接中轴脊线、采样截面半径圆与紧凑多边形",
+                details="将脊点按物理间距约束桥接成连续骨架线，沿线膨胀真实半径圆构造带方向轮廓",
+                parameters="bridge_dx=18px, bridge_dy=8px; min_spine_len=50px",
+                pros_cons="优点: 中轴点与直径完全同步解算; 缺点: 严重断续时需依赖外推拟合"
+            ),
+            PipelineStep(
+                "stage3_poses", "3.位姿",
+                "三维空间位姿解算、SCARA抓取坐标与Top 3顶层锁定",
+                details="结合相机外参及桌平面模型，反投影计算吸盘抓取点 (X, Y, Z, R) 并按高度仲裁顶层",
+                parameters="safe_z=80.0mm; 吸盘相对抓取沉降=-12mm",
+                pros_cons="优点: 直接驱动工业 SCARA 执行抓取; 缺点: 需事先完成手眼与工作区标定"
+            )
         ]
 
     def run(

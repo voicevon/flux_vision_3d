@@ -91,8 +91,8 @@ class AsparagusPoseStudioApp:
         self.active_step_key = "stage3_poses"
         self._init_pipeline()
 
-        # 视口平移与无级缩放交互控制器
-        self.viewport = MappingViewportInteractor(top_bar_h=52, bottom_bar_h=46, win_w=BASE_W, win_h=BASE_H)
+        # 视口平移与无级缩放交互控制器 (自适应双排工具栏顶部高度 86)
+        self.viewport = MappingViewportInteractor(top_bar_h=86, bottom_bar_h=46, win_w=BASE_W, win_h=BASE_H)
 
         # 交互与事件映射
         self.mouse_pos = (-1, -1)
@@ -174,7 +174,7 @@ class AsparagusPoseStudioApp:
             self.set_toast(f"【{self.current_workspace_name}】未平差 tags_map.yaml，降级估算！")
 
     def rescan(self, auto_load: bool = False):
-        """重新扫描样本目录"""
+        """重新扫描样本目录 (选中样本自动立即触发识别定位)"""
         self.samples = scan_samples(self.sample_dir)
         self.sel_idx = -1
         self.targets, self.vis_img, self.gcode_text = [], None, ""
@@ -186,7 +186,7 @@ class AsparagusPoseStudioApp:
                     if smp["name"] == self._persisted_sample_name:
                         target_idx = i
                         break
-            self._select_sample(target_idx, analyze_now=False)
+            self._select_sample(target_idx, analyze_now=True)
 
     def _keep_selection_visible(self, idx: int):
         """键盘切换样本时保持选中项在列表中可见"""
@@ -483,7 +483,7 @@ class AsparagusPoseStudioApp:
 
             for rect, idx in self._sample_rows:
                 if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
-                    self._select_sample(idx, analyze_now=False)
+                    self._select_sample(idx, analyze_now=True)
                     return
 
             for rect, t_idx in self._result_rows:
@@ -506,10 +506,10 @@ class AsparagusPoseStudioApp:
             self.export_gcode()
         elif raw_key in (2490368, 65362, 38):      # 上方向键
             if self.sel_idx > 0:
-                self._select_sample(self.sel_idx - 1, analyze_now=False)
+                self._select_sample(self.sel_idx - 1, analyze_now=True)
         elif raw_key in (2621440, 65364, 40):      # 下方向键
             if self.sel_idx < len(self.samples) - 1:
-                self._select_sample(self.sel_idx + 1, analyze_now=False)
+                self._select_sample(self.sel_idx + 1, analyze_now=True)
 
     # ------------------------------ 渲染与主循环 ------------------------------
     def render(self) -> np.ndarray:

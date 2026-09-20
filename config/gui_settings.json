@@ -7,7 +7,7 @@
     "scale_pct": 120,
     "canvas_w": 1110,
     "canvas_h": 1061,
-    "updated_at": "2026-09-20 13:16:04"
+    "updated_at": "2026-09-20 15:17:11"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -36,9 +36,9 @@
     "canvas_h": 705,
     "updated_at": "2026-09-20 10:16:38",
     "hub_state": {
-      "selected_workspace_id": "20260916_145246_Home_real",
-      "selected_workspace_name": "Home_real",
-      "updated_at": "2026-09-20 10:16:32"
+      "selected_workspace_id": "20260920_080724_TESTtest",
+      "selected_workspace_name": "TEST  test_对照组",
+      "updated_at": "2026-09-20 15:10:36"
     }
   },
   "hardware_config": {
@@ -81,13 +81,13 @@
     }
   },
   "asparagus_pose_studio": {
-    "scale_pct": 100,
-    "canvas_w": 1366,
-    "canvas_h": 705,
-    "updated_at": "2026-09-20 13:17:23",
+    "scale_pct": 120,
+    "canvas_w": 1536,
+    "canvas_h": 960,
+    "updated_at": "2026-09-20 15:17:07",
     "studio_state": {
-      "pipeline_key": "ridge_tracing",
-      "selected_sample_name": "color_20260920_120000.png"
+      "pipeline_key": "segment_topology",
+      "selected_sample_name": "view_0005.png"
     }
   }
 }

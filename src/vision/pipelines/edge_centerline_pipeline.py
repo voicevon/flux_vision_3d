@@ -20,11 +20,11 @@ from src.vision.pipelines.occlusion_peeler import CandidateSpine, OcclusionPeele
 from src.vision.pipelines.registry import PipelineRegistry
 
 
-@PipelineRegistry.register("segment_topology", "路线 B2: 分线段提取法 (Segment Topology)")
-class EdgeCenterlinePipeline(BaseAsparagusPipeline):
-    """路线 B2：基于平行边缘分段提取与几何拓扑配对的纯 2D 感知流水线"""
+@PipelineRegistry.register("segment_topology", "算法 B2: 分线段提取法 (Segment Topology)")
+class SegmentTopologyPipeline(BaseAsparagusPipeline):
+    """算法 B2：基于平行边缘分段提取与几何拓扑配对的纯 2D 感知流水线"""
 
-    name = "路线 B2: 分线段提取法 (Segment Topology)"
+    name = "算法 B2: 分线段提取法 (Segment Topology)"
     description = "提取近似水平边缘线段 + 平行双轨配对 + 几何对称中线 + 叠压拓扑剥层"
 
     def __init__(self, fx: float = 909.12, fy: float = 907.46, cx: float = 647.46, cy: float = 377.51):
@@ -37,11 +37,41 @@ class EdgeCenterlinePipeline(BaseAsparagusPipeline):
 
     def get_steps(self) -> List[PipelineStep]:
         return [
-            PipelineStep("stage1_prep", "1.预处理", "ROI 区域裁切、双边滤波与去反光开运算"),
-            PipelineStep("stage2_segments", "线段提取", "Sobel-Y & Canny 水平走向细长边缘线段检测与短枝剪枝"),
-            PipelineStep("stage3_pairing", "双轨配对", "平行边缘线段双轨匹配 (按重叠度与物理直径解耦并排)"),
-            PipelineStep("stage4_centerline", "2.中线拓扑", "双轨对称几何中心线拟合与单根长径测算"),
-            PipelineStep("stage5_poses", "3.顶层位姿", "纯 2D 叠压拓扑剥层与 Top 3 顶层抓取位姿输出")
+            PipelineStep(
+                "stage1_prep", "1.预处理",
+                "ROI 区域裁切、双边滤波与去反光开运算",
+                details="双边滤波保边去噪配合微小开运算，切断水珠反光链条，为亚像素线段提取提供纯净底图",
+                parameters="d=5, sigmaColor=35, sigmaSpace=35; 开运算 ksize=(3,3)",
+                pros_cons="优点: 极大减少假线段数量; 缺点: 若开运算核过大可能导致细长边缘局部断裂"
+            ),
+            PipelineStep(
+                "stage2_segments", "线段提取",
+                "Sobel-Y & Canny 水平走向细长边缘线段检测与短枝剪枝",
+                details="提取水平走向的连续亚像素边缘线段，依据斜率和连续长度过滤非传送方向与细碎杂线",
+                parameters="Canny 阈值=[30, 80]; min_seg_len=25px, 角度容差=±25°",
+                pros_cons="优点: 边界线形清晰分明; 缺点: 弯曲芦笋边缘会被打碎为多段短折线"
+            ),
+            PipelineStep(
+                "stage3_pairing", "双轨配对",
+                "平行边缘线段双轨匹配 (按重叠度与物理直径解耦并排)",
+                details="在水平重叠区间内寻找间距处于芦笋直径范围 (6~45mm) 的上下平行线段对，锁定单根边界双轨",
+                parameters="overlap_ratio>=0.4; min_diam_mm=6.0, max_diam_mm=45.0",
+                pros_cons="优点: 双轨平行约束极严，误配率极低; 缺点: 单侧边缘严重污损缺失时无法成对"
+            ),
+            PipelineStep(
+                "stage4_centerline", "2.中线拓扑",
+                "双轨对称几何中心线拟合与单根长径测算",
+                details="在配对的双轨之间取对称中心线，计算平均法向间距作为直径，沿中线延伸提取物料全长",
+                parameters="centerline_subsample_step=8px; 直线拟合残差门限=2.5px",
+                pros_cons="优点: 几何对称性极强，中心线定位精准; 缺点: 两端截断处需依赖额外端点检测"
+            ),
+            PipelineStep(
+                "stage5_poses", "3.顶层位姿",
+                "纯 2D 叠压拓扑剥层与 Top 3 顶层抓取位姿输出",
+                details="分析双轨线段在交叉区域的打断贯通情况，构建叠压 DAG 有向图，优先拣选完全贯通的最顶层芦笋",
+                parameters="t_junction_radius=18px; 顶层抓取沉降=-10mm",
+                pros_cons="优点: 顶层判定具备严格几何线段贯穿证明; 缺点: 两线段完全平行时依赖端点可见性"
+            )
         ]
 
     def run(
