@@ -7,6 +7,7 @@ from src.vision.pipelines.registry import PipelineRegistry
 
 # 显式导入各技术路线以触发自动注册
 import src.vision.pipelines.ridge_tracing_pipeline
+import src.vision.pipelines.polarity_scanline_pipeline
 import src.vision.pipelines.edge_centerline_pipeline
 
 __all__ = [

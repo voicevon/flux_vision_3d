@@ -7,7 +7,7 @@
     "scale_pct": 120,
     "canvas_w": 1110,
     "canvas_h": 1061,
-    "updated_at": "2026-09-20 10:08:24"
+    "updated_at": "2026-09-20 12:22:46"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -34,11 +34,11 @@
     "scale_pct": 200,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-20 08:51:14",
+    "updated_at": "2026-09-20 10:16:38",
     "hub_state": {
       "selected_workspace_id": "20260916_145246_Home_real",
       "selected_workspace_name": "Home_real",
-      "updated_at": "2026-09-20 08:49:35"
+      "updated_at": "2026-09-20 10:16:32"
     }
   },
   "hardware_config": {
@@ -62,7 +62,7 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-20 09:55:31"
+    "updated_at": "2026-09-20 12:09:49"
   },
   "d435_viewer": {
     "scale_pct": 100,

@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+芦笋位姿工作室 (Asparagus Pose Studio) - 数据与配置模块
+=====================================================
+负责配置加载、生产样本扫描、原始深度对齐配对以及抓取 G-code 导出。
+"""
+
+import os
+import glob
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import yaml
+
+from src.utils.logger import get_logger
+
+log = get_logger(__name__)
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+DEFAULT_DIR = os.path.join(PROJECT_ROOT, "data", "snapshots")
+REPORT_DIR = os.path.join(PROJECT_ROOT, "reports")
+
+WINDOW_KEY = "AsparagusPoseStudio"   # cv2 窗口内部 key (纯 ASCII, 标题经 win32 API 动态设置)
+APP_ID = "asparagus_pose_studio"
+BASE_W, BASE_H = 1280, 800          # 基准逻辑画布尺寸
+
+CALIB_LABELS = {
+    "tag_online": "AprilTag 在线定位",
+    "tag_cached": "AprilTag 缓存外参",
+    "hand_eye": "手工 SVD 标定",
+    "2d_preview": "2D 预览 (无深度)",
+    "uncalibrated": "未标定 - 防撞保护",
+}
+
+
+def load_system_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    读取 config.yaml: 相机内参/标定矩阵/机械臂安全参数 (与生产链路同源)
+    """
+    cfg_file = config_path or CONFIG_PATH
+    cfg = {
+        "intrinsics": None,          # (fx, fy, cx, cy, width, height)
+        "t_cam_to_scara": None,
+        "tags_map_path": "",
+        "safe_z": 80.0,
+        "drop_x": 220.0,
+        "drop_y": 0.0,
+    }
+    if not os.path.exists(cfg_file):
+        return cfg
+
+    try:
+        with open(cfg_file, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        cam = raw.get("camera", {}).get("color", {})
+        if all(k in cam for k in ("fx", "fy", "cx", "cy")):
+            cfg["intrinsics"] = (
+                float(cam["fx"]), float(cam["fy"]),
+                float(cam["cx"]), float(cam["cy"]),
+                int(cam.get("width", 0)), int(cam.get("height", 0))
+            )
+        calib = raw.get("calibration", {})
+        if calib.get("t_cam_to_scara"):
+            cfg["t_cam_to_scara"] = np.array(calib["t_cam_to_scara"], dtype=float)
+        cfg["tags_map_path"] = calib.get("tags_map_path", "") or ""
+        robot = raw.get("robot", {})
+        cfg["safe_z"] = float(robot.get("safe_z_mm", 80.0))
+        cfg["drop_x"] = float(robot.get("drop_x_mm", 220.0))
+        cfg["drop_y"] = float(robot.get("drop_y_mm", 0.0))
+    except Exception as exc:
+        log.warning("config.yaml 加载异常 (使用缺省值): %s", exc)
+    return cfg
+
+
+def find_depth_pair(png_path: str) -> Optional[str]:
+    """
+    彩色 png 配对原始深度 npy:
+    支持两种命名规则:
+      1. 同茎同名: img.png <-> img.npy
+      2. d435_viewer 抓拍规则: color_TS.png <-> depth_raw_TS.npy
+    """
+    folder = os.path.dirname(png_path)
+    stem = os.path.splitext(os.path.basename(png_path))[0]
+    candidates = [stem + ".npy"]
+    if stem.startswith("color_"):
+        candidates.append("depth_raw_" + stem[len("color_"):] + ".npy")
+    for name in candidates:
+        path = os.path.join(folder, name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def scan_samples(sample_dir: str) -> List[Dict[str, Any]]:
+    """
+    扫描样本目录: 返回 [{'png': path, 'depth': path_or_none, 'name': basename}]
+    过滤可视化派生图 (depth_vis_*, height_vis_*)，按修改时间倒序排列 (最新在前)。
+    """
+    samples = []
+    if not os.path.isdir(sample_dir):
+        return samples
+    patterns = [os.path.join(sample_dir, "*.png"), os.path.join(sample_dir, "*.jpg")]
+    all_imgs = []
+    for pat in patterns:
+        all_imgs.extend(glob.glob(pat))
+
+    for png in all_imgs:
+        base = os.path.basename(png)
+        if base.startswith(("depth_vis_", "height_vis_")):
+            continue  # 跳过中间派生可视化图，只保留原始采集帧
+        samples.append({
+            "png": png,
+            "depth": find_depth_pair(png),
+            "name": base
+        })
+    samples.sort(key=lambda s: os.path.getmtime(s["png"]), reverse=True)
+    return samples
+
+
+def export_gcode_file(gcode_text: str, report_dir: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    将生成的抓取 G-code 保存至报表目录。
+    返回 (是否成功, 文件路径或错误信息)。
+    """
+    if not gcode_text:
+        return False, "无有效的 G-code 内容"
+    out_dir = report_dir or REPORT_DIR
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        filename = f"asparagus_gcode_{time.strftime('%Y%m%d_%H%M%S')}.gcode"
+        path = os.path.join(out_dir, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(gcode_text + "\n")
+        return True, path
+    except Exception as exc:
+        log.error("G-code 导出失败: %s", exc)
+        return False, str(exc)

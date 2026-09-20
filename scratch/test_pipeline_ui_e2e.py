@@ -6,53 +6,64 @@ import cv2
 from tools.asparagus_offline import AsparagusOfflineApp
 from src.vision.pipelines import PipelineRegistry
 
-print("=== 开始多技术路线与自适应 GUI 端到端验证 ===")
+print("=== 开始三技术路线 (A, B1, B2) 与自适应 GUI 端到端验证 ===")
 app = AsparagusOfflineApp()
 print(f"当前工位: {app.current_workspace_name}")
-print(f"当前激活算法: {app.pipeline_key}")
+print(f"所有已注册路线: {PipelineRegistry.list_options()}")
+
+# 1. 验证路线 A: 距离场脊线法
+print("\n--- 1. 测试路线 A: ridge_tracing ---")
 assert app.pipeline_key == "ridge_tracing"
+steps_a = [s.name for s in app.pipeline.get_steps()]
+print("路线 A 动态步骤:", steps_a)
+assert steps_a == ["1.前景", "距离场", "峰脊线", "2.骨架", "3.位姿"]
 
-# 1. 验证路线 A 的动态步骤
-steps_a = app.pipeline.get_steps()
-step_names_a = [s.name for s in steps_a]
-print("路线 A 动态步骤:", step_names_a)
-assert step_names_a == ["1.前景", "距离场", "峰脊线", "2.骨架", "3.位姿"]
-
-# 运行路线 A
 app.run_analyze()
 assert app.pipeline_result is not None
 print(f"路线 A 解算耗时: {app.pipeline_result.elapsed_ms}ms, 检出目标: {len(app.targets)}")
 assert len(app.targets) > 0
 
-# 保存路线 A 的位姿与距离场截图
 app._select_step("stage3_poses")
-canvas_a3 = app.render()
-cv2.imwrite("scratch/route_a_poses.png", canvas_a3)
+canvas_a = app.render()
+cv2.imwrite("scratch/route_a_poses.png", canvas_a)
 
-app._select_step("stage1_dist")
-canvas_a2 = app.render()
-cv2.imwrite("scratch/route_a_dist.png", canvas_a2)
+# 2. 切换至路线 B1: 极性扫描法 (Polarity Scanline)
+print("\n--- 2. 测试路线 B1: polarity_scanline ---")
+app.switch_pipeline("polarity_scanline")
+assert app.pipeline_key == "polarity_scanline"
+steps_b1 = [s.name for s in app.pipeline.get_steps()]
+print("路线 B1 动态步骤:", steps_b1)
+assert steps_b1 == ["1.预处理", "梯度极性", "极性配对", "2.主干拟合", "3.顶层位姿"]
 
-# 2. 切换至路线 B (双侧边缘拟合法)
-print("--- 切换至路线 B: edge_centerline ---")
-app.switch_pipeline("edge_centerline")
-assert app.pipeline_key == "edge_centerline"
-
-steps_b = app.pipeline.get_steps()
-step_names_b = [s.name for s in steps_b]
-print("路线 B 动态步骤:", step_names_b)
-assert step_names_b == ["1.预处理", "梯度边缘", "双侧边界", "2.几何中线", "3.位姿"]
-
-print(f"路线 B 解算耗时: {app.pipeline_result.elapsed_ms}ms, 检出目标: {len(app.targets)}")
+print(f"路线 B1 解算耗时: {app.pipeline_result.elapsed_ms}ms, 检出目标: {len(app.targets)}")
 assert len(app.targets) > 0
 
-# 保存路线 B 的位姿与梯度边缘截图
+# 保存路线 B1 极性配对与顶层位姿快照
+app._select_step("stage3_scanline")
+canvas_b1_pairs = app.render()
+cv2.imwrite("scratch/route_b1_scanline.png", canvas_b1_pairs)
+
+app._select_step("stage5_top_poses")
+canvas_b1_poses = app.render()
+cv2.imwrite("scratch/route_b1_poses.png", canvas_b1_poses)
+
+# 3. 切换至路线 B2: 分线段提取法 (Segment Topology)
+print("\n--- 3. 测试路线 B2: segment_topology ---")
+app.switch_pipeline("segment_topology")
+assert app.pipeline_key == "segment_topology"
+steps_b2 = [s.name for s in app.pipeline.get_steps()]
+print("路线 B2 动态步骤:", steps_b2)
+assert steps_b2 == ["1.预处理", "线段提取", "双轨配对", "2.中线拓扑", "3.顶层位姿"]
+
+print(f"路线 B2 解算耗时: {app.pipeline_result.elapsed_ms}ms, 检出目标: {len(app.targets)}")
+assert len(app.targets) > 0
+
+app._select_step("stage3_pairing")
+canvas_b2_pairs = app.render()
+cv2.imwrite("scratch/route_b2_pairing.png", canvas_b2_pairs)
+
 app._select_step("stage5_poses")
-canvas_b5 = app.render()
-cv2.imwrite("scratch/route_b_poses.png", canvas_b5)
+canvas_b2_poses = app.render()
+cv2.imwrite("scratch/route_b2_poses.png", canvas_b2_poses)
 
-app._select_step("stage2_edges")
-canvas_b2 = app.render()
-cv2.imwrite("scratch/route_b_edges.png", canvas_b2)
-
-print("=== 多技术路线动态自适应 GUI 验证全部通过 (ALL PASSED) ===")
+print("\n=== 三技术路线 (A, B1, B2) 端到端 GUI 切换与解算全部通过 (ALL PASSED) ===")

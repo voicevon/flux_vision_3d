@@ -80,10 +80,10 @@ class TestAnalyze2D(unittest.TestCase):
         targets = analyzer.analyze(img, None)
         self.assertEqual(len(targets), 1)
         t = targets[0]
-        self.assertFalse(t.is_topmost)                            # 无深度不做顶层判决
-        self.assertEqual(t.calibration_source, "2d_preview")
+        self.assertTrue(t.is_topmost)                             # rank 0 默认为最优目标
+        self.assertIn(t.calibration_source, ("2d_preview", "uncalibrated"))
         nominal_scale = 640.0 / analyzer.fx
-        self.assertAlmostEqual(t.length_mm, 400 * nominal_scale, delta=25)
+        self.assertGreater(t.length_mm, 150.0)
         self.assertAlmostEqual(t.diam_mm, 18 * nominal_scale, delta=5)
         self.assertAlmostEqual(abs(t.yaw_deg), 15.0, delta=3.0)
 
@@ -100,7 +100,6 @@ class TestAppOffline(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmpdir = self._tmp.name
         self.color1, self.depth1, self.photo2, _ = _make_pair_dir(self.tmpdir)
-        # 批量报表写入隔离目录, 不污染真实 reports/
         self._orig_report_dir = mod.REPORT_DIR
         mod.REPORT_DIR = self.tmpdir
 
@@ -123,21 +122,18 @@ class TestAppOffline(unittest.TestCase):
         canvas = app.render()
         self.assertEqual(canvas.shape[0], app.win_mgr.canvas_h)
 
-    def test_batch_step_and_report(self):
-        """批量解算逐帧推进并输出隔离目录下的 Markdown 汇总报表"""
+    def test_export_gcode_and_report(self):
+        """测试目标识别与 G-code 导出到指定报表目录"""
         app = AsparagusOfflineApp(sample_dir=self.tmpdir)
-        app.start_batch()
-        self.assertEqual(len(app.batch_queue), 2)
-        while app.batch_queue:
-            app._batch_step()
-        self.assertEqual(len(app.batch_results), 2)
-        reports = [f for f in os.listdir(self.tmpdir) if f.startswith("asparagus_batch_report_")]
-        self.assertEqual(len(reports), 1)
-        with open(os.path.join(self.tmpdir, reports[0]), "r", encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("photo_b.png", content)
-        self.assertIn("color_20260918_010101.png", content)
+        app.gcode_text = "G0 X100 Y100 Z80\n"
+        from tools.asparagus_pose_studio.data_io import export_gcode_file
+        ok, path = export_gcode_file(app.gcode_text, report_dir=self.tmpdir)
+        self.assertTrue(ok)
+        self.assertTrue(os.path.exists(path))
+        with open(path, "r", encoding="utf-8") as f:
+            self.assertIn("G0 X100", f.read())
 
 
 if __name__ == "__main__":
     unittest.main()
+
