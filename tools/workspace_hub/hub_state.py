@@ -56,17 +56,17 @@ class HubState:
     TAB_PROD_IMAGES = "tab_prod_images"     # 页签2: 生产相册 (生产基准工位相册)
     TAB_REPORT = "tab_report"               # 页签3: 体检报告 (几何健康大屏)
     TAB_WHITELIST = "tab_whitelist"         # 页签4: Tag 白名单
-    # 页签展示顺序: 1 标定相册 / 2 Tag白名单 / 3 体检报告 / 4 生产相册
-    TAB_ORDER = (TAB_CALIB_IMAGES, TAB_WHITELIST, TAB_REPORT, TAB_PROD_IMAGES)
+    # 页签展示顺序: 1 Dashboard / 2 Tag白名单 / 3 标定相册 / 4 生产相册
+    TAB_ORDER = (TAB_REPORT, TAB_WHITELIST, TAB_CALIB_IMAGES, TAB_PROD_IMAGES)
 
     # 视图模式 (全宽大图沉浸预览, 仅在标定相册页签下双击卡片展开)
     VIEW_STANDARD = "standard"    # 标准: 左栏 + 右侧页签内容
     VIEW_EXPANDED = "expanded"    # 全宽大图: 右侧区域整体铺满单帧大图
 
-    # 相册卡片网格规格 (与渲染器保持一致): 4 列 x 3 行 = 每页 12 张大卡片
-    GRID_COLS = 4
+    # 相册卡片网格规格 (与渲染器保持一致): 3 列 x 3 行 = 每页 9 张大卡片
+    GRID_COLS = 3
     GRID_ROWS = 3
-    GRID_PAGE = 12
+    GRID_PAGE = 9
 
     def __init__(self, workspace_mgr: WorkspaceManager = None, force_mock: bool = False):
         self.workspace_mgr = workspace_mgr or WorkspaceManager()

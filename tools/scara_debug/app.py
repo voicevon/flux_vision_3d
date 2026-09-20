@@ -50,23 +50,7 @@ from tools.scara_debug.renderer import ScaraDebugRenderer, LOGIC_W, LOGIC_H  # n
 log = get_logger(__name__)
 
 
-def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
-    """弹出轻量级原生 Windows 输入框 (与 Scene Hub 相同的输入方案，支持中文)"""
-    try:
-        import tkinter as tk
-        from tkinter import simpledialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        val = simpledialog.askstring(title, prompt_text, initialvalue=initial, parent=root)
-        root.destroy()
-        return val.strip() if val else ""
-    except Exception:
-        print(f"\n{title}: {prompt_text}")
-        try:
-            return input("请输入: ").strip()
-        except Exception:
-            return ""
+from src.utils.dialog_utils import prompt_input_text
 
 
 class PresetManager:

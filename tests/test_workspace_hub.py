@@ -98,42 +98,42 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertEqual(len(state.current_images), 2)
 
     def test_hub_renderer_canvas(self):
-        """测试 HubRenderer 双缓冲画布在四页签与全宽大图模式下的渲染输出有效性"""
+        """测试 HubRenderer 双缓冲画布在四页签与全宽大图模式下的渲染输出有效性 (960x720)"""
         state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
         # 1. 渲染体检报告页签 (默认)
         self.assertEqual(state.active_tab, HubState.TAB_REPORT)
         canvas_calib = renderer.render(state)
-        self.assertEqual(canvas_calib.shape, (720, 1280, 3))
+        self.assertEqual(canvas_calib.shape, (720, 960, 3))
 
         # 2. 渲染生产相册页签
         state.set_tab(HubState.TAB_PROD_IMAGES)
         canvas_prod = renderer.render(state)
-        self.assertEqual(canvas_prod.shape, (720, 1280, 3))
+        self.assertEqual(canvas_prod.shape, (720, 960, 3))
 
         # 3. 渲染体检报告页签
         state.set_tab(HubState.TAB_REPORT)
         canvas_report = renderer.render(state)
-        self.assertEqual(canvas_report.shape, (720, 1280, 3))
+        self.assertEqual(canvas_report.shape, (720, 960, 3))
 
         # 4. 渲染 Tag 白名单页签
         state.set_tab(HubState.TAB_WHITELIST)
         canvas_wl = renderer.render(state)
-        self.assertEqual(canvas_wl.shape, (720, 1280, 3))
+        self.assertEqual(canvas_wl.shape, (720, 960, 3))
 
         # 5. 渲染全宽大图沉浸视图
         state.set_tab(HubState.TAB_CALIB_IMAGES)
         state.set_view_mode(HubState.VIEW_EXPANDED)
         canvas_exp = renderer.render(state)
-        self.assertEqual(canvas_exp.shape, (720, 1280, 3))
+        self.assertEqual(canvas_exp.shape, (720, 960, 3))
 
     def test_hub_header_buttons_layout(self):
         """测试 Header 顶部按钮布局及 Help 弹窗交互响应"""
         state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
         canvas = renderer.render(state)
-        self.assertEqual(canvas.shape, (720, 1280, 3))
+        self.assertEqual(canvas.shape, (720, 960, 3))
 
     def test_hub_help_modal(self):
         """测试【生效到生产系统】业务说明弹窗开启与渲染"""
@@ -147,7 +147,7 @@ class TestWorkspaceHub(unittest.TestCase):
 
         # 渲染带有 Help 弹窗的画布
         canvas_help = renderer.render(state)
-        self.assertEqual(canvas_help.shape, (720, 1280, 3))
+        self.assertEqual(canvas_help.shape, (720, 960, 3))
 
         # 关闭 Help 弹窗
         state.toggle_help_modal()
@@ -198,22 +198,22 @@ class TestWorkspaceHub(unittest.TestCase):
 
         # 渲染全宽大图
         canvas_exp = renderer.render(state)
-        self.assertEqual(canvas_exp.shape, (720, 1280, 3))
+        self.assertEqual(canvas_exp.shape, (720, 960, 3))
 
     def test_hub_top_exit_button_click(self):
-        """测试点击右上角 [X] 退出按钮能够正常结束主循环"""
+        """测试点击紧贴生产相册右侧的 [退出] 按钮能够正常结束主循环"""
         app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
         self.assertTrue(app._running)
 
-        # 模拟鼠标点击顶部右上角退出按钮 (x=1150, y=20)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 1150, 20, 0, None)
+        # 模拟鼠标点击紧贴生产相册右侧的退出按钮 (x=880, y=20)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 880, 20, 0, None)
         self.assertFalse(app._running)
 
     def test_hub_footer_camera_and_card_active_action(self):
         """测试 Footer 底部 Camera 状态指示以及卡片点击直接设为活动"""
         app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
         renderer = HubRenderer()
-        canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
+        canvas = np.zeros((720, 960, 3), dtype=np.uint8)
 
         # 验证 Footer 渲染不报错
         renderer._render_footer(canvas, app.state)
@@ -222,32 +222,32 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertIsNotNone(app.state.get_selected_workspace())
 
     def test_four_tabs_switch_and_rendering(self):
-        """测试右侧动态区四页签切换与各页签画布渲染稳定性"""
+        """测试右侧动态区四页签切换与各页签画布渲染稳定性 (960x720)"""
         state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
         # 1. 初始为体检报告页签
         self.assertEqual(state.active_tab, HubState.TAB_REPORT)
         c1 = renderer.render(state)
-        self.assertEqual(c1.shape, (720, 1280, 3))
+        self.assertEqual(c1.shape, (720, 960, 3))
 
         # 2. 切换至 Tab2: Tag 白名单页签
         state.set_tab(HubState.TAB_WHITELIST)
         self.assertEqual(state.active_tab, HubState.TAB_WHITELIST)
         c2 = renderer.render(state)
-        self.assertEqual(c2.shape, (720, 1280, 3))
+        self.assertEqual(c2.shape, (720, 960, 3))
 
         # 3. 切换至 Tab3: 体检报告页签
         state.set_tab(HubState.TAB_REPORT)
         self.assertEqual(state.active_tab, HubState.TAB_REPORT)
         c3 = renderer.render(state)
-        self.assertEqual(c3.shape, (720, 1280, 3))
+        self.assertEqual(c3.shape, (720, 960, 3))
 
         # 4. 切换至 Tab4: 生产相册页签
         state.set_tab(HubState.TAB_PROD_IMAGES)
         self.assertEqual(state.active_tab, HubState.TAB_PROD_IMAGES)
         c4 = renderer.render(state)
-        self.assertEqual(c4.shape, (720, 1280, 3))
+        self.assertEqual(c4.shape, (720, 960, 3))
 
         # 5. 切换页签过程中视图模式始终稳定为标准页签看板
         self.assertEqual(state.view_mode, HubState.VIEW_STANDARD)
@@ -260,56 +260,42 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertEqual(state.active_tab, HubState.TAB_REPORT)
 
     def test_four_tabs_header_clicks(self):
-        """测试鼠标点击顶部 Header 四页签 Tab 胶囊直接切换页签 (x: 360~832, y: 8~42)"""
+        """测试鼠标点击顶部 Header 四页签 Tab 胶囊直接切换页签 (x: 348~816, y: 8~42)"""
         app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
-        app.win_mgr.canvas_w = 1280
+        app.win_mgr.canvas_w = 960
         app.win_mgr.canvas_h = 720
 
-        # 点击 Tab 3: 体检报告 (x=656, y=25)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 656, 25, 0, None)
+        # 点击 Tab 0: Dashboard (原体检报告前置, x=400, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 400, 25, 0, None)
         self.assertEqual(app.state.active_tab, HubState.TAB_REPORT)
 
-        # 点击 Tab 4: 生产相册 (x=776, y=25)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 776, 25, 0, None)
+        # 点击 Tab 3: 生产相册 (x=760, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 760, 25, 0, None)
         self.assertEqual(app.state.active_tab, HubState.TAB_PROD_IMAGES)
 
-        # 点击 Tab 2: Tag 白名单 (x=536, y=25)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 536, 25, 0, None)
+        # 点击 Tab 1: Tag 白名单 (x=520, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 520, 25, 0, None)
         self.assertEqual(app.state.active_tab, HubState.TAB_WHITELIST)
 
-        # 点击 Tab 1: 标定相册 (x=416, y=25)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 416, 25, 0, None)
+        # 点击 Tab 2: 标定相册 (x=640, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 640, 25, 0, None)
         self.assertEqual(app.state.active_tab, HubState.TAB_CALIB_IMAGES)
 
         # 点击 Header 页签后仍处于标准页签看板 (非全宽大图)
         self.assertEqual(app.state.view_mode, HubState.VIEW_STANDARD)
 
-    def test_context_menu_open_and_actions(self):
-        """测试工位卡片鼠标右键弹出菜单、项执行与渲染稳定性"""
+    def test_context_menu_removed_and_left_click_only(self):
+        """测试工位卡片右键菜单已彻底移除，右键点击不触发弹出菜单"""
         app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "test_hub_settings.json"))
-
         self.assertFalse(app.state.context_menu_open)
 
-        # 1. 模拟在第 1 张卡片上右键点击 (x=100, y=120)
+        # 1. 模拟在第 1 张卡片上右键点击 (x=100, y=120)，验证不再弹出菜单
         app._on_mouse_event(cv2.EVENT_RBUTTONDOWN, 100, 120, 0, None)
-        self.assertTrue(app.state.context_menu_open)
-        self.assertEqual(app.state.context_menu_pos, (100, 120))
-
-        # 2. 渲染包含右键菜单的画布
-        canvas = app.renderer.render(app.state)
-        self.assertEqual(canvas.shape, (720, 1280, 3))
-
-        # 3. 点击菜单第一项 (x=120, y=120+34+16 = 170)
-        with patch('tools.workspace_hub.app.prompt_input_text', return_value="测试工位"):
-            app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 120, 170, 0, None)
         self.assertFalse(app.state.context_menu_open)
 
-        # 4. 再次右键打开后点击外部区域，验证安全关闭
-        app._on_mouse_event(cv2.EVENT_RBUTTONDOWN, 100, 120, 0, None)
-        self.assertTrue(app.state.context_menu_open)
-        # 点击右侧远端空白区域 (x=800, y=500)
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 800, 500, 0, None)
-        self.assertFalse(app.state.context_menu_open)
+        # 2. 模拟在第 1 张卡片上左键点击 (x=100, y=120)，验证正常选中工位
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 100, 120, 0, None)
+        self.assertEqual(app.state.selected_workspace_idx, 0)
 
     def test_workspace_hub_settings_persistence(self):
         """测试 Workspace Hub 窗口尺寸与缩放比例的自动记忆持久化与二次启动恢复"""
@@ -320,10 +306,10 @@ class TestWorkspaceHub(unittest.TestCase):
             app1.win_mgr.apply_zoom(+20)
             self.assertEqual(app1.win_mgr.scale_pct, 120)
 
-            # 2. 启动第二实例，验证自动无感恢复
+            # 2. 启动第二实例，验证自动无感恢复 (基于基准 960x720)
             app2 = WorkspaceHubApp(force_mock=True, settings_file=test_cfg)
             self.assertEqual(app2.win_mgr.scale_pct, 120)
-            self.assertEqual(app2.win_mgr.canvas_w, int(1280 * 1.2))
+            self.assertEqual(app2.win_mgr.canvas_w, int(960 * 1.2))
             self.assertEqual(app2.win_mgr.canvas_h, int(720 * 1.2))
 
             # 3. 模拟拖拽拉伸窗口改变分辨率，验证自动落盘
@@ -338,16 +324,16 @@ class TestWorkspaceHub(unittest.TestCase):
             self.assertEqual(app3.win_mgr.canvas_h, 900)
 
     def test_help_modal_hit_test_and_close(self):
-        """验证生产说明弹窗右上角 [X] 关闭按钮在各种坐标（中心、边缘、容差、物理缩放）下的瞬间关闭判定"""
+        """验证生产说明弹窗右上角 [X] 关闭按钮在 960 画布各种坐标下的瞬间关闭判定"""
         clean_cfg = os.path.join(self.test_root, "clean_hub_settings.json")
         app = WorkspaceHubApp(force_mock=True, settings_file=clean_cfg)
-        app.win_mgr.canvas_w = 1280
+        app.win_mgr.canvas_w = 960
         app.win_mgr.canvas_h = 720
         state = app.state
         state.is_help_modal_open = True
 
-        # 计算理论按钮中心与边界
-        mx = (1280 - HELP_MODAL_W) // 2
+        # 计算理论按钮中心与边界 (基于 960x720)
+        mx = (960 - HELP_MODAL_W) // 2
         my = (720 - HELP_MODAL_H) // 2
         bx1 = mx + HELP_MODAL_W - 116
         by1 = my + 11
@@ -373,9 +359,9 @@ class TestWorkspaceHub(unittest.TestCase):
         app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, bx2 + 4, by1 - 4, 0, None)
         self.assertFalse(state.is_help_modal_open, "点击关闭按钮容差区域应立即关闭说明窗")
 
-        # 5. 模拟点击弹窗外部半透明遮罩 (如左上角 x=50, y=50)
+        # 5. 模拟点击弹窗外部半透明遮罩 (如左上角 x=20, y=20)
         state.is_help_modal_open = True
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 50, 50, 0, None)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 20, 20, 0, None)
         self.assertFalse(state.is_help_modal_open, "点击弹窗遮罩外部应立即关闭说明窗")
 
         # 6. 模拟点击弹窗内部内容区 (如工况卡片位置 x=mx+50, y=my+150)，弹窗应保持打开
@@ -387,17 +373,17 @@ class TestWorkspaceHub(unittest.TestCase):
         hit_action = app.renderer.hit_test(bx1 + 50, by1 + 16, state)
         self.assertEqual(hit_action, "help_close", "renderer.hit_test 应对齐返回 help_close")
 
-        # 8. 进阶测试：当窗口缩放至 1600x900 时，物理屏幕坐标映射后应同样秒关
-        app.win_mgr.canvas_w = 1600
+        # 8. 进阶测试：当窗口缩放至 1440x900 时，物理屏幕坐标映射后应同样秒关 (上对齐 pad_y=0)
+        app.win_mgr.canvas_w = 1440
         app.win_mgr.canvas_h = 900
-        scale = min(1600 / 1280.0, 900 / 720.0)  # 1.25
-        pad_x = (1600 - int(1280 * scale)) // 2  # 0
-        pad_y = (900 - int(720 * scale)) // 2    # 0
+        scale = min(1440 / 960.0, 900 / 720.0)  # 1.25
+        pad_x = (1440 - int(960 * scale)) // 2
+        pad_y = 0  # 严格上对齐！
         phys_btn_x = int(pad_x + (bx1 + 50) * scale)
         phys_btn_y = int(pad_y + (by1 + 16) * scale)
         state.is_help_modal_open = True
         app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, phys_btn_x, phys_btn_y, 0, None)
-        self.assertFalse(state.is_help_modal_open, "1600x900 缩放下点击关闭按钮应同样瞬时关闭")
+        self.assertFalse(state.is_help_modal_open, "1440x900 缩放下点击关闭按钮应同样瞬时关闭")
 
     def test_image_deletion_and_tabs_relocation(self):
         """测试照片删除功能与页签化后的点击交互"""
@@ -406,9 +392,10 @@ class TestWorkspaceHub(unittest.TestCase):
         # 隔离至测试临时工位沙盒，避免读写真实项目工位数据
         app.state.workspace_mgr = self.workspace_mgr
         app.state.refresh_workspaces()
-        app.win_mgr.canvas_w = 1280
+        app.win_mgr.canvas_w = 960
         app.win_mgr.canvas_h = 720
         state = app.state
+        state.set_tab(HubState.TAB_CALIB_IMAGES)
 
         # 1. 创建 20 张测试图片放入当前选中工位中 (卡片网格 4 列 x 3 行 = 每页 12 张)
         ws = state.get_selected_workspace()
@@ -455,10 +442,11 @@ class TestWorkspaceHub(unittest.TestCase):
         app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 776, 25, 0, None)
         self.assertEqual(state.active_tab, HubState.TAB_PROD_IMAGES)
 
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 656, 25, 0, None)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 400, 25, 0, None)
         self.assertEqual(state.active_tab, HubState.TAB_REPORT)
 
-        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 416, 25, 0, None)
+        # Tab 2: 标定相册 (x=656, y=25)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 656, 25, 0, None)
         self.assertEqual(state.active_tab, HubState.TAB_CALIB_IMAGES)
 
     def test_tag_whitelist_creation_and_context_menu(self):
@@ -505,32 +493,22 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertIsNotNone(reloaded_ws)
         self.assertEqual(reloaded_ws.description, new_desc)
 
-    def test_context_menu_remark_and_hit_test(self):
-        """测试右键菜单 5 项排布与 hit_test 判定"""
+    def test_top_tabs_and_exit_button_hit_test(self):
+        """测试四页签Tab胶囊与紧贴生产相册右侧的退出按钮 hit_test 判定"""
         state = HubState(self.workspace_mgr, force_mock=True)
         renderer = HubRenderer()
 
-        # 打开上下文菜单在 (100, 100)
-        state.open_context_menu(100, 100, 0)
-        self.assertTrue(state.context_menu_open)
+        # 4 个 Tab 胶囊 (x: 348~816, 每片 110 宽，间距 8)
+        # Tab 0: 348~458
+        self.assertEqual(renderer.hit_test(400, 25, state), ("hdr_tab", 0))
+        # Tab 3 (生产相册): 702~812
+        self.assertEqual(renderer.hit_test(750, 25, state), ("hdr_tab", 3))
 
-        # 检查 5 个菜单项的 hit_test (每个 item 高 32, pad_y 6)
-        # item 0: rename (y: 106 ~ 138)
-        # item 1: remark (y: 138 ~ 170)
-        # item 2: clone  (y: 170 ~ 202)
-        # item 3: folder (y: 202 ~ 234)
-        # item 4: delete (y: 234 ~ 266)
-        hit_item_0 = renderer.hit_test(150, 120, state)
-        self.assertEqual(hit_item_0, ("ctx_item", 0))
-
-        hit_item_1 = renderer.hit_test(150, 150, state)
-        self.assertEqual(hit_item_1, ("ctx_item", 1))
-
-        hit_item_4 = renderer.hit_test(150, 250, state)
-        self.assertEqual(hit_item_4, ("ctx_item", 4))
+        # [退出] 按钮紧贴生产相册右侧 (x: 824~948, y: 8~42)
+        self.assertEqual(renderer.hit_test(880, 25, state), "btn_exit")
 
     def test_report_panel_vertical_rendering(self):
-        """测试体检报告页签垂直排列面板的渲染"""
+        """测试体检报告页签垂直排列面板的渲染 (960x720)"""
         state = HubState(self.workspace_mgr, force_mock=True)
         state.active_tab = HubState.TAB_REPORT
         cur_ws = state.get_selected_workspace()
@@ -541,7 +519,46 @@ class TestWorkspaceHub(unittest.TestCase):
         renderer = HubRenderer()
         rendered = renderer.render(state)
         self.assertIsNotNone(rendered)
-        self.assertEqual(rendered.shape, (720, 1280, 3))
+        self.assertEqual(rendered.shape, (720, 960, 3))
+
+    def test_report_embedded_buttons_hit_test_and_actions(self):
+        """测试体检报告卡片1内嵌的 5 个操作按钮 hit_test 判定 (960宽紧凑右对齐)"""
+        state = HubState(self.workspace_mgr, force_mock=True)
+        state.active_tab = HubState.TAB_REPORT
+        renderer = HubRenderer()
+
+        # 验证 5 个内嵌按钮的命中 (x: 864~938 / 776~854)
+        # 1. 重命名 (x: 864~938, y: 68~94)
+        self.assertEqual(renderer.hit_test(900, 80, state), "ws_rename")
+        # 2. 打开 (x: 864~938, y: 96~122)
+        self.assertEqual(renderer.hit_test(900, 110, state), "ws_open_dir")
+        # 3. 修改 (x: 864~938, y: 152~178)
+        self.assertEqual(renderer.hit_test(900, 165, state), "ws_edit_desc")
+        # 4. 更新元数据 (移至卡片1底栏左侧, x: 372~504, y: 190~220)
+        self.assertEqual(renderer.hit_test(430, 205, state), "ws_sync_data")
+        # 5. 克隆 (x: 512~592, y: 190~220)
+        self.assertEqual(renderer.hit_test(550, 205, state), "ws_clone")
+        # 6. 删除 (x: 600~678, y: 190~220)
+        self.assertEqual(renderer.hit_test(630, 205, state), "ws_delete")
+
+    def test_data_consistency_sync(self):
+        """测试工位元数据记录与物理磁盘不一致时的自愈与同步刷新"""
+        app = WorkspaceHubApp(force_mock=True, settings_file=os.path.join(self.test_root, "sync_test_settings.json"))
+        ws = app.state.get_selected_workspace()
+        self.assertIsNotNone(ws)
+
+        # 模拟数据矛盾场景：元数据记录标定 22 帧，但物理目录为空 (0 帧)
+        ws.image_count = 22
+        ws.save_meta()
+        self.assertEqual(ws.image_count, 22)
+
+        # 触发 [更新元数据] 按钮 (卡片1底栏左侧, x=430, y=205)
+        app.state.active_tab = HubState.TAB_REPORT
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 430, 205, 0, None)
+
+        # 验证自动核验自愈：已同步至物理真实照片数，且元数据已更新
+        self.assertEqual(ws.image_count, ws.get_image_count("calibration"))
+        self.assertIn("已", app.state.toast_msg)
 
 
 if __name__ == "__main__":

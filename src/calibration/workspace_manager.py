@@ -149,17 +149,23 @@ class Workspace:
             prod_files.extend(glob.glob(os.path.join(self.prod_raw_images_dir, ext)))
         self.prod_image_count = len(prod_files)
 
-        # 3. 标定观测清单解析
+        # 3. 标定观测清单解析 (兼容 observations 与 tags 字段)
         if os.path.exists(self.calib_manifest_path):
             try:
                 with open(self.calib_manifest_path, "r", encoding="utf-8") as f:
                     obs_data = yaml.safe_load(f) or {}
                 images_dict = obs_data.get("images", {})
-                self.active_image_count = len([img for img in images_dict.values() if img.get("tags")])
+                active_count = 0
                 seen_tags = set()
                 for img in images_dict.values():
-                    for t in img.get("tags", []):
-                        seen_tags.add(t.get("tag_id"))
+                    tags_list = img.get("observations") or img.get("tags") or []
+                    if tags_list:
+                        active_count += 1
+                        for t in tags_list:
+                            tag_id = t.get("tag_id")
+                            if tag_id is not None:
+                                seen_tags.add(int(tag_id))
+                self.active_image_count = active_count
                 self.valid_tag_ids = sorted(list(seen_tags))
             except Exception as e:
                 log.debug(f"[WS] 解析标定清单失败 {self.workspace_id}: {e}")
@@ -168,15 +174,37 @@ class Workspace:
             self.active_image_count = 0
             self.valid_tag_ids = []
 
-        # 4. BA 平差解算状态及指标
+        # 4. BA 平差解算状态及指标 (兼容 tags_map.yaml 顶层 rmse_reprojection_px 与 meta 字段)
         if os.path.exists(self.map_path) and os.path.getsize(self.map_path) > 50:
-            self.ba_solved = True
             try:
                 with open(self.map_path, "r", encoding="utf-8") as f:
                     map_data = yaml.safe_load(f) or {}
                 meta = map_data.get("meta", {})
-                self.global_rmse_px = float(meta.get("global_rmse_px", 0.0))
+                tags_dict = map_data.get("tags", {})
+
+                rmse = (
+                    map_data.get("rmse_reprojection_px")
+                    or map_data.get("rmse_px")
+                    or map_data.get("global_rmse_px")
+                    or meta.get("global_rmse_px")
+                    or meta.get("rmse_reprojection_px")
+                    or meta.get("rmse_px")
+                )
+
+                if len(tags_dict) > 0:
+                    self.ba_solved = True
+                    self.global_rmse_px = float(rmse) if rmse is not None else 0.0
+                    # 若观测清单未提取到 tags，从平差地图 tags 补齐
+                    if not self.valid_tag_ids and tags_dict:
+                        self.valid_tag_ids = sorted([int(k) for k in tags_dict.keys() if str(k).isdigit()])
+                    # 若 active_image_count 为 0，尝试读取 calibrated_images_count
+                    if self.active_image_count == 0 and map_data.get("calibrated_images_count"):
+                        self.active_image_count = int(map_data["calibrated_images_count"])
+                else:
+                    self.ba_solved = False
+                    self.global_rmse_px = 0.0
             except Exception:
+                self.ba_solved = False
                 self.global_rmse_px = 0.0
         else:
             self.ba_solved = False
@@ -257,8 +285,19 @@ class Workspace:
             ba_solved=ba_solved,
             global_rmse_px=global_rmse_px
         )
-        if force_refresh or not status:
+
+        # 自动探测脏数据或未统计数据，自愈刷新并写回元数据
+        manifest_path = os.path.join(workspace_dir, "calibration", "tag_observations.yaml")
+        needs_heal = (
+            force_refresh
+            or not status
+            or (ba_solved and global_rmse_px <= 1e-6)
+            or (active_image_count == 0 and os.path.exists(manifest_path))
+        )
+        if needs_heal:
             ws.refresh_stats()
+            ws.save_meta()
+
         return ws
 
 

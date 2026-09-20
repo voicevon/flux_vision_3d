@@ -4,10 +4,10 @@
   "canvas_h": 1000,
   "updated_at": "2026-09-18 07:25:11",
   "gui_launcher": {
-    "scale_pct": 110,
-    "canvas_w": 1366,
-    "canvas_h": 705,
-    "updated_at": "2026-09-20 07:14:39"
+    "scale_pct": 120,
+    "canvas_w": 1110,
+    "canvas_h": 1061,
+    "updated_at": "2026-09-20 08:28:45"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -31,14 +31,14 @@
     "updated_at": "2026-09-19 07:33:36"
   },
   "workspace_hub": {
-    "scale_pct": 120,
+    "scale_pct": 200,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-20 07:14:37",
+    "updated_at": "2026-09-20 08:28:40",
     "hub_state": {
-      "selected_workspace_id": "20260915_bench_default",
-      "selected_workspace_name": "首次测试_Only15",
-      "updated_at": "2026-09-20 07:15:51"
+      "selected_workspace_id": "20260920_080724_TESTtest",
+      "selected_workspace_name": "TEST  test_对照组",
+      "updated_at": "2026-09-20 08:29:08"
     }
   },
   "hardware_config": {
