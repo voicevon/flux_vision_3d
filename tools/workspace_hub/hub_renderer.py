@@ -1,9 +1,9 @@
 """
 Workspace Hub 视觉渲染引擎 (HubRenderer)
 =======================================
-专业工业级暗黑系 GUI 渲染管线，左右两栏布局：
+专业工业级暗黑系 GUI 渲染管线，960x720 紧凑布局：
 - 左栏 (x: 0~340): Workspace 列表导航 (固定稳定)
-- 右栏 (x: 340~1280): 动态页签区 (1 标定相册 / 2 Tag白名单 / 3 体检报告)
+- 右栏 (x: 340~960): 动态页签区 (1 Dashboard / 2 Tag白名单 / 3 标定相册 / 4 ★ 生产相册)
 - 标定相册页签内支持双击卡片进入全宽大图沉浸预览
 """
 
@@ -17,6 +17,17 @@ from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text, put_text
 from tools.workspace_hub.hub_state import HubState
 
+
+# 顶部 Header 与页签胶囊几何常量 (单源标准)
+HEADER_TAB_X0 = 348
+HEADER_TAB_Y0 = 8
+HEADER_TAB_W = 110
+HEADER_TAB_H = 34
+HEADER_TAB_STEP = 118
+BTN_EXIT_X0 = 824
+BTN_EXIT_Y0 = 8
+BTN_EXIT_W = 124
+BTN_EXIT_H = 34
 
 # 图片卡片网格墙几何常量 (3 列 x 3 行, 大卡片 186x186, 网格铺满 340~960 区域)
 GRID_X0 = 352
@@ -266,22 +277,22 @@ class HubRenderer:
         put_text(canvas, "flux_vision_3d", (36, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_CYAN, 2, cv2.LINE_AA)
         draw_text(canvas, "Workspace", (165, 16), font_size=17, color=self.COLOR_WHITE, bold=True)
 
-        # 2. 右侧动态区四页签 Tab 胶囊 (x: 348~816, y: 8~42)
+        # 2. 右侧动态区四页签 Tab 胶囊
         self._render_header_tabs(canvas, state)
 
-        # 3. [退出] 按钮紧贴生产相册右侧 (x: 824~948, y: 8~42)
-        self._draw_button(canvas, (824, 8, 120, 34), "退出", mpos, theme_color=(180, 60, 60))
+        # 3. [退出] 按钮紧贴生产相册右侧
+        self._draw_button(canvas, (BTN_EXIT_X0, BTN_EXIT_Y0, BTN_EXIT_W, BTN_EXIT_H), "退出", mpos, theme_color=(180, 60, 60))
 
     def _render_header_tabs(self, canvas: np.ndarray, state: HubState):
-        """渲染顶部四页签 Tab 胶囊: 1 Dashboard / 2 标定相册 / 3 Tag白名单 / 4 ★ 生产相册
-        (x: 348~816, y: 8~42, 每片 110px 宽、间距 8px; 页签顺序与 HubState.TAB_ORDER 保持一致)
+        """渲染顶部四页签 Tab 胶囊: 1 Dashboard / 2 Tag白名单 / 3 标定相册 / 4 ★ 生产相册
+        (页签顺序与 HubState.TAB_ORDER 保持一致，基于单源几何常量排布)
         """
         mpos = (state.mouse_x, state.mouse_y)
         tabs = [(key, self.TAB_LABELS[key]) for key in HubState.TAB_ORDER]
 
         for idx, (tab_key, tab_text) in enumerate(tabs):
-            tx = 348 + idx * 118
-            ty, tw, th = 8, 110, 34
+            tx = HEADER_TAB_X0 + idx * HEADER_TAB_STEP
+            ty, tw, th = HEADER_TAB_Y0, HEADER_TAB_W, HEADER_TAB_H
             is_active_tab = (state.active_tab == tab_key)
             is_hover_tab = (tx <= mpos[0] <= tx + tw and ty <= mpos[1] <= ty + th)
 

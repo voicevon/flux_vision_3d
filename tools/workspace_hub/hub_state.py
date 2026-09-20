@@ -104,11 +104,8 @@ class HubState:
         self._whitelist_cache_mtime: float = -1.0
         self._whitelist_cache_ws: str = ""
 
-        # 工位卡片右键上下文菜单 (Context Menu) 状态
+        # 兼容性属性 (右键菜单已全量移除，此标记恒为 False)
         self.context_menu_open = False
-        self.context_menu_pos = (0, 0)
-        self.context_menu_ws_idx = -1
-
         # 生产机制业务说明弹窗状态
         self.is_help_modal_open = False
 
@@ -580,23 +577,10 @@ class HubState:
             self.set_toast(f"工位备注已成功修改为: 【{clean or '无'}】")
         return ok
 
-    def open_context_menu(self, x: int, y: int, ws_idx: int):
-        """在指定鼠标坐标处打开工位卡片的右键上下文菜单"""
-        if 0 <= ws_idx < len(self.workspaces):
-            self.context_menu_open = True
-            self.context_menu_pos = (x, y)
-            self.context_menu_ws_idx = ws_idx
-            self.select_workspace_at_index(ws_idx)
-
-    def close_context_menu(self):
-        """关闭右键上下文菜单"""
-        self.context_menu_open = False
-        self.context_menu_ws_idx = -1
-
     def toggle_help_modal(self):
-        """打开或关闭 Workspace 工位与生产体系说明弹窗 (按 H 键切换)"""
+        """打开或关闭 Workspace 工位与生产体系说明弹窗"""
         self.is_help_modal_open = not self.is_help_modal_open
         if self.is_help_modal_open:
-            self.set_toast("已呼出【Workspace 工位与生产体系】业务说明窗 (按 ESC/H 关闭)")
+            self.set_toast("已呼出【Workspace 工位与生产体系】业务说明窗")
         else:
             self.set_toast("已关闭说明窗。")

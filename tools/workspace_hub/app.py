@@ -25,7 +25,11 @@ if PROJECT_ROOT not in sys.path:
 from src.calibration.workspace_manager import WorkspaceManager
 from src.utils.gui_window_manager import GuiWindowManager
 from tools.workspace_hub.hub_state import HubState
-from tools.workspace_hub.hub_renderer import HubRenderer, HELP_MODAL_W, HELP_MODAL_H, grid_hit_test
+from tools.workspace_hub.hub_renderer import (
+    HubRenderer, grid_hit_test, HELP_MODAL_W, HELP_MODAL_H,
+    HEADER_TAB_X0, HEADER_TAB_Y0, HEADER_TAB_W, HEADER_TAB_H, HEADER_TAB_STEP,
+    BTN_EXIT_X0, BTN_EXIT_Y0, BTN_EXIT_W, BTN_EXIT_H
+)
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -174,15 +178,16 @@ class WorkspaceHubApp:
 
         # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
         # 4.0 顶部标题栏交互 (右侧动态区四页签 Tab + 紧邻生产相册的 [退出] 按钮)
-        # 4.0.0 四页签 Tab 胶囊 (x: 348~816, y: 8~42, 每片 110px 宽、间距 8px)
-        if 8 <= y <= 42 and 348 <= x <= 816:
-            tab_idx = (x - 348) // 118
-            if 0 <= tab_idx < 4:
+        # 4.0.0 四页签 Tab 胶囊 (单源常量驱动)
+        tab_total_w = len(HubState.TAB_ORDER) * HEADER_TAB_STEP
+        if HEADER_TAB_Y0 <= y <= HEADER_TAB_Y0 + HEADER_TAB_H and HEADER_TAB_X0 <= x <= HEADER_TAB_X0 + tab_total_w:
+            tab_idx = (x - HEADER_TAB_X0) // HEADER_TAB_STEP
+            if 0 <= tab_idx < len(HubState.TAB_ORDER):
                 self.state.set_tab(HubState.TAB_ORDER[tab_idx])
             return
 
-        # 4.0.2 [退出] 按钮紧贴生产相册右侧 (x: 824~948, y: 8~42)
-        if 824 <= x <= 948 and 8 <= y <= 42:
+        # 4.0.2 [退出] 按钮紧贴生产相册右侧
+        if BTN_EXIT_X0 <= x <= BTN_EXIT_X0 + BTN_EXIT_W and BTN_EXIT_Y0 <= y <= BTN_EXIT_Y0 + BTN_EXIT_H:
             self._running = False
             return
 
