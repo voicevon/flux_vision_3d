@@ -36,7 +36,7 @@ class PhaseCongruencyPipeline(BaseAsparagusPipeline):
         super().__init__(fx, fy, cx, cy)
         self.min_length_mm = 60.0
         self.max_length_mm = 600.0
-        self.min_diam_mm = 6.0
+        self.min_diam_mm = 2.0
         self.max_diam_mm = 45.0
         self.peeler = OcclusionPeeler(t_junction_radius=18.0)
 
@@ -126,19 +126,23 @@ class PhaseCongruencyPipeline(BaseAsparagusPipeline):
         step_images["stage2_pc"] = vis_2
 
         # ---------------- 步骤 3: 边缘提取 ----------------
-        _, pc_binary = cv2.threshold(pc_map, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        canny_edges = cv2.Canny(gray, 30, 80)
-        combined_edges = cv2.bitwise_or(pc_binary, canny_edges)
-        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        combined_edges = cv2.morphologyEx(combined_edges, cv2.MORPH_CLOSE, k_close)
-
-        # 前景掩膜用于直径估算
+        # 1. 前景掩膜提取 (过滤传送带背景干扰)
         binary_fg = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                           cv2.THRESH_BINARY, 25, 8)
         binary_fg = cv2.bitwise_not(binary_fg)
         binary_fg = cv2.morphologyEx(binary_fg, cv2.MORPH_CLOSE,
-                                     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+                                     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
         dist_map = cv2.distanceTransform(binary_fg, cv2.DIST_L2, 5)
+
+        # 2. 相位一致性结合前景掩膜
+        pc_masked = cv2.bitwise_and(pc_map, pc_map, mask=binary_fg)
+        _, pc_binary = cv2.threshold(pc_masked, 40, 255, cv2.THRESH_BINARY)
+        canny_edges = cv2.Canny(gray, 40, 90)
+        canny_masked = cv2.bitwise_and(canny_edges, canny_edges, mask=binary_fg)
+
+        combined_edges = cv2.bitwise_or(pc_binary, canny_masked)
+        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        combined_edges = cv2.morphologyEx(combined_edges, cv2.MORPH_CLOSE, k_close)
 
         vis_3 = (color_bgr.astype(np.float32) * 0.25).astype(np.uint8)
         edge_color = np.zeros((combined_edges.shape[0], combined_edges.shape[1], 3), dtype=np.uint8)
@@ -175,9 +179,7 @@ class PhaseCongruencyPipeline(BaseAsparagusPipeline):
 
             [vx_v, vy_v, x0_v, y0_v] = cv2.fitLine(pts_xy, cv2.DIST_L2, 0, 0.01, 0.01)
             vx, vy = float(vx_v[0]), float(vy_v[0])
-            if abs(vx) < 0.45:
-                continue
-            if vx < 0:
+            if vy < 0:
                 vx, vy = -vx, -vy
 
             mean_pt = np.mean(pts_xy, axis=0)

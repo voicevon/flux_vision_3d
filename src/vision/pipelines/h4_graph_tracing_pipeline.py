@@ -38,7 +38,7 @@ class GraphTracingPipeline(BaseAsparagusPipeline):
         super().__init__(fx, fy, cx, cy)
         self.min_length_mm = 60.0
         self.max_length_mm = 600.0
-        self.min_diam_mm = 6.0
+        self.min_diam_mm = 2.0
         self.max_diam_mm = 45.0
         self.peeler = OcclusionPeeler(t_junction_radius=18.0)
 
@@ -178,9 +178,7 @@ class GraphTracingPipeline(BaseAsparagusPipeline):
 
             [vx_v, vy_v, x0_v, y0_v] = cv2.fitLine(pts_arr, cv2.DIST_L2, 0, 0.01, 0.01)
             vx, vy = float(vx_v[0]), float(vy_v[0])
-            if abs(vx) < 0.45:
-                continue
-            if vx < 0:
+            if vy < 0:
                 vx, vy = -vx, -vy
 
             mean_pt = np.mean(pts_arr, axis=0)

@@ -128,25 +128,29 @@ class SatoVesselnessPipeline(BaseAsparagusPipeline):
         scale_2d = nominal_z_mm / self.fx
         vis_3 = (color_bgr.astype(np.float32) * 0.35).astype(np.uint8)
 
-        scan_step_x = 6
+        scan_step_x = 8
         thresh_val = 25
         for sx in range(12, roi_w - 12, scan_step_x):
             col_v = vessel_u8[:, sx]
-            for y in range(4, roi_h - 4):
-                val = col_v[y]
-                if val > thresh_val and val >= col_v[y - 1] and val >= col_v[y + 1] and val > col_v[y - 3] and val > col_v[y + 3]:
-                    y_up = y
-                    while y_up > 0 and col_v[y_up] > val * 0.3:
-                        y_up -= 1
-                    y_down = y
-                    while y_down < roi_h - 1 and col_v[y_down] > val * 0.3:
-                        y_down += 1
-                    diam_est = float(max(10, (y_down - y_up) * 1.4))
+            above = col_v[4:-4] > thresh_val
+            if not np.any(above):
+                continue
+            peaks = np.where(
+                above &
+                (col_v[4:-4] >= col_v[3:-5]) &
+                (col_v[4:-4] >= col_v[5:-3]) &
+                (col_v[4:-4] > col_v[1:-7]) &
+                (col_v[4:-4] > col_v[7:-1])
+            )[0] + 4
+            for y in peaks:
+                y_up = max(0, y - 20)
+                y_down = min(roi_h - 1, y + 20)
+                diam_est = float(max(10, (y_down - y_up) * 0.7))
 
-                    gx = float(sx + roi_x1)
-                    gy = float(y + roi_y1)
-                    ridge_points.append((gx, gy, diam_est))
-                    cv2.circle(vis_3, (int(gx), int(gy)), 2, (0, 255, 255), -1)
+                gx = float(sx + roi_x1)
+                gy = float(y + roi_y1)
+                ridge_points.append((gx, gy, diam_est))
+                cv2.circle(vis_3, (int(gx), int(gy)), 2, (0, 255, 255), -1)
 
         cv2.rectangle(vis_3, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 200, 255), 2)
         cv2.rectangle(vis_3, (12, 12), (640, 48), (20, 20, 20), -1)

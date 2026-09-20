@@ -7,7 +7,7 @@
     "scale_pct": 120,
     "canvas_w": 1110,
     "canvas_h": 1061,
-    "updated_at": "2026-09-20 18:01:22"
+    "updated_at": "2026-09-20 18:29:18"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -84,9 +84,9 @@
     "scale_pct": 120,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-20 18:02:12",
+    "updated_at": "2026-09-20 18:30:38",
     "studio_state": {
-      "pipeline_key": "sato_vesselness",
+      "pipeline_key": "distance_skeleton",
       "selected_sample_name": "view_0001.png"
     }
   }
