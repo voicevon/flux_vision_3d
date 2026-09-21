@@ -17,6 +17,7 @@ import numpy as np
 
 from src.utils.gui_window_manager import GuiWindowManager
 from src.utils.logger import get_logger
+from src.utils.text_rendering import put_text
 from src.calibration.workspace_manager import WorkspaceManager
 from src.vision.asparagus_analyzer import AsparagusAnalyzer
 from src.vision.pipelines import PipelineRegistry, BaseAsparagusPipeline, PipelineResult
@@ -97,6 +98,9 @@ class AsparagusPoseStudioApp:
         # 交互与事件映射
         self.mouse_pos = (-1, -1)
         self._buttons = []
+        self._slider_bars = []       # 当前帧步骤滑条命中区 [(rect, spec)]
+        self._drag_slider = None     # 拖拽中的滑条 (rect, spec, handle_idx) 左滑块=下限, 右滑块=上限
+        self._params_dirty = False  # 滑条参数是否被修改 (离开调参步骤时触发重解算)
         self._sample_rows = []
         self._result_rows = []
         self._toast_msg = None
@@ -106,17 +110,33 @@ class AsparagusPoseStudioApp:
         self.rescan(auto_load=True)
 
     def _save_persisted_state(self):
-        """持久化保存当前的算法路线与选中的样本名"""
+        """持久化保存当前的算法路线、选中的样本名与各流水线的滑条参数"""
         sel_name = ""
         if 0 <= self.sel_idx < len(self.samples):
             sel_name = self.samples[self.sel_idx]["name"]
         elif self._persisted_sample_name:
             sel_name = self._persisted_sample_name
 
-        save_studio_settings({
+        # 采集当前流水线全部滑条声明属性的最新值 (HSV 阈值 / 腐蚀膨胀参数等)
+        attrs = set()
+        for specs in getattr(self.pipeline, "STEP_SLIDERS", {}).values():
+            for sp in specs:
+                for key in ("attr", "attr_low", "attr_high"):
+                    if key in sp:
+                        attrs.add(sp[key])
+        params = {a: getattr(self.pipeline, a) for a in sorted(attrs)} if (self.pipeline and attrs) else {}
+
+        all_params = dict(self._persisted_state.get("pipeline_params", {}))
+        if params:
+            all_params[self.pipeline_key] = params
+
+        state = {
             "pipeline_key": self.pipeline_key,
-            "selected_sample_name": sel_name
-        }, settings_file=self.settings_file)
+            "selected_sample_name": sel_name,
+            "pipeline_params": all_params,
+        }
+        self._persisted_state.update(state)
+        save_studio_settings(state, settings_file=self.settings_file)
 
     # ------------------------------ 数据与标定 ------------------------------
     def _init_localizer(self):
@@ -214,10 +234,17 @@ class AsparagusPoseStudioApp:
         return fx, fy, cx, cy
 
     def _init_pipeline(self):
-        """初始化选中的算法流水线"""
+        """初始化选中的算法流水线 (并回放上次持久化的滑条参数)"""
         fx, fy, cx, cy = self._get_scaled_intrinsics(1920, 1080)
         self.pipeline = PipelineRegistry.create(self.pipeline_key, fx=fx, fy=fy, cx=cx, cy=cy)
         if self.pipeline:
+            saved = self._persisted_state.get("pipeline_params", {}).get(self.pipeline_key, {})
+            for attr, val in saved.items():
+                if hasattr(self.pipeline, attr):
+                    try:
+                        setattr(self.pipeline, attr, type(getattr(self.pipeline, attr))(val))
+                    except (TypeError, ValueError):
+                        pass
             steps = self.pipeline.get_steps()
             if steps:
                 self.active_step_key = steps[-1].key
@@ -314,9 +341,12 @@ class AsparagusPoseStudioApp:
 
             steps = self.pipeline.get_steps()
             step_keys = [s.key for s in steps]
-            if self.active_step_key not in step_keys and step_keys:
+            if (self.active_step_key not in step_keys
+                    and self.active_step_key not in ("stage0_original", "stage1b_edge", "stage2b_morph")
+                    and step_keys):
                 self.active_step_key = step_keys[-1]
 
+            self._params_dirty = False
             self._apply_active_step()
         except Exception as exc:
             log.exception("流水线执行异常")
@@ -336,17 +366,109 @@ class AsparagusPoseStudioApp:
         else:
             self.set_toast(f"未检出符合规格目标 ({self.pipeline_result.elapsed_ms:.0f}ms)", duration=2.2)
 
+    # ------------------------------ 步骤滑条 (双滑块调参) ------------------------------
+    def _hit_slider(self, x: int, y: int) -> bool:
+        """检测滑条命中并开始拖拽 (双滑块选最近端: 左=下限 右=上限; 单滑块固定 handle=0)"""
+        for rect, spec in reversed(self._slider_bars):
+            x1, y1, x2, y2 = rect
+            if x1 <= x <= x2 and y1 - 6 <= y <= y2 + 6:
+                if "attr" in spec:
+                    handle = 0
+                else:
+                    lo = int(getattr(self.pipeline, spec["attr_low"]))
+                    hi = int(getattr(self.pipeline, spec["attr_high"]))
+                    span = max(1, x2 - x1)
+                    val = spec["vmin"] + (x - x1) * (spec["vmax"] - spec["vmin"]) / span
+                    handle = 0 if abs(val - lo) <= abs(val - hi) else 1
+                self._drag_slider = (rect, spec, handle)
+                self._move_slider(x)
+                return True
+        return False
+
+    def _move_slider(self, x: int):
+        """拖拽更新滑块值并实时写入流水线属性, 同时刷新当前调参步骤的预览"""
+        if self._drag_slider is None:
+            return
+        (x1, _, x2, _), spec, handle = self._drag_slider
+        val = int(round(spec["vmin"] + (x - x1) * (spec["vmax"] - spec["vmin"]) / max(1, x2 - x1)))
+        val = max(spec["vmin"], min(spec["vmax"], val))
+        if "attr" in spec:
+            attr = spec["attr"]
+        elif handle == 0:
+            val = min(val, int(getattr(self.pipeline, spec["attr_high"])))
+            attr = spec["attr_low"]
+        else:
+            val = max(val, int(getattr(self.pipeline, spec["attr_low"])))
+            attr = spec["attr_high"]
+        if int(getattr(self.pipeline, attr)) != val:
+            setattr(self.pipeline, attr, val)
+            self._params_dirty = True
+            self._apply_active_step()   # 声明了实时预览器的调参步骤即时刷新预览
+
     def _select_step(self, step_key: str):
         """切换算法流水线的中间步骤视图"""
+        spec_map = getattr(self.pipeline, "STEP_SLIDERS", {}) if self.pipeline else {}
+        was_tuning = (self.active_step_key in spec_map and self._params_dirty)
         self.active_step_key = step_key
         if self.pipeline_result is None and (0 <= self.sel_idx < len(self.samples)):
             self.run_analyze()
+            return
+        if was_tuning and (0 <= self.sel_idx < len(self.samples)):
+            self.run_analyze()      # 滑条参数已变更, 离开调参步骤时重新解算生效
             return
         self._apply_active_step()
 
     def _apply_active_step(self):
         """根据当前激活步骤更新视口显示的特征图"""
+        # 步骤 0 原始图: 虚拟步骤, 始终显示未经任何处理的原始输入图像
+        if self.active_step_key == "stage0_original":
+            if 0 <= self.sel_idx < len(self.samples):
+                color = cv2.imread(self.samples[self.sel_idx]["png"])
+                if color is not None:
+                    self.vis_img = color.copy()
+            return
+        # 步骤 1B 边缘提取: 虚拟步骤, 对原始图像做 Canny 边缘检测预览 (与 1A HSV 分割并列分支)
+        if self.active_step_key == "stage1b_edge":
+            if 0 <= self.sel_idx < len(self.samples):
+                color = cv2.imread(self.samples[self.sel_idx]["png"])
+                if color is not None:
+                    if self.pipeline is not None and hasattr(self.pipeline, "_stage1b_edges"):
+                        edges = self.pipeline._stage1b_edges(color)
+                    else:
+                        edges = cv2.Canny(cv2.cvtColor(color, cv2.COLOR_BGR2GRAY), 60, 160)
+                    vis = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+                    cv2.rectangle(vis, (12, 12), (680, 48), (20, 20, 20), -1)
+                    cv2.rectangle(vis, (12, 12), (680, 48), (200, 200, 255), 2)
+                    put_text(vis, "STAGE 1B: CANNY EDGE EXTRACTION", (22, 36),
+                             cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 255), 2)
+                    self.vis_img = vis
+            return
+        # 步骤 2B 腐蚀与膨胀 (B 系虚拟步骤): 对 1B Canny 边缘图做闭运算清理 (为步骤 3 融合供源)
+        if self.active_step_key == "stage2b_morph":
+            if 0 <= self.sel_idx < len(self.samples):
+                color = cv2.imread(self.samples[self.sel_idx]["png"])
+                if color is not None:
+                    if self.pipeline is not None and hasattr(self.pipeline, "_stage1b_edges"):
+                        bridged = self.pipeline._stage2b_edge_morph(self.pipeline._stage1b_edges(color))
+                    else:
+                        edges = cv2.Canny(cv2.cvtColor(color, cv2.COLOR_BGR2GRAY), 60, 160)
+                        k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                        bridged = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k3)
+                    vis = cv2.cvtColor(bridged, cv2.COLOR_GRAY2BGR)
+                    cv2.rectangle(vis, (12, 12), (680, 48), (20, 20, 20), -1)
+                    cv2.rectangle(vis, (12, 12), (680, 48), (200, 200, 255), 2)
+                    put_text(vis, "STAGE 2B: EDGE MORPH CLOSE | Gaps Bridged", (22, 36),
+                             cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 255), 2)
+                    self.vis_img = vis
+            return
         if self.pipeline_result and self.active_step_key in self.pipeline_result.step_snapshots:
+            # 流水线为该步骤声明了 preview_<stage_key> 实时预览器时, 以当前参数即时渲染
+            preview = getattr(self.pipeline, f"preview_{self.active_step_key}", None) if self.pipeline else None
+            if preview is not None and 0 <= self.sel_idx < len(self.samples):
+                color = cv2.imread(self.samples[self.sel_idx]["png"])
+                if color is not None:
+                    self.vis_img = preview(color)
+                    return
             img = self.pipeline_result.step_snapshots[self.active_step_key]
             if img is not None:
                 self.vis_img = img
@@ -442,12 +564,20 @@ class AsparagusPoseStudioApp:
                 self.viewport.start_pan(x, y)
                 return
         elif event == cv2.EVENT_MOUSEMOVE:
+            # 步骤滑条拖拽中: 实时更新滑块值并刷新预览
+            if self._drag_slider is not None and (flags & cv2.EVENT_FLAG_LBUTTON):
+                self._move_slider(x)
+                return
             if self.viewport.update_pan(x, y):
                 return
         elif event in (cv2.EVENT_RBUTTONUP, cv2.EVENT_MBUTTONUP):
             if self.viewport.is_panning:
                 self.viewport.end_pan()
                 return
+        if event == cv2.EVENT_LBUTTONUP and self._drag_slider is not None:
+            self._drag_slider = None      # 结束拖拽 (参数已实时写入, 离开调参步骤时重解算)
+            self._save_persisted_state()  # 滑条参数即时持久化, 重启后自动回放
+            return
 
         # 3. 双击复位事件
         if event in (cv2.EVENT_LBUTTONDBLCLK, cv2.EVENT_RBUTTONDBLCLK):
@@ -458,6 +588,9 @@ class AsparagusPoseStudioApp:
 
         # 4. 常规左键点击
         if event == cv2.EVENT_LBUTTONDOWN:
+            # 步骤滑条: 命中即开始拖拽最近滑块
+            if self._hit_slider(x, y):
+                return
             if self.active_dropdown and self._dd_items:
                 for rect, key in self._dd_items:
                     if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
@@ -516,7 +649,7 @@ class AsparagusPoseStudioApp:
         """重绘整个画布并更新交互命中区域"""
         W, H = self.win_mgr.canvas_w, self.win_mgr.canvas_h
         canvas = np.full((H, W, 3), (16, 18, 22), dtype=np.uint8)
-        self._buttons, self._sample_rows, self._result_rows, self._dd_items = (
+        self._buttons, self._sample_rows, self._result_rows, self._dd_items, self._slider_bars = (
             AsparagusPoseStudioRenderer.render_scene(canvas, self)
         )
         return canvas

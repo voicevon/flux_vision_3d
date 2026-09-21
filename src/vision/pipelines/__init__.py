@@ -5,7 +5,10 @@
 from src.vision.pipelines.base_pipeline import BaseAsparagusPipeline, PipelineResult, PipelineStep
 from src.vision.pipelines.registry import PipelineRegistry
 
-# 显式导入各算法流水线以触发自动注册 (文件名前缀 = GUI 下拉算法编号)
+# 显式导入各算法流水线以触发自动注册 (导入顺序 = GUI 下拉显示顺序)
+# F1 置于首位：冯氏寻找法为默认首选路线；F2 (冯氏二代) 紧随其后
+import src.vision.pipelines.f1_feng_green_axis_pipeline
+import src.vision.pipelines.f2_feng_green_axis_v2_pipeline
 import src.vision.pipelines.a_ridge_tracing_pipeline
 import src.vision.pipelines.b1_polarity_scanline_pipeline
 import src.vision.pipelines.b2_edge_centerline_pipeline

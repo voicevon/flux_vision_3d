@@ -7,7 +7,7 @@
     "scale_pct": 120,
     "canvas_w": 1110,
     "canvas_h": 1061,
-    "updated_at": "2026-09-20 20:40:19"
+    "updated_at": "2026-09-21 18:45:29"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -82,12 +82,44 @@
   },
   "asparagus_pose_studio": {
     "scale_pct": 120,
-    "canvas_w": 1920,
-    "canvas_h": 1017,
-    "updated_at": "2026-09-20 20:55:06",
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-21 18:50:47",
     "studio_state": {
-      "pipeline_key": "skeleton_thinning",
-      "selected_sample_name": "view_0010.png"
+      "pipeline_key": "feng_green_axis_v2",
+      "selected_sample_name": "view_0001.png",
+      "pipeline_params": {
+        "feng_green_axis": {
+          "canny_hi": 500,
+          "canny_lo": 0,
+          "h_high": 54,
+          "h_low": 6,
+          "min_axis_len": 80.0,
+          "min_blob_area": 492,
+          "morph_close_k": 7,
+          "morph_ksize": 7,
+          "s_high": 255,
+          "s_min": 42,
+          "split_merge_saddle": 2.0,
+          "split_min_ridge": 3,
+          "split_peak_k": 7,
+          "v_high": 255,
+          "v_min": 42
+        },
+        "feng_green_axis_v2": {
+          "fork_min_len": 50.0,
+          "h_high": 81,
+          "h_low": 20,
+          "min_axis_len": 162.0,
+          "min_blob_area": 1046,
+          "morph_close_k": 2,
+          "morph_ksize": 9,
+          "s_high": 256,
+          "s_min": 47,
+          "v_high": 255,
+          "v_min": 75
+        }
+      }
     }
   }
 }

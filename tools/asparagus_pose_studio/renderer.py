@@ -6,6 +6,7 @@
 负责真矢量自适应画布重绘、三栏布局面板、视口切片映射、目标卡片与置顶菜单渲染。
 """
 
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -15,7 +16,26 @@ import numpy as np
 from src.utils.gui_theme import GuiTheme
 from src.utils.gui_components import draw_dropdown_button, render_dropdown_popup
 from src.utils.text_rendering import draw_text, measure_text
+from src.vision.pipelines.base_pipeline import PipelineStep
 from tools.asparagus_pose_studio.data_io import BASE_W, CALIB_LABELS
+
+# 步骤 0: 原始图 (虚拟步骤, 所有算法路线通用, 视口直接显示原始输入图像)
+ORIG_VIEW_STEP = PipelineStep(
+    "stage0_original", "0.原始图",
+    "原始输入彩色图像 (未经算法处理)"
+)
+
+# 步骤 1B: 边缘提取 (虚拟步骤, Canny 边缘预览, 与 1A HSV 分割并列的步骤 1 特征提取分支)
+EDGE_VIEW_STEP = PipelineStep(
+    "stage1b_edge", "1B.边缘提取",
+    "Canny 边缘提取预览 (灰度梯度阈值化轮廓, 与 1A 同级并列分支)"
+)
+
+# 步骤 2B: 腐蚀与膨胀 (虚拟步骤, B 系分支清理视图, 数据源 1B Canny 边缘图)
+MORPH_VIEW_STEP = PipelineStep(
+    "stage2b_morph", "2B.腐蚀与膨胀",
+    "B 系分支: 对 1B Canny 边缘图做闭运算清理, 供步骤 3 融合汇合"
+)
 
 
 class AsparagusPoseStudioRenderer:
@@ -30,7 +50,7 @@ class AsparagusPoseStudioRenderer:
             "L": int(12 * s),            # 全局左边距
             "list_w": int(140 * s),      # 左侧样本列表宽
             "right_w": int(236 * s),     # 右侧结果面板宽
-            "header_h": int(86 * s),     # 双排工具栏高度 (第一排全局操作，第二排算法步骤视图)
+            "header_h": int(118 * s),    # 三排工具栏高度 (第一排全局操作, 第二三排算法步骤视图)
             "bottom_h": int(46 * s),
             "row_h": int(32 * s),        # 样本行高
             "btn_h": int(28 * s),        # 按钮基准高度
@@ -231,15 +251,16 @@ class AsparagusPoseStudioRenderer:
         cls,
         canvas: np.ndarray,
         app_state: Any
-    ) -> Tuple[List[Any], List[Any], List[Any], List[Any]]:
+    ) -> Tuple[List[Any], List[Any], List[Any], List[Any], List[Any]]:
         """
         完整渲染场景画布并返回可交互区域映射:
-        返回 (buttons, sample_rows, result_rows, dd_items)
+        返回 (buttons, sample_rows, result_rows, dd_items, slider_bars)
         """
         buttons = []
         sample_rows = []
         result_rows = []
         dd_items = []
+        slider_bars = []
 
         m = cls.compute_metrics(canvas.shape[1])
         W, H = canvas.shape[1], canvas.shape[0]
@@ -254,7 +275,7 @@ class AsparagusPoseStudioRenderer:
 
         # 2. 渲染三栏内容
         cls._draw_sample_list(canvas, m, list_p, app_state, sample_rows)
-        cls._draw_image_area(canvas, m, img_p, app_state)
+        cls._draw_image_area(canvas, m, img_p, app_state, slider_bars)
         cls._draw_result_panel(canvas, m, right_p, app_state, result_rows)
 
         # 3. 第一排工具栏排布：
@@ -308,51 +329,80 @@ class AsparagusPoseStudioRenderer:
         if app_state.gcode_text:
             buttons.append((exp_rect, ("btn", "导出G-code [E]")))
 
-        # 4. 第二排：视口上方算法阶段步骤药丸视图与悬停提示框
-        r2_y1 = int(48 * m["s"])
-        r2_y2 = r2_y1 + m["btn_h"]
+        # 4. 视口上方算法阶段步骤药丸视图 (分支流布局) 与悬停提示框:
+        #    数据流语义: 0.原始图 → 分叉 {A 系上排 / B 系下排} → 汇合 → 主干编号步骤
+        #    步骤名 "NA."/"NB." 前缀决定所属分支排, 纯 "N." 步骤位于主干; 主干药丸位于 1.5 排高度垂直居中
+        row_a_y1 = int(48 * m["s"])
+        row_b_y1 = row_a_y1 + m["btn_h"] + int(4 * m["s"])
+        row_mid_y1 = row_a_y1 + (row_b_y1 - row_a_y1) // 2
         steps = app_state.pipeline.get_steps() if app_state.pipeline else []
 
         # 在图像视口左侧对齐排布步骤视图
         pill_x = img_p[0]
         (lbl_w, lbl_h), _ = measure_text("步骤视图:", font_size=m["fs_sub"])
-        draw_text(canvas, "步骤视图:", (pill_x, r2_y1 + (m["btn_h"] - lbl_h) // 2), m["fs_sub"], GuiTheme.TEXT_MUTED)
+        draw_text(canvas, "步骤视图:", (pill_x, row_mid_y1 + (m["btn_h"] - lbl_h) // 2),
+                  m["fs_sub"], GuiTheme.TEXT_MUTED)
         pill_x += lbl_w + int(10 * m["s"])
 
         hovered_step = None
         hovered_rect = None
-        active_step = None
-        active_rect = None
         mx, my = app_state.mouse_pos
 
-        for s_obj in steps:
-            (tw, _), _ = measure_text(s_obj.name, font_size=m["fs_sub"])
-            pill_w = max(int(68 * m["s"]), tw + int(18 * m["s"]))
-            pill_rect = (pill_x, r2_y1, pill_x + pill_w, r2_y2)
-            is_active = (app_state.active_step_key == s_obj.key)
-            if is_active:
-                active_step = s_obj
-                active_rect = pill_rect
+        def _measure_pill_w(name):
+            (tw, _), _ = measure_text(name, font_size=m["fs_sub"])
+            return max(int(68 * m["s"]), tw + int(18 * m["s"]))
 
+        def _emit_pill(s_obj, px, py1, pw=None):
+            """绘制单个步骤药丸并登记悬停命中区, 返回药丸宽度"""
+            nonlocal hovered_step, hovered_rect
+            pill_w = pw if pw is not None else _measure_pill_w(s_obj.name)
+            pill_rect = (px, py1, px + pill_w, py1 + m["btn_h"])
             if pill_rect[0] <= mx <= pill_rect[2] and pill_rect[1] <= my <= pill_rect[3]:
                 hovered_step = s_obj
                 hovered_rect = pill_rect
-
-            cls.draw_view_pill(
-                canvas, pill_rect, s_obj.name,
-                is_active=is_active,
-                mouse_pos=app_state.mouse_pos, m=m
-            )
+            cls.draw_view_pill(canvas, pill_rect, s_obj.name,
+                               is_active=(app_state.active_step_key == s_obj.key),
+                               mouse_pos=app_state.mouse_pos, m=m)
             buttons.append((pill_rect, ("set_step", s_obj.key)))
-            pill_x += pill_w + int(8 * m["s"])
+            return pill_w
 
-        # 鼠标悬停优先，否则显示当前选中激活步骤的提示气泡框
-        target_step = hovered_step or active_step
-        target_rect = hovered_rect or active_rect
-        if target_step and target_rect and target_step.description:
+        # 步骤分流 (按步骤名编号后的字母后缀): "NA."→上排 A 系, "NB."→下排 B 系, 其余→主干
+        upper_steps, lower_steps, main_steps = [], [], []
+        for s_obj in steps:
+            mt = re.match(r"^(\d+)([AB])\.", s_obj.name)
+            if mt is not None and mt.group(2) == "A":
+                upper_steps.append(s_obj)
+            elif mt is not None and mt.group(2) == "B":
+                lower_steps.append(s_obj)
+            else:
+                main_steps.append(s_obj)
+        pipeline = app_state.pipeline
+        if pipeline is not None and hasattr(pipeline, "_stage1b_edges"):
+            lower_steps[0:0] = [EDGE_VIEW_STEP, MORPH_VIEW_STEP]   # B 系虚拟步骤: 仅 B 分支流水线 (1B 边缘提取 + 2B 腐蚀与膨胀)
+
+        def _emit_row(objs, px, py1):
+            """水平排布一排药丸, 返回排尾 x 坐标 (已含步距)"""
+            for s_obj in objs:
+                px += _emit_pill(s_obj, px, py1) + int(8 * m["s"])
+            return px
+
+        # 主干起点: 0.原始图 (1.5 排高度)
+        px = _emit_row([ORIG_VIEW_STEP], pill_x, row_mid_y1)
+
+        # 分叉块: A 系步骤走上排, B 系步骤 (含 1B 虚拟边缘提取) 走下排
+        branch_x = px
+        upper_end = _emit_row(upper_steps, branch_x, row_a_y1)
+        lower_end = _emit_row(lower_steps, branch_x, row_b_y1)
+        px = max(upper_end, lower_end)
+
+        # 汇合主干: 主干编号步骤 (1.5 排高度)
+        px = _emit_row(main_steps, px, row_mid_y1)
+
+        # 仅鼠标悬停在步骤药丸上时显示提示气泡框，鼠标离开即隐藏
+        if hovered_step and hovered_rect and hovered_step.description:
             cls._draw_step_tooltip(
-                canvas, m, target_step, target_rect,
-                is_hovered=(hovered_step is not None),
+                canvas, m, hovered_step, hovered_rect,
+                is_hovered=True,
                 img_panel_rect=img_p
             )
 
@@ -405,7 +455,7 @@ class AsparagusPoseStudioRenderer:
             )
             dd_items = [(r, k) for _, r, k in btns]
 
-        return buttons, sample_rows, result_rows, dd_items
+        return buttons, sample_rows, result_rows, dd_items, slider_bars
 
     @classmethod
     def _draw_sample_list(cls, canvas, m, rect, app_state, sample_rows):
@@ -454,7 +504,7 @@ class AsparagusPoseStudioRenderer:
             sample_rows.append(((x1 + 2, ry1, x2 - 2, ry2), idx))
 
     @classmethod
-    def _draw_image_area(cls, canvas, m, rect, app_state):
+    def _draw_image_area(cls, canvas, m, rect, app_state, slider_bars=None):
         x1, y1, x2, y2 = rect
         cv2.rectangle(canvas, (x1, y1), (x2, y2), (10, 12, 16), -1)
         cv2.rectangle(canvas, (x1, y1), (x2, y2), GuiTheme.BORDER, 1)
@@ -506,6 +556,60 @@ class AsparagusPoseStudioRenderer:
                           (x2 - int(6 * m["s"]), y1 + zh + int(14 * m["s"])), GuiTheme.BORDER, 1)
             draw_text(canvas, zoom_badge, (x2 - zw - int(11 * m["s"]), y1 + int(11 * m["s"])),
                       m["fs_small"], GuiTheme.ACCENT)
+
+        # 步骤调参滑条 (仅当当前流水线为激活步骤声明了 STEP_SLIDERS 时渲染)
+        spec_map = getattr(app_state.pipeline, "STEP_SLIDERS", {}) if app_state.pipeline else {}
+        specs = spec_map.get(app_state.active_step_key, [])
+        if specs and slider_bars is not None:
+            cls._draw_step_sliders(canvas, m, rect, app_state, specs, slider_bars)
+
+    @classmethod
+    def _draw_step_sliders(cls, canvas, m, rect, app_state, specs, slider_bars):
+        """在视口底部渲染调参滑条 (spec 含 attr_low/attr_high 为双滑块区间, 含 attr 为单滑块参数)"""
+        x1, _, x2, y2 = rect
+        row_h = int(26 * m["s"])
+        strip_h = len(specs) * row_h + int(6 * m["s"])
+        strip_y2 = y2 - int(24 * m["s"])     # 预留视口底部模式指示行
+        strip_y1 = strip_y2 - strip_h
+
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (x1 + 2, strip_y1), (x2 - 2, strip_y2), (14, 18, 24), -1)
+        cv2.addWeighted(overlay, 0.88, canvas, 0.12, 0, canvas)
+        cv2.line(canvas, (x1 + 2, strip_y1), (x2 - 2, strip_y1), GuiTheme.BORDER, 1)
+
+        for i, spec in enumerate(specs):
+            ry1 = strip_y1 + int(4 * m["s"]) + i * row_h
+            ry2 = ry1 + row_h
+            track_y = (ry1 + ry2) // 2
+            tx1 = x1 + int(70 * m["s"])      # 左侧标签区
+            tx2 = x2 - int(64 * m["s"])      # 右侧数值区
+            is_single = "attr" in spec    # 单滑块 (单一参数) 或双滑块 (下限/上限区间)
+            lo = int(getattr(app_state.pipeline, spec["attr"] if is_single else spec["attr_low"]))
+            hi = lo if is_single else int(getattr(app_state.pipeline, spec["attr_high"]))
+            vmin, vmax = spec["vmin"], spec["vmax"]
+
+            def to_px(val: float) -> int:
+                span = max(1, vmax - vmin)
+                return int(tx1 + (tx2 - tx1) * (val - vmin) / span)
+
+            draw_text(canvas, spec["label"], (x1 + int(10 * m["s"]), ry1 + (row_h - int(13 * m["s"])) // 2),
+                      m["fs_small"], GuiTheme.TEXT_SUB, bold=True)
+
+            cv2.line(canvas, (tx1, track_y), (tx2, track_y), (58, 66, 78), 2)
+            cv2.line(canvas, (to_px(lo), track_y), (to_px(hi), track_y), (80, 240, 120), 3)
+
+            handle_r = max(4, int(5 * m["s"]) + 1)
+            for val in (lo, hi):
+                hx = to_px(val)
+                cv2.circle(canvas, (hx, track_y), handle_r + 1, (0, 0, 0), -1)
+                cv2.circle(canvas, (hx, track_y), handle_r, (80, 240, 120), -1)
+                cv2.circle(canvas, (hx, track_y), handle_r + 1, (235, 245, 255), 1)
+
+            draw_text(canvas, f"{lo}" if is_single else f"{lo},{hi}",
+                      (x2 - int(58 * m["s"]), ry1 + (row_h - int(13 * m["s"])) // 2),
+                      m["fs_small"], GuiTheme.OK, bold=True)
+
+            slider_bars.append(((tx1, ry1, tx2, ry2), dict(spec)))
 
     @classmethod
     def _draw_result_panel(cls, canvas, m, rect, app_state, result_rows):
