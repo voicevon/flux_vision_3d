@@ -27,8 +27,11 @@ from src.utils.gui_window_manager import GuiWindowManager
 from tools.workspace_hub.hub_state import HubState
 from tools.workspace_hub.hub_renderer import (
     HubRenderer, grid_hit_test, HELP_MODAL_W, HELP_MODAL_H,
-    HEADER_TAB_X0, HEADER_TAB_Y0, HEADER_TAB_W, HEADER_TAB_H, HEADER_TAB_STEP,
-    BTN_EXIT_X0, BTN_EXIT_Y0, BTN_EXIT_W, BTN_EXIT_H
+    HEADER_TAB_X0, HEADER_TAB_Y0, HEADER_TAB_H, HEADER_TAB_STEP,
+    BTN_EXIT_X0, BTN_EXIT_Y0, BTN_EXIT_W, BTN_EXIT_H,
+    WL_BTN_ALL, WL_BTN_CLEAR, WL_BTN_ANCHOR,
+    WL_ANCHOR_SAVE, WL_ANCHOR_CANCEL, WL_ANCHOR_DELETE,
+    whitelist_cell_rect, anchor_row_rect, anchor_clear_rect, anchor_padkey_rect, point_in_rect
 )
 from src.utils.logger import get_logger
 
@@ -234,14 +237,27 @@ class WorkspaceHubApp:
         if not self.state.expanded_preview_mode:
             tab = self.state.active_tab
 
-            # 5.5.1 Tag 白名单页签: [刷新] [编辑] (y: 58~88)
-            if 58 <= y <= 88 and tab == HubState.TAB_WHITELIST:
-                if 760 <= x <= 846:
-                    self.state.refresh_whitelist_cache()
-                    self.state.set_toast("已刷新 Tag 白名单状态。")
-                    return
-                if 854 <= x <= 944:
-                    self._handle_tag_whitelist()
+            # 5.5.1 Tag 白名单页签: [刷新] [编辑/完成] + 编辑态芯片矩阵/批量按钮/数字键盘
+            if tab == HubState.TAB_WHITELIST:
+                if 58 <= y <= 88:
+                    if 760 <= x <= 846:
+                        self.state.refresh_whitelist_cache()
+                        self.state.set_toast("已刷新 Tag 白名单状态。")
+                        return
+                    if 854 <= x <= 944:
+                        if self.state.whitelist_edit_mode:
+                            self.state.exit_whitelist_edit()
+                            self.state.set_toast("已完成白名单编辑。")
+                        else:
+                            self._handle_tag_whitelist()
+                        return
+
+                # 编辑态: 锚点弹窗优先, 其后芯片/批量/锚点切换点击分发 (视图态芯片不可点, 防误触)
+                if self.state.whitelist_edit_mode:
+                    if self.state.anchor_modal_open:
+                        self._handle_anchor_modal_click(x, y)
+                    else:
+                        self._handle_whitelist_edit_click(x, y)
                     return
 
             # 5.5.1.5 体检报告页签：工位信息卡片内嵌按钮点击处理 (x: 864~938, 776~854)
@@ -370,7 +386,7 @@ class WorkspaceHubApp:
         self._run_subtool(cmd, "标靶高清生成与排版工具")
 
     def _handle_tag_whitelist(self):
-        """管理/编辑当前 Workspace 的 AprilTag ID 白名单 (tag_whitelist.yaml)"""
+        """进入白名单页内芯片矩阵编辑模式 (方案A): 缺失时自动创建模板, 点击芯片写穿保存 yaml"""
         ws = self.state.get_selected_workspace()
         if not ws:
             self.state.set_toast("未选择任何 Workspace")
@@ -382,10 +398,9 @@ class WorkspaceHubApp:
             default_config = {
                 "workspace_id": ws.workspace_id,
                 "workspace_name": ws.name,
-                "enabled": False,
                 "allowed_ids": ws.valid_tag_ids if ws.valid_tag_ids else [],
                 "description": f"Workspace {ws.name} 标靶白名单配置",
-                "notes": "enabled 为 true 时仅放行 allowed_ids 中的标靶；为 false 或为空时放行所有检测到的有效标靶",
+                "notes": "工位物理白名单恒启用 (名单内容即行为): allowed_ids 非空时仅放行名单内标靶 (权威约束)；留空 = 探索模式放行所有检测标靶",
             }
             try:
                 os.makedirs(os.path.dirname(whitelist_path), exist_ok=True)
@@ -394,15 +409,80 @@ class WorkspaceHubApp:
             except Exception as e:
                 log.warning(f"创建默认 tag_whitelist.yaml 失败: {e}")
 
-        # 使用操作系统关联程序打开文件供现场编辑
-        try:
-            if sys.platform == "win32":
-                os.startfile(whitelist_path)
+        # 页内芯片矩阵编辑 (写穿保存, 不再委托外部文本编辑器)
+        self.state.enter_whitelist_edit()
+        self.state.set_toast("已进入白名单编辑: 单击芯片切换放行/拦截, 即时写回 yaml")
+
+    def _handle_whitelist_edit_click(self, x: int, y: int):
+        """白名单编辑态点击分发: 锚点模式切换 / 批量按钮 / 芯片矩阵 (几何与渲染器单源共用)"""
+        state = self.state
+
+        # 批量操作按钮
+        if point_in_rect(x, y, WL_BTN_ALL):
+            n = state.whitelist_batch("all")
+            state.set_toast(f"已全量放行 0~29 (白名单 {n} 个)。")
+            return
+        if point_in_rect(x, y, WL_BTN_CLEAR):
+            state.whitelist_batch("clear")
+            state.set_toast("已清空白名单 → 探索模式 (全量放行检测标靶)。")
+            return
+        if point_in_rect(x, y, WL_BTN_ANCHOR):
+            if state.anchor_mode:
+                state.exit_anchor_mode()
+                state.set_toast("已退出锚点模式, 返回白名单编辑。")
             else:
-                subprocess.Popen(["xdg-open", whitelist_path])
-            self.state.set_toast(f"已打开白名单: tag_whitelist.yaml")
-        except Exception as e:
-            self.state.set_toast(f"打开白名单失败: {e}")
+                state.enter_anchor_mode()
+                n = state.anchor_known_count()
+                state.set_toast(f"已进入锚点模式: 单击 Tag 芯片编辑世界坐标 (已知 {n} 枚)。")
+            return
+
+        # 芯片矩阵: 0~29 基础网格 + 超范围追加芯片 (同一矩形公式)
+        extra_ids = sorted(t for t in state.whitelist_edit_ids if t >= 30)
+        for t_id in list(range(30)) + extra_ids:
+            if point_in_rect(x, y, whitelist_cell_rect(t_id)):
+                if state.anchor_mode:
+                    # 锚点模式: 单击芯片打开该 Tag 的世界坐标锚点编辑弹窗
+                    state.open_anchor_editor(t_id)
+                    return
+                n = state.toggle_whitelist_id(t_id)
+                on = t_id in state.whitelist_edit_ids
+                state.set_toast(f"Tag #{t_id:02d} {'已放行' if on else '已拦截'} (白名单 {n} 个)。")
+                return
+
+    def _handle_anchor_modal_click(self, x: int, y: int):
+        """锚点坐标编辑弹窗点击分发: 轴行选择/清除 / 15 键键盘 / 底部保存取消清除"""
+        state = self.state
+
+        # 三轴行: [清除] 按钮优先于行选择 (避免点清除误触发行切换)
+        for axis in range(3):
+            if point_in_rect(x, y, anchor_clear_rect(axis)):
+                state.anchor_axis_clear(axis)
+                state.set_toast(f"{'XYZ'[axis]} 轴已标记为未知。")
+                return
+        for axis in range(3):
+            if point_in_rect(x, y, anchor_row_rect(axis)):
+                state.anchor_axis_select(axis)
+                return
+
+        # 15 键键盘: 1~9 / . / 0 / -+/ 清空 / 退格 / 确认
+        for idx, label in enumerate(["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "-/+", "清空", "退格", "确认"]):
+            if point_in_rect(x, y, anchor_padkey_rect(idx)):
+                state.anchor_pad_key(label)
+                return
+
+        # 底部按钮
+        if point_in_rect(x, y, WL_ANCHOR_SAVE):
+            ok, msg = state.save_anchor_modal()
+            state.set_toast(msg)
+            return
+        if point_in_rect(x, y, WL_ANCHOR_CANCEL):
+            state.cancel_anchor_modal()
+            state.set_toast("已取消锚点编辑 (未保存)。")
+            return
+        if point_in_rect(x, y, WL_ANCHOR_DELETE):
+            ok, msg = state.clear_anchor_modal()
+            state.set_toast(msg)
+            return
 
     def _handle_rename_workspace(self):
         """修改 Workspace 显示名称 (支持中文)"""

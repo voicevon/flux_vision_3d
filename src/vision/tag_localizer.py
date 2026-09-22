@@ -85,6 +85,14 @@ class TagLocalizer:
                         missing_dynamic_flag = True
             if missing_dynamic_flag:
                 log.warning(f"[TagLocalizer] [WARN] 地图缺少 is_dynamic_yaw 标志，已自动强制将原点标靶 Tag {origin_id} 标记为动态 (禁止参与 PnP 外参求解)！")
+            # 锚定模式溯源: partial 模式地图的 Z 轴为相对坐标, 运行时必须守门
+            self.anchor_mode = (self.tags_map.get("anchor_mode")
+                                or (self.tags_map.get("world_anchor") or {}).get("anchor_mode")
+                                or "")
+            if self.anchor_mode:
+                log.info(f"[TagLocalizer] 地图锚定模式: {self.anchor_mode}")
+                if self.anchor_mode == "partial":
+                    log.warning("[TagLocalizer] [WARN] 地图为 partial 锚定 (XY 绝对/Z 相对), 世界系位姿 Z 分量不可信！")
             log.info(f"[TagLocalizer] 成功加载标靶立体地图: {path} (包含 {len(tags_dict)} 个标靶)")
         else:
             self.tags_map = None
@@ -104,6 +112,17 @@ class TagLocalizer:
         }
 
         if self.tags_map is None:
+            return False, None, info
+
+        # 下游守门: partial 锚定地图 (XY 绝对/Z 相对) 解算的世界系位姿 Z 分量不可信, 拒绝输出
+        # (每次调用实时读取, 覆盖 tags_map 就地热更新场景)
+        anchor_mode = (self.tags_map.get("anchor_mode")
+                       or (self.tags_map.get("world_anchor") or {}).get("anchor_mode")
+                       or "")
+        if anchor_mode == "partial":
+            info["anchor_mode"] = "partial"
+            info["reject_reason"] = "partial_anchor_map_z_relative"
+            log.warning("[TagLocalizer] [WARN] partial 锚定地图 (Z 相对), 拒绝输出世界系相机位姿！请补全锚点 Z 约束后重建地图。")
             return False, None, info
 
         if len(image.shape) == 3:

@@ -51,11 +51,21 @@ class TagMapBuilder:
         self.marker_size_mm = float(marker_size_mm)
         self.dictionary = cv2.aruco.getPredefinedDictionary(tag_family)
         
-        # 尝试读取 config.yaml 中的白名单与最小周长门限 (统一走 config_guard)
+        # 读取 config.yaml 的最小周长门限 (统一走 config_guard) 与全局物理白名单
         min_perim = 0.006
         c = load_raw_config("config.yaml") if load_raw_config else {}
         valid_tag_ids = [int(x) for x in c.get("calibration", {}).get("valid_tag_ids", [])]
         min_perim = float(c.get("calibration", {}).get("tag_detection", {}).get("min_perimeter_rate", min_perim))
+
+        # 工位物理白名单 (恒启用): allowed_ids 非空 → 权威覆盖全局名单, 名单内容即行为
+        try:
+            from src.calibration.workspace_manager import WorkspaceManager, load_workspace_tag_whitelist
+            wl = load_workspace_tag_whitelist(WorkspaceManager().get_current_workspace().workspace_dir)
+            if wl:
+                log.info(f"[BUILDER] 工位白名单已生效: {wl}")
+                valid_tag_ids = wl
+        except Exception:
+            pass  # 工位上下文不可用 (单测/独立调用), 保持全局白名单
 
         self.valid_tag_ids = valid_tag_ids
 

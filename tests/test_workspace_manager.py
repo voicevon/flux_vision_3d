@@ -4,7 +4,7 @@
 验证：
 1. 工位创建、目录生成 (calibration/ 与 production/)、白名单与元数据生成
 2. 顶层核心资产 (tags_map.yaml, tag_whitelist.yaml) 隔离与读取
-3. 工位默认定位与切换 (.active_workspace)
+3. 工位当前选择切换 (运行时内存态, 无落盘标记)
 4. 工位克隆与沙盒独立性 (标定/生产图片双克隆)
 5. 工位发布至全局生产环境 (config/tags_map.yaml 与 config.yaml)
 6. 工位物理删除
@@ -28,6 +28,8 @@ from src.calibration.workspace_manager import WorkspaceManager, Workspace
 class TestWorkspaceManager(unittest.TestCase):
 
     def setUp(self):
+        # 当前工位为类级运行时状态, 用例间显式重置防串扰
+        WorkspaceManager._current_ws_id = None
         self.temp_dir = tempfile.mkdtemp()
         self.workspaces_dir = os.path.join(self.temp_dir, "workspaces")
         self.config_path = os.path.join(self.temp_dir, "config.yaml")
@@ -68,17 +70,21 @@ class TestWorkspaceManager(unittest.TestCase):
         self.assertIn(ws2.workspace_id, ws_ids)
 
     def test_switch_current_workspace(self):
-        """测试默认激活工位切换"""
+        """测试当前工位切换 (运行时内存态)"""
         ws1 = self.mgr.create_workspace(alias="w1")
         ws2 = self.mgr.create_workspace(alias="w2")
 
         self.assertEqual(self.mgr.get_current_workspace_id(), ws2.workspace_id)
 
         # 切换回 ws1
-        ok = self.mgr.set_active_workspace(ws1.workspace_id)
+        ok = self.mgr.set_current_workspace(ws1.workspace_id)
         self.assertTrue(ok)
         self.assertEqual(self.mgr.get_current_workspace_id(), ws1.workspace_id)
         self.assertEqual(self.mgr.get_current_workspace().workspace_id, ws1.workspace_id)
+
+        # 新建工位不隐式翻转当前选择 (显式选择保持不变)
+        self.mgr.create_workspace(alias="w3")
+        self.assertEqual(self.mgr.get_current_workspace_id(), ws1.workspace_id)
 
     def test_clone_workspace_independence(self):
         """测试工位克隆与标定/生产沙盒独立性"""

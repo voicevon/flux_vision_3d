@@ -5,9 +5,9 @@
   "updated_at": "2026-09-18 07:25:11",
   "gui_launcher": {
     "scale_pct": 120,
-    "canvas_w": 1110,
-    "canvas_h": 1061,
-    "updated_at": "2026-09-21 18:45:29"
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-22 13:28:03"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -34,11 +34,11 @@
     "scale_pct": 200,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-20 10:16:38",
+    "updated_at": "2026-09-22 13:19:21",
     "hub_state": {
-      "selected_workspace_id": "20260920_080724_TESTtest",
-      "selected_workspace_name": "TEST  test_对照组",
-      "updated_at": "2026-09-20 15:10:36"
+      "selected_workspace_id": "20260918_220646_Only15",
+      "selected_workspace_name": "Isolator  wheels",
+      "updated_at": "2026-09-22 13:18:24"
     }
   },
   "hardware_config": {
@@ -84,7 +84,7 @@
     "scale_pct": 120,
     "canvas_w": 1366,
     "canvas_h": 705,
-    "updated_at": "2026-09-21 18:50:47",
+    "updated_at": "2026-09-22 08:00:06",
     "studio_state": {
       "pipeline_key": "feng_green_axis_v2",
       "selected_sample_name": "view_0001.png",

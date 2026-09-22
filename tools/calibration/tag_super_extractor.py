@@ -36,7 +36,7 @@ if sys.platform == "win32":
         pass  # 编码重配置失败无伤大雅，终端仍可正常运行
 
 try:
-    from src.calibration.workspace_manager import WorkspaceManager
+    from src.calibration.workspace_manager import WorkspaceManager, load_workspace_tag_whitelist
     _cur_ws = WorkspaceManager().get_current_workspace()
     DEFAULT_IMAGE_DIR = _cur_ws.calib_raw_images_dir
     DEFAULT_MANIFEST_PATH = _cur_ws.calib_manifest_path
@@ -80,6 +80,16 @@ class TagSuperExtractor:
         self.clahe_16 = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(16, 16))
 
     def _load_valid_tag_ids(self) -> List[int]:
+        # 工位物理白名单 (恒启用): allowed_ids 非空 → 权威覆盖, 名单内容即行为
+        try:
+            ws = WorkspaceManager().get_current_workspace()
+            wl = load_workspace_tag_whitelist(ws.workspace_dir)
+            if wl:
+                log.info(f"[EXTRACTOR] 工位白名单已生效 ({ws.workspace_id}): {wl}")
+                return wl
+        except Exception:
+            pass
+        # 兜底: 全局物理白名单 (空 = 全量放行探索模式)
         cfg = load_raw_config(CONFIG_PATH)
         ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
         if ids:

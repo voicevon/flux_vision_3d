@@ -124,6 +124,21 @@ class TestTagLocalizer(unittest.TestCase):
 
         print(f"\n[Test OK] 相机外参定位恢复成功！耗时: {t_cost_ms:.2f}ms, 空间位置误差: {pos_err:.4f}mm")
 
+    def test_partial_anchor_mode_gate(self):
+        """测试 partial 锚定地图 (XY 绝对/Z 相对) 守门: 拒绝输出世界系位姿"""
+        self.localizer.tags_map["anchor_mode"] = "partial"
+        img = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        ok, T, info = self.localizer.localize_camera(img)
+        self.assertFalse(ok, "partial 锚定地图应拒绝输出世界系位姿")
+        self.assertIsNone(T)
+        self.assertEqual(info.get("reject_reason"), "partial_anchor_map_z_relative")
+        self.assertEqual(info.get("anchor_mode"), "partial")
+
+        # full 模式不应触发守门 (后续走正常检测流程, 空图返回常规失败)
+        self.localizer.tags_map["anchor_mode"] = "full"
+        ok, T, info = self.localizer.localize_camera(img)
+        self.assertNotEqual(info.get("reject_reason"), "partial_anchor_map_z_relative")
+
 
 def TagLocalizer_matrix_to_rt(T):
     rvec, _ = cv2.Rodrigues(T[:3, :3])

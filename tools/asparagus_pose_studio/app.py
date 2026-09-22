@@ -179,7 +179,7 @@ class AsparagusPoseStudioApp:
     def switch_workspace(self, workspace_key: str):
         """动态切换工位并同步更新样本源与标靶地图"""
         self.current_workspace_id = workspace_key
-        self.workspace_mgr.set_active_workspace(workspace_key)
+        self.workspace_mgr.set_current_workspace(workspace_key)
 
         ws = self.workspace_mgr.get_workspace_by_id(workspace_key)
         self.sample_dir = ws.prod_raw_images_dir if ws else ""

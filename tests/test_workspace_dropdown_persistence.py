@@ -14,6 +14,8 @@ from tools.asparagus_pose_studio import AsparagusPoseStudioApp
 
 class TestWorkspaceDropdownPersistence(unittest.TestCase):
     def setUp(self):
+        # 当前工位为类级运行时状态, 用例间显式重置防串扰
+        WorkspaceManager._current_ws_id = None
         self.test_dir = tempfile.mkdtemp(prefix='test_ws_persist_')
         self.workspaces_dir = os.path.join(self.test_dir, 'workspaces')
         os.makedirs(self.workspaces_dir, exist_ok=True)

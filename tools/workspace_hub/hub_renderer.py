@@ -44,6 +44,61 @@ GRID_ROWS = 3
 HELP_MODAL_W = 860
 HELP_MODAL_H = 490
 
+# ==================== 白名单芯片矩阵编辑器几何常量 (渲染与命中测试单源共用) ====================
+WL_BOX_X, WL_BOX_Y, WL_BOX_W = 340, 50, 620          # 白名单页签容器
+WL_GRID_X0, WL_GRID_Y0 = 360, 296                    # 芯片网格左上 (与只读矩阵视图一致)
+WL_CELL_W, WL_CELL_H = 88, 38
+WL_GAP_X, WL_GAP_Y = 10, 6
+WL_COLS = 6
+WL_BTN_DONE = (854, 58, 90, 30)                      # 标题行 [编辑]/[完成]
+WL_BTN_ALL = (360, 624, 120, 32)                     # 全部放行
+WL_BTN_CLEAR = (488, 624, 90, 32)                    # 清空 (探索模式)
+WL_BTN_ANCHOR = (586, 624, 110, 32)                  # 锚点坐标 / 退出锚点
+# 锚点弹窗 (Tag 世界坐标逐轴编辑, 支持部分已知)
+WL_ANCHOR_X, WL_ANCHOR_Y, WL_ANCHOR_W, WL_ANCHOR_H = 420, 120, 460, 500
+WL_ANCHOR_ROW_X0, WL_ANCHOR_ROW_Y0, WL_ANCHOR_ROW_W = 438, 182, 424
+WL_ANCHOR_ROW_H, WL_ANCHOR_ROW_STEP = 38, 44
+WL_ANCHOR_CLR_W = 74                                 # 行内 [清除] 按钮宽
+WL_ANCHOR_KEY_X0, WL_ANCHOR_KEY_Y0, WL_ANCHOR_KEY_W, WL_ANCHOR_KEY_H = 438, 330, 96, 40
+WL_ANCHOR_KEY_STEP_X, WL_ANCHOR_KEY_STEP_Y = 104, 48
+WL_ANCHOR_SAVE = (438, 572, 130, 30)
+WL_ANCHOR_CANCEL = (578, 572, 90, 30)
+WL_ANCHOR_DELETE = (678, 572, 120, 30)
+
+
+def whitelist_cell_rect(t_id: int) -> tuple[int, int, int, int]:
+    """白名单芯片格位矩形 (0~29 基础网格与超出范围的追加芯片共用同一公式)"""
+    row, col = divmod(t_id, WL_COLS)
+    return (WL_GRID_X0 + col * (WL_CELL_W + WL_GAP_X),
+            WL_GRID_Y0 + row * (WL_CELL_H + WL_GAP_Y),
+            WL_CELL_W, WL_CELL_H)
+
+
+def anchor_row_rect(axis: int) -> tuple[int, int, int, int]:
+    """锚点弹窗轴行矩形 (axis 0/1/2 → X/Y/Z)"""
+    return (WL_ANCHOR_ROW_X0, WL_ANCHOR_ROW_Y0 + axis * WL_ANCHOR_ROW_STEP,
+            WL_ANCHOR_ROW_W, WL_ANCHOR_ROW_H)
+
+
+def anchor_clear_rect(axis: int) -> tuple[int, int, int, int]:
+    """锚点弹窗轴行内 [清除] 按钮矩形"""
+    rx, ry, rw, rh = anchor_row_rect(axis)
+    return (rx + rw - 10 - WL_ANCHOR_CLR_W, ry + 6, WL_ANCHOR_CLR_W, rh - 12)
+
+
+def anchor_padkey_rect(idx: int) -> tuple[int, int, int, int]:
+    """锚点键盘按键矩形 (idx 0~14: 1~9/./0/-+/清空/退格/确认)"""
+    row, col = divmod(idx, 3)
+    return (WL_ANCHOR_KEY_X0 + col * WL_ANCHOR_KEY_STEP_X,
+            WL_ANCHOR_KEY_Y0 + row * WL_ANCHOR_KEY_STEP_Y,
+            WL_ANCHOR_KEY_W, WL_ANCHOR_KEY_H)
+
+
+def point_in_rect(x: int, y: int, rect: tuple[int, int, int, int]) -> bool:
+    """点是否落在矩形内 (Hover 高亮与命中测试共用)"""
+    rx, ry, rw, rh = rect
+    return rx <= x < rx + rw and ry <= y < ry + rh
+
 
 def grid_hit_test(mx: int, my: int) -> int | None:
     """根据逻辑坐标返回命中的卡片格位索引 (0~8)；落在卡片间隙或网格外返回 None"""
@@ -500,7 +555,10 @@ class HubRenderer:
         # 栏目标题与右上角操作按钮 (紧凑排布在 620 宽内)
         draw_text(canvas, "Tag 标靶白名单管理", (box_x + 16, box_y + 14), font_size=16, color=self.COLOR_WHITE, bold=True)
         self._draw_button(canvas, (760, box_y + 8, 86, 30), "刷新", mpos)
-        self._draw_button(canvas, (854, box_y + 8, 90, 30), "编辑", mpos)
+        if state.whitelist_edit_mode:
+            self._draw_button(canvas, WL_BTN_DONE, "完成", mpos, theme_color=(0, 200, 120))
+        else:
+            self._draw_button(canvas, WL_BTN_DONE, "编辑", mpos)
 
         if not sc:
             draw_text(canvas, "请在左侧选择或新建工位", (box_x + 180, box_y + 280), font_size=18, color=self.COLOR_GRAY)
@@ -508,8 +566,12 @@ class HubRenderer:
 
         wl = state.get_tag_whitelist()
         wl_path = state.workspace_mgr.get_tag_whitelist_path(sc.workspace_id)
-        enabled = bool(wl.get("enabled", False)) if wl else False
-        allowed_ids = set(wl.get("allowed_ids") or []) if wl else set()
+        if state.whitelist_edit_mode:
+            # 编辑模式: 徽章与状态以芯片工作集合为准 (即时反馈, 不等 yaml 回读)
+            allowed_ids = set(state.whitelist_edit_ids)
+        else:
+            allowed_ids = set(wl.get("allowed_ids") or []) if wl else set()
+        has_filter = bool(allowed_ids)  # 白名单恒启用: 名单非空 → 过滤, 空 → 探索模式
 
         # 1. Workspace 元数据卡与白名单生效状态徽章
         meta_y = box_y + 52
@@ -520,62 +582,94 @@ class HubRenderer:
         draw_text(canvas, f"配置: {os.path.basename(wl_path)}", (box_x + 20, meta_y + 44), font_size=12, color=self.COLOR_DARK_GRAY)
 
         badge_x, badge_y = box_x + box_w - 180, meta_y + 14
-        if enabled:
+        if has_filter:
             cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + 164, badge_y + 42), (20, 48, 32), -1)
             cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + 164, badge_y + 42), (0, 255, 160), 2)
-            draw_text(canvas, "● 白名单生效中", (badge_x + 18, badge_y + 11), font_size=13, color=(0, 255, 180), bold=True)
+            draw_text(canvas, f"● 白名单 {len(allowed_ids)} 个", (badge_x + 18, badge_y + 11), font_size=13, color=(0, 255, 180), bold=True)
         else:
-            cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + 164, badge_y + 42), (34, 38, 48), -1)
-            cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + 164, badge_y + 42), (70, 80, 100), 1)
-            draw_text(canvas, "○ 白名单未启用", (badge_x + 18, badge_y + 11), font_size=13, color=self.COLOR_GRAY, bold=True)
+            cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + 164, badge_y + 42), (46, 40, 24), -1)
+            cv2.rectangle(canvas, (badge_x, badge_y), (badge_x + 164, badge_y + 42), (60, 160, 255), 2)
+            draw_text(canvas, "◌ 探索模式", (badge_x + 18, badge_y + 11), font_size=13, color=(80, 200, 255), bold=True)
 
         # 2. 白名单模式说明卡
         desc_y = meta_y + 80
         cv2.rectangle(canvas, (box_x + 12, desc_y), (box_x + box_w - 12, desc_y + 60), (24, 28, 38), -1)
         cv2.rectangle(canvas, (box_x + 12, desc_y), (box_x + box_w - 12, desc_y + 60), self.COLOR_BORDER, 1)
 
-        if not wl:
-            mode_text = "尚未创建 tag_whitelist.yaml 配置文件，当前放行所有有效标靶。"
-            mode_hint = "提示: 点击右上角 [编辑] 按钮可自动生成配置模板并打开编辑。"
-            mode_col = self.COLOR_GOLD
-        elif enabled:
-            mode_text = f"白名单已启用: 仅放行 allowed_ids 中的 {len(allowed_ids)} 个标靶，其余拦截。"
-            mode_hint = "提示: 在外部编辑器修改保存后，返回本页签即自动刷新矩阵状态。"
+        if state.whitelist_edit_mode and state.anchor_mode:
+            mode_text = "锚点模式: 单击 Tag 芯片打开世界坐标弹窗 (逐轴输入, 支持部分已知与清除)。"
+            mode_hint = "提示: 金色芯片 = 已记录锚点 (标注已知轴数)；[退出锚点] 返回白名单编辑。"
+            mode_col = (0, 210, 255)
+        elif state.whitelist_edit_mode:
+            mode_text = "编辑模式: 单击芯片切换放行/拦截，每次点击即时写回 tag_whitelist.yaml。"
+            mode_hint = "提示: 右上角 [完成] 退出编辑；芯片右上蓝点 = 该 ID 在工位元数据 valid_tag_ids 中。"
+            mode_col = (0, 255, 200)
+        elif has_filter:
+            mode_text = f"白名单恒启用: 仅放行 allowed_ids 中的 {len(allowed_ids)} 个标靶，其余拦截 (权威约束)。"
+            mode_hint = "提示: 修改 allowed_ids 并保存，返回本页签即自动刷新矩阵状态。"
             mode_col = (0, 255, 160)
+        elif not wl:
+            mode_text = "尚未创建 tag_whitelist.yaml: 探索模式放行所有检测到的有效标靶。"
+            mode_hint = "提示: 点击右上角 [编辑] 进入芯片编辑模式 (自动创建配置模板)。"
+            mode_col = self.COLOR_GOLD
         else:
-            mode_text = "白名单未启用 (enabled: false): 放行所有检测到的有效标靶。"
-            mode_hint = "提示: 将 enabled 改为 true 并维护 allowed_ids 列表即可启用过滤。"
+            mode_text = "探索模式 (allowed_ids 为空): 放行所有检测到的有效标靶，由全局物理白名单兜底拦截。"
+            mode_hint = "提示: 在 allowed_ids 中填入物理布点标靶 ID 即可启用工位过滤。"
             mode_col = (0, 200, 240)
 
         draw_text(canvas, mode_text, (box_x + 20, desc_y + 10), font_size=13, color=mode_col, bold=True)
         draw_text(canvas, mode_hint, (box_x + 20, desc_y + 34), font_size=12, color=self.COLOR_GRAY)
 
-        # 3. 全量 Tag 标靶放行矩阵网格 (6 列 x 5 行)
+        # 3. 全量 Tag 标靶放行矩阵 (视图: 只读矩阵 / 编辑: 可点击芯片, 超范围 ID 追加行)
         matrix_y = desc_y + 70
-        matrix_h = 268
+        edit_ids = state.whitelist_edit_ids if state.whitelist_edit_mode else None
+        if edit_ids is not None:
+            extra_ids = sorted(t for t in edit_ids if t >= 30)
+        else:
+            extra_ids = sorted(t for t in allowed_ids if t >= 30)
+        extra_rows = (len(extra_ids) + WL_COLS - 1) // WL_COLS
+        matrix_h = 268 + 44 * extra_rows
         cv2.rectangle(canvas, (box_x + 12, matrix_y), (box_x + box_w - 12, matrix_y + matrix_h), (22, 26, 36), -1)
         cv2.rectangle(canvas, (box_x + 12, matrix_y), (box_x + box_w - 12, matrix_y + matrix_h), (40, 48, 66), 1)
 
         matrix_title = ("AprilTag 标靶放行矩阵 (0~29 号标靶)"
-                        + (f"  |  已放行 {len(allowed_ids)} 个" if enabled else "  |  全量放行"))
+                        + (f"  |  已放行 {len(allowed_ids)} 个" if has_filter else "  |  探索模式"))
         draw_text(canvas, matrix_title, (box_x + 20, matrix_y + 12), font_size=14, color=(0, 255, 200), bold=True)
         cv2.line(canvas, (box_x + 20, matrix_y + 36), (box_x + box_w - 20, matrix_y + 36), self.COLOR_BORDER, 1)
 
-        grid_start_x = box_x + 20
-        grid_start_y = matrix_y + 44
-        tag_cell_w = 88
-        tag_cell_h = 38
-        tag_gap_x = 10
-        tag_gap_y = 6
-
         valid_set = set(sc.valid_tag_ids)
-        for t_id in range(30):
-            row = t_id // 6
-            col = t_id % 6
-            tx = grid_start_x + col * (tag_cell_w + tag_gap_x)
-            ty = grid_start_y + row * (tag_cell_h + tag_gap_y)
+        for t_id in list(range(30)) + extra_ids:
+            tx, ty, cw, ch = whitelist_cell_rect(t_id)
 
-            if enabled:
+            if edit_ids is not None:
+                # 编辑模式: 芯片带 Hover 高亮 (锚点模式反映锚点状态, 白名单编辑反映放行集合)
+                hovered = point_in_rect(mpos[0], mpos[1], (tx, ty, cw, ch))
+                if state.anchor_mode:
+                    entry = state.anchor_map.get(t_id)
+                    n_known = sum(1 for b in entry["known"] if b) if entry else 0
+                    if entry:
+                        cell_bg = (54, 48, 28) if hovered else (44, 40, 22)
+                        cell_border = (0, 220, 255) if hovered else (0, 190, 255)
+                        txt_color = (0, 230, 255)
+                        status_desc, status_col = f"锚点 {n_known}/3", (0, 220, 200)
+                    else:
+                        cell_bg = (32, 36, 46) if hovered else (26, 30, 38)
+                        cell_border = (66, 74, 92) if hovered else (52, 60, 76)
+                        txt_color = (150, 160, 175)
+                        status_desc, status_col = "无锚点", (110, 120, 135)
+                else:
+                    is_allowed = (t_id in edit_ids)
+                    if is_allowed:
+                        cell_bg = (34, 58, 48) if hovered else (28, 48, 40)
+                        cell_border = (0, 255, 180) if hovered else (0, 240, 160)
+                        txt_color = (0, 255, 200)
+                        status_desc, status_col = "已放行", (0, 220, 140)
+                    else:
+                        cell_bg = (50, 32, 32) if hovered else (40, 26, 26)
+                        cell_border = (80, 52, 52) if hovered else (60, 40, 40)
+                        txt_color = (200, 140, 140)
+                        status_desc, status_col = "已拦截", (150, 100, 100)
+            elif has_filter:
                 is_allowed = (t_id in allowed_ids)
                 cell_bg = (28, 48, 40) if is_allowed else (40, 26, 26)
                 cell_border = (0, 240, 160) if is_allowed else (60, 40, 40)
@@ -586,20 +680,102 @@ class HubRenderer:
                 cell_bg = (24, 34, 40)
                 cell_border = (36, 70, 80)
                 txt_color = (160, 220, 235)
-                status_desc = "免检放行"
+                status_desc = "探索放行"
                 status_col = (110, 170, 190)
 
-            cv2.rectangle(canvas, (tx, ty), (tx + tag_cell_w, ty + tag_cell_h), cell_bg, -1)
-            cv2.rectangle(canvas, (tx, ty), (tx + tag_cell_w, ty + tag_cell_h), cell_border, 1)
+            cv2.rectangle(canvas, (tx, ty), (tx + cw, ty + ch), cell_bg, -1)
+            cv2.rectangle(canvas, (tx, ty), (tx + cw, ty + ch), cell_border, 1)
 
             draw_text(canvas, f"Tag #{t_id:02d}", (tx + 8, ty + 5), font_size=11, color=txt_color, bold=True)
             draw_text(canvas, status_desc, (tx + 12, ty + 21), font_size=10, color=status_col)
             if t_id in valid_set:
-                cv2.circle(canvas, (tx + tag_cell_w - 8, ty + 9), 3, (0, 200, 240), -1)
+                cv2.circle(canvas, (tx + cw - 8, ty + 9), 3, (0, 200, 240), -1)
 
-        # 4. 底部操作指引
-        draw_text(canvas, "提示: 点击右上角 [编辑] 维护 tag_whitelist.yaml；保存返回后自动刷新",
-                  (box_x + 20, box_y + box_h - 26), font_size=12, color=self.COLOR_GRAY)
+        # 4. 底部操作区: 编辑模式为批量按钮 + 锚点切换, 视图模式为指引文案
+        if edit_ids is not None:
+            self._draw_button(canvas, WL_BTN_ALL, "全部放行", mpos)
+            self._draw_button(canvas, WL_BTN_CLEAR, "清空", mpos, theme_color=(180, 60, 60))
+            self._draw_button(canvas, WL_BTN_ANCHOR, "退出锚点" if state.anchor_mode else "锚点坐标", mpos)
+            hint = "单击 Tag 芯片编辑其世界坐标锚点" if state.anchor_mode else "单击芯片即时写回 yaml"
+            draw_text(canvas, hint, (WL_BTN_ANCHOR[0] + WL_BTN_ANCHOR[2] + 14, 632),
+                      font_size=12, color=self.COLOR_GRAY)
+            if state.anchor_modal_open:
+                self._render_anchor_modal(canvas, state)
+        else:
+            draw_text(canvas, "提示: 点击右上角 [编辑] 进入芯片编辑模式 (单击切换, 即时写回)",
+                      (box_x + 20, box_y + box_h - 26), font_size=12, color=self.COLOR_GRAY)
+
+    def _render_anchor_modal(self, canvas: np.ndarray, state):
+        """锚点坐标编辑弹窗 (逐轴输入 XYZ / 部分已知 / 清除锚点, 纯鼠标操作)"""
+        mpos = (state.mouse_x, state.mouse_y)
+        MX, MY, MW, MH = WL_ANCHOR_X, WL_ANCHOR_Y, WL_ANCHOR_W, WL_ANCHOR_H
+        cv2.rectangle(canvas, (MX, MY), (MX + MW, MY + MH), (16, 20, 28), -1)
+        cv2.rectangle(canvas, (MX, MY), (MX + MW, MY + MH), (0, 200, 240), 2)
+
+        n_known = state.anchor_known_count()
+        draw_text(canvas, f"Tag #{state.anchor_modal_tag:02d} 世界坐标锚点编辑 (mm)",
+                  (MX + 18, MY + 10), font_size=14, color=(0, 255, 200), bold=True)
+        if n_known == 3:
+            status_desc, status_col = "完整锚点 (5 DoF 解算)", (0, 230, 150)
+        elif n_known >= 1:
+            status_desc, status_col = "部分锚点 (约束积累)", (0, 200, 230)
+        else:
+            status_desc, status_col = "未记录 (保存 = 清除该锚点)", (150, 160, 175)
+        draw_text(canvas, f"已知 {n_known}/3 轴: {status_desc}", (MX + 18, MY + 34),
+                  font_size=12, color=status_col)
+
+        # 三轴行: 轴名 + 值 + 已知/未记录 + [清除]
+        for axis in range(3):
+            rx, ry, rw, rh = anchor_row_rect(axis)
+            hovered = point_in_rect(mpos[0], mpos[1], (rx, ry, rw, rh))
+            is_sel = (state.anchor_axis_sel == axis)
+            is_known = bool(state.anchor_modal_known[axis])
+            row_bg = (30, 38, 52) if is_sel else ((36, 42, 54) if hovered else (26, 30, 40))
+            cv2.rectangle(canvas, (rx, ry), (rx + rw, ry + rh), row_bg, -1)
+            cv2.rectangle(canvas, (rx, ry), (rx + rw, ry + rh),
+                          (0, 200, 240) if is_sel else (60, 70, 88), 1)
+            draw_text(canvas, "XYZ"[axis], (rx + 12, ry + 9), font_size=14,
+                      color=(0, 255, 200) if is_known else (150, 160, 175), bold=True)
+            if is_sel and state.anchor_axis_buf:
+                val_text, val_col = state.anchor_axis_buf + "_", self.COLOR_WHITE
+            elif is_known:
+                val_text, val_col = f"{state.anchor_modal_xyz[axis]:.1f}", self.COLOR_WHITE
+            else:
+                val_text, val_col = "---", (120, 130, 145)
+            draw_text(canvas, val_text, (rx + 42, ry + 8), font_size=15, color=val_col, bold=True)
+            know_text = "已知" if is_known else "未记录"
+            draw_text(canvas, know_text, (rx + 180, ry + 10), font_size=12,
+                      color=(0, 220, 140) if is_known else (110, 120, 135))
+            # 行内 [清除] 按钮 (取消该轴的已知状态)
+            cx, cy, cw, ch = anchor_clear_rect(axis)
+            chov = point_in_rect(mpos[0], mpos[1], (cx, cy, cw, ch))
+            cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), (70, 46, 36) if chov else (58, 38, 30), -1)
+            cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), (150, 90, 60), 1)
+            draw_text(canvas, "清除", (cx + 17, cy + 7), font_size=12, color=(230, 170, 140))
+
+        # 15 键键盘: 1~9 / . / 0 / -+/ 清空 / 退格 / 确认
+        key_labels = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "-/+", "清空", "退格", "确认"]
+        for idx, label in enumerate(key_labels):
+            kx, ky, kw, kh = anchor_padkey_rect(idx)
+            hov = point_in_rect(mpos[0], mpos[1], (kx, ky, kw, kh))
+            if label == "确认":
+                bg = (26, 88, 60) if hov else (22, 70, 48)
+                border, col = (0, 230, 150), (120, 255, 200)
+            elif label in ("退格", "清空"):
+                bg = (70, 46, 36) if hov else (58, 38, 30)
+                border, col = (150, 90, 60), (230, 170, 140)
+            else:
+                bg = (40, 48, 64) if hov else (32, 38, 50)
+                border, col = (90, 105, 135), (220, 228, 240)
+            cv2.rectangle(canvas, (kx, ky), (kx + kw, ky + kh), bg, -1)
+            cv2.rectangle(canvas, (kx, ky), (kx + kw, ky + kh), border, 1)
+            est_w = 8 * len(label) if label.isascii() else 14 * len(label)
+            draw_text(canvas, label, (kx + (kw - est_w) // 2, ky + 11), font_size=13, color=col, bold=True)
+
+        # 底部: 保存 / 取消 / 清除锚点
+        self._draw_button(canvas, WL_ANCHOR_SAVE, "保存", mpos)
+        self._draw_button(canvas, WL_ANCHOR_CANCEL, "取消", mpos)
+        self._draw_button(canvas, WL_ANCHOR_DELETE, "清除锚点", mpos, theme_color=(180, 60, 60))
 
     def _render_expanded_photo_preview(self, canvas: np.ndarray, state: HubState, sc):
         """全宽自适应大图视口 (按 F 键展开，横跨中间和右侧，x: 340~960)"""

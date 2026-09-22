@@ -159,7 +159,7 @@ class CaptureWizard:
             return
         self.current_workspace = ws
         self.current_workspace_id = ws.workspace_id
-        self.ws_mgr.set_active_workspace(ws.workspace_id)
+        self.ws_mgr.set_current_workspace(ws.workspace_id)
         self._update_output_dir()
         self.set_toast(f"已切换归档工位: 【{ws.name}】/【{self.current_purpose_label}】(当前 {self.image_count} 帧)")
         log.info(f"采图向导已切换归档工位: {ws.name} ({ws.workspace_id}) [{self.purpose}] -> {self.output_dir}")

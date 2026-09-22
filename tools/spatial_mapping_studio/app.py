@@ -119,7 +119,7 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
             self.current_workspace = ws
             self.current_workspace_id = ws.workspace_id if ws else ""
             if ws:
-                self.workspace_mgr.set_active_workspace(ws.workspace_id)
+                self.workspace_mgr.set_current_workspace(ws.workspace_id)
         except Exception:
             self.workspace_mgr = None
             self.current_workspace = None
@@ -243,8 +243,8 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
         except Exception:
             pass
 
-        # 2. 持久化当前工位选择至系统默认标记
-        self.workspace_mgr.set_active_workspace(target_ws.workspace_id)
+        # 2. 同步运行时当前工位 (进程内共享, 不落盘)
+        self.workspace_mgr.set_current_workspace(target_ws.workspace_id)
 
         # 3. 重新指向新工位
         self.current_workspace = target_ws

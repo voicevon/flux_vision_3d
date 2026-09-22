@@ -257,7 +257,7 @@ class RobotOnlineTracker:
         if not os.path.exists(ws.map_path) or os.path.getsize(ws.map_path) < 50:
             self.set_toast(f"工位 [{ws.name}] 尚无有效地图, 请先在标定流程中平差生成", True)
             return
-        self.ws_manager.set_active_workspace(ws_id)
+        self.ws_manager.set_current_workspace(ws_id)
         old_map = self.map_path
         self.workspace_id = ws_id
         self.map_path = ws.map_path

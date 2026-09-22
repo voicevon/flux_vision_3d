@@ -65,6 +65,11 @@ class Workspace:
         return os.path.join(self.workspace_dir, "tag_whitelist.yaml")
 
     @property
+    def anchor_path(self) -> str:
+        """【工位核心资产】本工位世界坐标锚点文件 (缺失时系统回退全局 config.yaml 旧源)"""
+        return os.path.join(self.workspace_dir, "anchor_tags.yaml")
+
+    @property
     def meta_path(self) -> str:
         """工位自描述元数据路径"""
         return os.path.join(self.workspace_dir, "workspace_meta.yaml")
@@ -304,6 +309,10 @@ class Workspace:
 class WorkspaceManager:
     """工位工作空间总库管理器"""
 
+    # 当前工位 ID 为类级运行时状态 (进程内所有实例共享, 不落盘):
+    # 由各 GUI 的显式选择驱动 (set_current_workspace), 兜底最新工位
+    _current_ws_id: Optional[str] = None
+
     def __init__(
         self,
         workspaces_dir: str = DEFAULT_WORKSPACES_DIR,
@@ -312,8 +321,6 @@ class WorkspaceManager:
     ):
         self.workspaces_dir = os.path.abspath(workspaces_dir)
         self.config_path = os.path.abspath(config_path)
-        self.active_marker_file = os.path.join(self.workspaces_dir, ".active_workspace")
-        self._cached_active_ws: Optional[Workspace] = None
         self._cached_workspaces: Dict[str, Workspace] = {}
 
         os.makedirs(self.workspaces_dir, exist_ok=True)
@@ -358,16 +365,10 @@ class WorkspaceManager:
         return os.path.join(self.workspaces_dir, workspace_id, "tag_whitelist.yaml")
 
     def get_current_workspace_id(self) -> str:
-        """获取当前默认工位 ID (优先活动标记，兜底最新工位)"""
-        # 检查 .active_workspace 标记
-        if os.path.exists(self.active_marker_file):
-            try:
-                with open(self.active_marker_file, "r", encoding="utf-8") as f:
-                    sid = f.read().strip()
-                if sid and os.path.isdir(os.path.join(self.workspaces_dir, sid)):
-                    return sid
-            except Exception:
-                pass
+        """获取当前工位 ID (运行时显式选择优先, 兜底最新工位; 无任何落盘标记)"""
+        cur_id = WorkspaceManager._current_ws_id
+        if cur_id and os.path.isdir(os.path.join(self.workspaces_dir, cur_id)):
+            return cur_id
 
         workspaces = self.list_workspaces()
         if workspaces:
@@ -375,7 +376,7 @@ class WorkspaceManager:
         return ""
 
     def get_current_workspace(self, force_refresh: bool = False) -> Workspace:
-        """获取当前默认工位对象"""
+        """获取当前工位对象"""
         cur_id = self.get_current_workspace_id()
         if cur_id:
             ws = self.get_workspace_by_id(cur_id, force_refresh=force_refresh)
@@ -385,23 +386,17 @@ class WorkspaceManager:
         new_ws = self.create_workspace(alias="默认工位", description="系统自动初始化默认工位")
         return new_ws
 
-    def set_active_workspace(self, ws_id: str) -> bool:
-        """切换默认工位"""
+    def set_current_workspace(self, ws_id: str) -> bool:
+        """设置当前工位 (运行时内存态, 进程内所有 WorkspaceManager 实例共享, 不落盘)"""
         target_dir = os.path.join(self.workspaces_dir, ws_id)
         if not os.path.isdir(target_dir):
             return False
-        try:
-            with open(self.active_marker_file, "w", encoding="utf-8") as f:
-                f.write(ws_id.strip())
-            self._cached_workspaces[ws_id] = Workspace.load(target_dir)
-            return True
-        except Exception as e:
-            log.warning(f"[WS] 写入默认工位标记失败: {e}")
-            return False
+        WorkspaceManager._current_ws_id = ws_id.strip()
+        self._cached_workspaces[ws_id] = Workspace.load(target_dir)
+        return True
 
     def invalidate_cache(self):
         """显式使缓存失效"""
-        self._cached_active_ws = None
         self._cached_workspaces.clear()
 
     def create_workspace(self, alias: str, description: str = "") -> Workspace:
@@ -440,11 +435,6 @@ class WorkspaceManager:
             }, f, allow_unicode=True, default_flow_style=False)
 
         self._cached_workspaces[ws_id] = ws
-        try:
-            with open(self.active_marker_file, "w", encoding="utf-8") as f:
-                f.write(ws_id.strip())
-        except Exception:
-            pass
         return ws
 
     def clone_workspace(self, src_ws_id: str, new_alias: str, description: str = "") -> Optional[Workspace]:
@@ -464,6 +454,9 @@ class WorkspaceManager:
             shutil.copy2(src_ws.map_path, new_ws.map_path)
         if os.path.exists(src_ws.whitelist_path):
             shutil.copy2(src_ws.whitelist_path, new_ws.whitelist_path)
+        # 1.1 拷贝工位世界坐标锚点 (沙盒资产随工位走)
+        if os.path.exists(src_ws.anchor_path):
+            shutil.copy2(src_ws.anchor_path, new_ws.anchor_path)
 
         # 2. 拷贝标定图片与清单
         if os.path.exists(src_ws.calib_raw_images_dir):
@@ -525,4 +518,89 @@ class WorkspaceManager:
             return True, f"已成功删除工位: {ws_id}"
         except Exception as e:
             return False, f"删除工位发生异常: {e}"
+
+
+def load_workspace_tag_whitelist(workspace_dir: str) -> List[int]:
+    """
+    读取工位 tag_whitelist.yaml 的 allowed_ids (工位级物理白名单, 恒启用 — 名单内容即行为):
+    - allowed_ids 非空 → 返回名单 (该工位检测过滤的权威约束, 覆盖自动反推的 valid_tag_ids)
+    - allowed_ids 为空/文件缺失/解析失败 → 返回 [] (探索模式: 不加额外过滤, 由全局 valid_tag_ids 兜底)
+    兼容旧格式: 旧文件的 enabled 字段已废弃, 读取时忽略
+    """
+    path = os.path.join(workspace_dir, "tag_whitelist.yaml")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as e:
+        log.warning(f"[WS] 解析工位白名单失败 ({path}): {e}")
+        return []
+
+    # 旧格式一次性迁移: 仅含 whitelist_tag_ids 的旧文件 → 转换为 allowed_ids 写回 (保留其余字段)
+    if "allowed_ids" not in data and data.get("whitelist_tag_ids"):
+        try:
+            data["allowed_ids"] = sorted({int(x) for x in data["whitelist_tag_ids"]})
+            data.pop("whitelist_tag_ids", None)  # 同义旧键移除, 防止双份事实
+            with open(path, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            log.info(f"[WS] 已迁移旧格式白名单 whitelist_tag_ids → allowed_ids: {path}")
+        except (ValueError, TypeError) as e:
+            log.warning(f"[WS] 旧格式白名单含非法 ID, 放弃迁移 ({path}): {e}")
+        except Exception as e:
+            log.warning(f"[WS] 旧格式白名单迁移失败, 按读取值继续 ({path}): {e}")
+
+    try:
+        ids = data.get("allowed_ids") or []
+        return sorted({int(x) for x in ids})
+    except (ValueError, TypeError) as e:
+        log.warning(f"[WS] 工位白名单含非法 ID, 已忽略该文件 ({path}): {e}")
+        return []
+
+
+def load_workspace_anchor_tags(workspace_dir: str) -> Optional[Dict[int, Dict]]:
+    """
+    读取工位自有世界坐标锚点文件 anchor_tags.yaml (每工位独立世界坐标系数据源):
+    - 文件存在 → {int tag_id: {"xyz_mm": [f3], "known": [b3]}} (可为空字典)
+    - 文件缺失 → None (调用方应回退全局 config.yaml calibration.anchor_tags 旧源)
+    """
+    path = os.path.join(workspace_dir, "anchor_tags.yaml")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as e:
+        log.warning(f"[WS] 解析工位锚点文件失败, 回退全局锚点 ({path}): {e}")
+        return None
+    from src.utils.config_guard import parse_anchor_mapping
+    return parse_anchor_mapping(data.get("anchor_tags"))
+
+
+def save_workspace_anchor_tags(workspace: Workspace, anchors: Dict[int, Dict]) -> bool:
+    """
+    写穿工位锚点文件 anchor_tags.yaml (独立沙盒文件, 全量写回):
+    - anchors: {int tag_id: {"xyz_mm": [f3], "known": [b3]}}；空字典 = 该工位无有效锚点
+    - 首次写穿即建立工位独立锚点 (此后不再回退全局)
+    """
+    doc = {
+        "workspace_id": workspace.workspace_id,
+        "anchor_tags": {
+            tid: {
+                "xyz_mm": [float(v) for v in e.get("xyz_mm", [0.0, 0.0, 0.0])],
+                "known": [bool(b) for b in e.get("known", [True, True, True])],
+            }
+            for tid, e in sorted(anchors.items())
+        },
+        "notes": ("本工位世界坐标锚点 (Hub 白名单页锚点模式 / Tag 管理器编辑, known 逐轴布尔支持部分已知); "
+                  "文件缺失时系统回退全局 config.yaml calibration.anchor_tags"),
+    }
+    try:
+        with open(workspace.anchor_path, "w", encoding="utf-8") as f:
+            yaml.dump(doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        log.info(f"[WS] 工位锚点已写穿 ({len(anchors)} 枚): {workspace.anchor_path}")
+        return True
+    except Exception as e:
+        log.warning(f"[WS] 写回工位锚点失败 ({workspace.anchor_path}): {e}")
+        return False
 

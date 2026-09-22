@@ -4,7 +4,7 @@
 AprilTag 管理器 — 左右两栏布局的 cv2 原生 GUI
 左侧 sidebar 为 Tab 卡片切换，右侧为内容区域。
 Tab 1: 图纸生成 (import generate_tags() 函数)
-Tab 2: 白名单管理 (30 个 Tag ID toggle + 保存 config.yaml)
+Tab 2: 白名单管理 (30 个 Tag ID toggle + 世界锚点编辑 + 保存 config.yaml)
 """
 
 import os
@@ -22,7 +22,9 @@ from src.utils.gui_window_manager import GuiWindowManager
 from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text
 from src.utils.gui_components import draw_app_header
-from src.utils.config_guard import load_raw_config
+from src.utils.config_guard import load_raw_config, load_anchor_tags
+from src.calibration.workspace_manager import WorkspaceManager, load_workspace_anchor_tags, save_workspace_anchor_tags
+from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 
 # 复用旧代码的图纸生成函数 (不修改旧代码)
 from tools.calibration.generate_apriltags import generate_tags
@@ -52,6 +54,7 @@ class TagManager:
     COLOR_ERR = GuiTheme.ERR
     COLOR_TAG_ON = (0, 160, 140)       # 白名单内 Tag (青绿色), 本地保留
     COLOR_TAG_OFF = (75, 80, 95)       # 白名单外 Tag, 本地保留
+    COLOR_ANCHOR = (0, 215, 255)       # 已标定世界锚点 (金色描边/角标), 本地保留
 
     # 布局常量
     TOOLBAR_H = 46                      # 统一顶部工具栏高度
@@ -96,6 +99,11 @@ class TagManager:
 
         # —— Tab 2: 白名单 ——
         self.valid_tag_ids = self._load_valid_tag_ids()
+        # 世界锚点表 {tid: {"xyz_mm": [x,y,z], "known": [b,b,b]}} (约束积累式世界锚定数据源)
+        # 工位沙盒感知: 当前活动工位自有 anchor_tags.yaml 优先, 缺失回退全局 config.yaml 旧源
+        self.anchor_tags = self._load_anchor_tags_ws()
+        # 锚点编辑器工作态: {"tid": int, "xyz": [f,f,f], "known": [b,b,b]} 或 None
+        self.anchor_edit = None
 
         self._load_settings()
 
@@ -153,6 +161,30 @@ class TagManager:
         except Exception as e:
             self.gen_status = f"❌ 保存失败: {e}"
 
+    def _load_anchor_tags_ws(self):
+        """工位沙盒感知加载锚点: 活动工位 anchor_tags.yaml 优先, 缺失回退全局 config.yaml 旧源"""
+        try:
+            ws = WorkspaceManager().get_current_workspace()
+            own = load_workspace_anchor_tags(ws.workspace_dir)
+            if own is not None:
+                return own
+        except Exception as e:
+            log.warning(f"[TagMgr] 工位锚点加载失败, 回退全局 config.yaml: {e}")
+        return load_anchor_tags(self.CONFIG_PATH)
+
+    def _save_anchor_tags(self):
+        """写穿世界锚点表到当前活动工位的 anchor_tags.yaml (工位沙盒隔离)"""
+        try:
+            ws = WorkspaceManager().get_current_workspace()
+            ok = save_workspace_anchor_tags(ws, self.anchor_tags)
+            ids = sorted(self.anchor_tags.keys()) if self.anchor_tags else []
+            if ok:
+                self.gen_status = f"✅ 世界锚点已保存到工位 {ws.workspace_id}: {ids if ids else '(空)'}"
+            else:
+                self.gen_status = "❌ 保存失败 (工位锚点写穿异常)"
+        except Exception as e:
+            self.gen_status = f"❌ 保存失败: {e}"
+
     # ================================================================
     # 事件处理
     # ================================================================
@@ -160,9 +192,11 @@ class TagManager:
         self.mouse_pos = (x, y)
         if event == cv2.EVENT_LBUTTONDOWN:
             self._hit_test(x, y)
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            self._hit_test_right(x, y)
 
-    def _hit_test(self, x, y):
-        # 反算: mouse 回调返回的是窗口物理坐标, 如果 render 尺寸和窗口不一致需要映射
+    def _map_mouse(self, x, y):
+        """反算: mouse 回调返回的是窗口物理坐标, 如果 render 尺寸和窗口不一致需要映射"""
         cw = self.win_mgr.canvas_w
         ch = self.win_mgr.canvas_h
         full_w = getattr(self, "_last_full_w", cw)
@@ -171,12 +205,31 @@ class TagManager:
             scale = min(cw / float(full_w), ch / float(full_h))
             pad_x = (cw - int(full_w * scale)) // 2
             pad_y = (ch - int(full_h * scale)) // 2
-            x = int((x - pad_x) / max(1e-6, scale))
-            y = int((y - pad_y) / max(1e-6, scale))
+            return int((x - pad_x) / max(1e-6, scale)), int((y - pad_y) / max(1e-6, scale))
+        return x, y
 
+    def _hit_test(self, x, y):
+        x, y = self._map_mouse(x, y)
         for btn_id, (bx1, by1, bx2, by2), payload in self.gui_buttons:
             if bx1 <= x <= bx2 and by1 <= y <= by2:
                 self._on_click(btn_id, payload)
+                return
+
+    def _hit_test_right(self, x, y):
+        """右键: 白名单内 Tag 打开世界锚点编辑器 (编辑器打开时不响应)"""
+        if self.anchor_edit is not None:
+            return
+        x, y = self._map_mouse(x, y)
+        for btn_id, (bx1, by1, bx2, by2), payload in self.gui_buttons:
+            if btn_id.startswith("TAG_") and bx1 <= x <= bx2 and by1 <= y <= by2:
+                tid = int(payload)
+                if tid in self.valid_tag_ids:
+                    e = self.anchor_tags.get(tid)
+                    self.anchor_edit = {
+                        "tid": tid,
+                        "xyz": [float(v) for v in e["xyz_mm"]] if e else [0.0, 0.0, 0.0],
+                        "known": [bool(v) for v in e["known"]] if e else [True, True, True],
+                    }
                 return
 
     def _on_click(self, btn_id, payload):
@@ -205,6 +258,26 @@ class TagManager:
                 self.valid_tag_ids.remove(tid)
             else:
                 self.valid_tag_ids.append(tid)
+        elif btn_id == "ANCH_CANCEL":
+            self.anchor_edit = None
+        elif btn_id == "ANCH_SAVE":
+            tid = self.anchor_edit["tid"]
+            self.anchor_tags[tid] = {
+                "xyz_mm": [float(v) for v in self.anchor_edit["xyz"]],
+                "known": [bool(v) for v in self.anchor_edit["known"]],
+            }
+            self._save_anchor_tags()
+            self.anchor_edit = None
+        elif btn_id == "ANCH_DEL":
+            self.anchor_tags.pop(self.anchor_edit["tid"], None)
+            self._save_anchor_tags()
+            self.anchor_edit = None
+        elif btn_id.startswith("ANCH_AXY_"):
+            axis = int(btn_id.rsplit("_", 1)[1])
+            self.anchor_edit["xyz"][axis] = round(self.anchor_edit["xyz"][axis] + int(payload), 1)
+        elif btn_id.startswith("ANCH_KN_"):
+            axis = int(payload)
+            self.anchor_edit["known"][axis] = not self.anchor_edit["known"][axis]
 
     def _is_hover(self, bx1, by1, bx2, by2):
         x, y = self.mouse_pos
@@ -389,13 +462,13 @@ class TagManager:
                       font_size=11, color=self.COLOR_TEXT_SUB)
 
     def _render_whitelist(self, canvas, x1, y1, x2, y2):
-        """白名单管理 Tab — 30 个 Tag 切换方块"""
+        """白名单管理 Tab — 30 个 Tag 切换方块 + 世界锚点 (金框) 管理"""
         content_area = (x1 + self.MARGIN, y1 + self.MARGIN,
                         x2 - self.MARGIN, y2 - self.MARGIN)
 
-        # —— 顶部操作条 ——
+        # —— 顶部操作条 (两行: 白名单操作 + 锚点 DoF 状态) ——
         bar_y = content_area[1]
-        bar_h = 34
+        bar_h = 58
         cv2.rectangle(canvas, (content_area[0], bar_y), (content_area[2], bar_y + bar_h), self.COLOR_CARD_BG, -1)
         cv2.rectangle(canvas, (content_area[0], bar_y), (content_area[2], bar_y + bar_h), self.COLOR_BORDER, 1)
 
@@ -409,7 +482,7 @@ class TagManager:
         for bid, blabel, bcol in btn_specs:
             bw = 110 if bid != "WHITELIST_DEFAULT" else 140
             bh1, bh2 = bx, bx + bw
-            by1, by2 = bar_y + 5, bar_y + bar_h - 5
+            by1, by2 = bar_y + 5, bar_y + 39
             hh = self._is_hover(bh1, by1, bh2, by2)
             if hh:
                 bright = tuple(min(255, int(c * 1.2)) for c in bcol)
@@ -422,9 +495,23 @@ class TagManager:
             self.gui_buttons.append((bid, (bh1, by1, bh2, by2), None))
             bx += bw + 8
 
-        # 当前状态显示
+        # 第一行: 白名单状态
         status_text = f"当前白名单: {len(self.valid_tag_ids)} 个  →  {sorted(self.valid_tag_ids) if self.valid_tag_ids else '(空 = 全量探索)'}"
         draw_text(canvas, status_text, (bx + 6, bar_y + 23), font_size=10, color=self.COLOR_TEXT_SUB)
+
+        # 第二行: 世界锚点 DoF 记账状态 (约束积累式锚定的配置级充足性)
+        dof_y = bar_y + 50
+        if self.anchor_tags:
+            dof = BundleAdjustmentOptimizer.evaluate_anchor_dof(self.anchor_tags)
+            if dof["mode"] == "full":
+                dof_text, dof_col = f"世界锚定就绪: {dof['dof_solved']}/5 DoF (可完全锚定)", self.COLOR_OK
+            elif dof["mode"] == "partial":
+                dof_text, dof_col = f"世界锚定受限: {dof['dof_solved']}/5 DoF (XY 锚定, Z 相对 — 建图后下游守门)", self.COLOR_WARN
+            else:
+                dof_text, dof_col = f"世界锚定不可用: {dof['dof_solved']}/5 DoF ({dof['reason']})", self.COLOR_ERR
+        else:
+            dof_text, dof_col = "未配置世界锚点 (右键白名单内 Tag 添加已知坐标)", self.COLOR_TEXT_SUB
+        draw_text(canvas, dof_text, (content_area[0] + 14, dof_y), font_size=10, color=dof_col)
 
         # —— Tag 网格 (5 列 × 6 行) ——
         grid_y = bar_y + bar_h + self.MARGIN
@@ -441,9 +528,14 @@ class TagManager:
             cx = content_area[0] + 14 + col * (card_w + gap)
             cy = grid_y + row * (card_h + gap)
             is_on = i in self.valid_tag_ids
+            is_anchored = i in self.anchor_tags
             hover_t = self._is_hover(cx, cy, cx + card_w, cy + card_h)
 
-            if is_on:
+            if is_anchored:
+                bg = self.COLOR_TAG_ON if is_on else self.COLOR_TAG_OFF
+                border = (255, 235, 150) if hover_t else self.COLOR_ANCHOR
+                bw = 3
+            elif is_on:
                 bg = self.COLOR_TAG_ON
                 border = (255, 255, 255) if hover_t else self.COLOR_ACCENT
                 bw = 3 if hover_t else 2
@@ -461,17 +553,106 @@ class TagManager:
                       font_size=16, color=(255, 255, 255), bold=True)
 
             # 底部状态小标签
-            status = "✓ IN" if is_on else "✗ OUT"
-            sc = self.COLOR_OK if is_on else self.COLOR_TEXT_SUB
+            if is_anchored:
+                status, sc = "√ 锚点", self.COLOR_ANCHOR
+            elif is_on:
+                status, sc = "√ IN", self.COLOR_OK
+            else:
+                status, sc = "× OUT", self.COLOR_TEXT_SUB
             draw_text(canvas, status, (cx + card_w // 2 - 26, cy + card_h - 10),
                       font_size=9, color=sc)
 
-            self.gui_buttons.append((f"TAG_{i}", (cx, cy, cx + card_w, cy + card_h), str(i)))
+            # 编辑器打开时不注册网格按钮, 防止点击穿透到模态面板之下
+            if self.anchor_edit is None:
+                self.gui_buttons.append((f"TAG_{i}", (cx, cy, cx + card_w, cy + card_h), str(i)))
 
         # 底部提示
-        tip = "💡 点击方块切换白名单 | 空名单 = 放行所有 30 个 Tag (探索模式)"
+        tip = "💡 左键切换白名单 | 右键白名单内 Tag 编辑世界锚点 (金框 = 已标定) | 空名单 = 放行所有 30 个 Tag (探索模式)"
         draw_text(canvas, tip, (content_area[0] + 14, content_area[3] - 8),
                   font_size=10, color=self.COLOR_TEXT_SUB)
+
+        if self.anchor_edit is not None:
+            self._render_anchor_editor(canvas, content_area[0], content_area[1], content_area[2], content_area[3])
+
+    def _render_anchor_editor(self, canvas, x1, y1, x2, y2):
+        """世界锚点编辑器 (模态面板): 逐轴数值步进 + 逐轴已知标记"""
+        tid = self.anchor_edit["tid"]
+        pw, ph = 520, 236
+        px1 = x1 + (x2 - x1 - pw) // 2
+        py1 = y1 + (y2 - y1 - ph) // 2
+        px2, py2 = px1 + pw, py1 + ph
+
+        cv2.rectangle(canvas, (px1, py1), (px2, py2), (28, 34, 42), -1)
+        cv2.rectangle(canvas, (px1, py1), (px2, py2), self.COLOR_ANCHOR, 2)
+        draw_text(canvas, f"Tag #{tid:02d} 世界锚点编辑 (机械臂世界系, mm)",
+                  (px1 + 16, py1 + 24), font_size=13, color=self.COLOR_TEXT, bold=True)
+        cv2.line(canvas, (px1 + 16, py1 + 36), (px2 - 16, py1 + 36), self.COLOR_BORDER, 1)
+
+        # 逐轴行: 轴名 | 数值 | [-10][-1][+1][+10] | 已知 toggle
+        row_y = py1 + 48
+        for axis, name in enumerate(("X", "Y", "Z")):
+            known = self.anchor_edit["known"][axis]
+            draw_text(canvas, name, (px1 + 18, row_y + 15), font_size=13,
+                      color=self.COLOR_ANCHOR if known else self.COLOR_TEXT_SUB, bold=True)
+            val_str = f"{self.anchor_edit['xyz'][axis]:+.1f}"
+            draw_text(canvas, val_str, (px1 + 44, row_y + 15), font_size=12,
+                      color=(255, 255, 255) if known else self.COLOR_TEXT_SUB, bold=True)
+
+            bx = px1 + 150
+            for delta, bw_ in ((-10, 48), (-1, 38), (1, 38), (10, 48)):
+                hh = self._is_hover(bx, row_y, bx + bw_, row_y + 26)
+                bg = (70, 80, 95) if hh else (52, 60, 72)
+                cv2.rectangle(canvas, (bx, row_y), (bx + bw_, row_y + 26), bg, -1)
+                cv2.rectangle(canvas, (bx, row_y), (bx + bw_, row_y + 26), self.COLOR_BORDER, 1)
+                label = f"{'-' if delta < 0 else '+'}{abs(delta)}"
+                draw_text(canvas, label, (bx + bw_ // 2 - 12, row_y + 15), font_size=11, color=(255, 255, 255))
+                self.gui_buttons.append((f"ANCH_AXY_{axis}", (bx, row_y, bx + bw_, row_y + 26), str(delta)))
+                bx += bw_ + 4
+
+            kx = px1 + 340
+            kw = 88
+            kh = self._is_hover(kx, row_y, kx + kw, row_y + 26)
+            k_bg = (30, 95, 80) if known else (60, 62, 70)
+            k_border = self.COLOR_ACCENT if (known or kh) else self.COLOR_BORDER
+            cv2.rectangle(canvas, (kx, row_y), (kx + kw, row_y + 26), k_bg, -1)
+            cv2.rectangle(canvas, (kx, row_y), (kx + kw, row_y + 26), k_border, 2 if kh else 1)
+            draw_text(canvas, "已知 √" if known else "未知 ×",
+                      (kx + 14, row_y + 15), font_size=11,
+                      color=self.COLOR_ACCENT if known else self.COLOR_TEXT_SUB, bold=True)
+            self.gui_buttons.append((f"ANCH_KN_{axis}", (kx, row_y, kx + kw, row_y + 26), str(axis)))
+            row_y += 34
+
+        # DoF 即时提示
+        preview = {tid: {"xyz_mm": self.anchor_edit["xyz"], "known": self.anchor_edit["known"]}}
+        preview.update({k: v for k, v in self.anchor_tags.items() if k != tid})
+        dof = BundleAdjustmentOptimizer.evaluate_anchor_dof(preview) if any(preview[t]["known"][k] for t in preview for k in range(3)) else None
+        if dof and dof["mode"] != "none":
+            tip = f"保存后系统状态: {dof['dof_solved']}/5 DoF ({'可完全锚定' if dof['mode'] == 'full' else 'XY 锚定, Z 相对'})"
+            tip_col = self.COLOR_OK if dof["mode"] == "full" else self.COLOR_WARN
+        else:
+            tip = "提示: 单枚锚点无尺度信息, 至少需要两枚存在共同已知轴的锚点"
+            tip_col = self.COLOR_TEXT_SUB
+        draw_text(canvas, tip, (px1 + 16, py1 + ph - 52), font_size=10, color=tip_col)
+
+        # 底部按钮: 删除锚点 / 保存 / 取消 (从右往左排列)
+        btn_y = py1 + ph - 38
+        for bid, blabel, bcol, bw_ in (
+            ("ANCH_DEL",    "删除锚点", (220, 80, 80),   100),
+            ("ANCH_SAVE",   "💾 保存",  (0, 200, 180),   90),
+            ("ANCH_CANCEL", "取消",     (90, 95, 105),   80),
+        ):
+            if bid == "ANCH_CANCEL":
+                bx1_, bx2_ = px2 - 16 - bw_, px2 - 16
+            elif bid == "ANCH_SAVE":
+                bx1_, bx2_ = px2 - 16 - bw_ - 88, px2 - 16 - 88
+            else:
+                bx1_, bx2_ = px2 - 16 - bw_ - 176, px2 - 16 - 176
+            hh = self._is_hover(bx1_, btn_y, bx2_, btn_y + 28)
+            bg = tuple(min(255, int(c * 1.2)) for c in bcol) if hh else bcol
+            cv2.rectangle(canvas, (bx1_, btn_y), (bx2_, btn_y + 28), bg, -1)
+            cv2.rectangle(canvas, (bx1_, btn_y), (bx2_, btn_y + 28), (255, 255, 255) if hh else self.COLOR_BORDER, 1)
+            draw_text(canvas, blabel, (bx1_ + 12, btn_y + 16), font_size=11, color=(15, 17, 21), bold=True)
+            self.gui_buttons.append((bid, (bx1_, btn_y, bx2_, btn_y + 28), None))
 
     # ================================================================
     # 主循环
@@ -515,8 +696,16 @@ class TagManager:
                 raw_key = cv2.waitKeyEx(1)
                 if raw_key == -1:
                     continue
-                if raw_key & 0xFF in (ord('q'), 27):
+                if (raw_key & 0xFF) == 27:
+                    if self.anchor_edit is not None:
+                        self.anchor_edit = None  # ESC 优先关闭锚点编辑器
+                        continue
                     break
+                if (raw_key & 0xFF) == ord('q'):
+                    break
+                if (raw_key & 0xFF) == 13 and self.anchor_edit is not None:
+                    self._on_click("ANCH_SAVE", None)  # Enter 保存锚点
+                    continue
                 if (raw_key & 0xFF) == ord('1'):
                     self.active_tab = "generator"
                 elif (raw_key & 0xFF) == ord('2'):

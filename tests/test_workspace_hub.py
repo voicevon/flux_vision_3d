@@ -9,7 +9,6 @@ import sys
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch
 import numpy as np
 import cv2
 
@@ -450,7 +449,7 @@ class TestWorkspaceHub(unittest.TestCase):
         self.assertEqual(state.active_tab, HubState.TAB_CALIB_IMAGES)
 
     def test_tag_whitelist_creation_and_context_menu(self):
-        """测试通过 _handle_tag_whitelist() 自动生成 tag_whitelist.yaml 模板以及右键菜单项"""
+        """测试 [编辑] 进入白名单芯片矩阵编辑模式: 自动生成 tag_whitelist.yaml 模板并进入编辑态"""
         import yaml
         clean_cfg = os.path.join(self.test_root, "clean_whitelist_settings.json")
         app = WorkspaceHubApp(force_mock=True, settings_file=clean_cfg)
@@ -462,20 +461,244 @@ class TestWorkspaceHub(unittest.TestCase):
         if os.path.exists(wl_path):
             os.remove(wl_path)
 
-        # 执行白名单处理 (Windows startfile 在 unittest 中打桩避免弹出外部编辑器)
-        import unittest.mock as mock
-        with mock.patch("os.startfile", create=True) as mock_startfile:
-            app._handle_tag_whitelist()
-            self.assertTrue(os.path.exists(wl_path), "应自动创建 tag_whitelist.yaml 文件")
-            mock_startfile.assert_called_once_with(wl_path)
+        # 执行白名单处理 (页内编辑, 不再委托外部编辑器, 无 startfile)
+        app._handle_tag_whitelist()
+        self.assertTrue(os.path.exists(wl_path), "应自动创建 tag_whitelist.yaml 文件")
+        self.assertTrue(app.state.whitelist_edit_mode, "应进入芯片矩阵编辑模式")
 
-        # 验证文件结构符合规范
+        # 验证文件结构符合规范 (白名单恒启用: 无 enabled 开关, 名单内容即行为)
         with open(wl_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
-        self.assertIn("enabled", cfg)
+        self.assertNotIn("enabled", cfg)
         self.assertIn("allowed_ids", cfg)
         self.assertIn("workspace_id", cfg)
         self.assertEqual(cfg["workspace_id"], ws.workspace_id)
+
+        app.state.exit_whitelist_edit()
+        self.assertFalse(app.state.whitelist_edit_mode)
+
+    def test_whitelist_chip_editor_write_through(self):
+        """测试芯片矩阵编辑器写穿语义: 切换/批量均即时落盘 tag_whitelist.yaml"""
+        import yaml
+        from tools.workspace_hub.hub_renderer import whitelist_cell_rect
+        clean_cfg = os.path.join(self.test_root, "chip_editor_settings.json")
+        app = WorkspaceHubApp(force_mock=True, settings_file=clean_cfg)
+        state = app.state
+        ws = state.get_selected_workspace()
+        wl_path = ws.whitelist_path
+        if os.path.exists(wl_path):
+            os.remove(wl_path)
+
+        def read_ids():
+            with open(wl_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f).get("allowed_ids")
+
+        app._handle_tag_whitelist()  # 创建模板并进入编辑态
+        state.whitelist_batch("clear")
+        self.assertEqual(read_ids(), [])
+
+        # 芯片切换写穿: 加入 5、2 → yaml 即时 [2, 5]; 再切 5 → 移除
+        self.assertEqual(state.toggle_whitelist_id(5), 1)
+        self.assertEqual(state.toggle_whitelist_id(2), 2)
+        self.assertEqual(read_ids(), [2, 5])
+        state.toggle_whitelist_id(5)
+        self.assertEqual(read_ids(), [2])
+
+        # 批量全量放行
+        self.assertEqual(state.whitelist_batch("all"), 30)
+        self.assertEqual(len(read_ids()), 30)
+
+        # 退出编辑后 yaml 保持最后状态
+        state.exit_whitelist_edit()
+        self.assertFalse(state.whitelist_edit_mode)
+        self.assertEqual(len(read_ids()), 30)
+
+        # 模拟点击芯片 #2 (row0 col2 中心) → 移除并写盘; 点击 [完成] → 退出编辑态
+        state.set_tab(HubState.TAB_WHITELIST)
+        app._handle_tag_whitelist()
+        cx, cy, cw, ch = whitelist_cell_rect(2)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, cx + cw // 2, cy + ch // 2, 0, None)
+        self.assertNotIn(2, read_ids())
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, 899, 73, 0, None)  # [完成] 按钮中心
+        self.assertFalse(state.whitelist_edit_mode)
+        self.assertNotIn(2, read_ids())
+
+    def test_anchor_editor_partial_and_clear(self):
+        """测试锚点坐标编辑弹窗: 逐轴输入/部分已知/负号/清除单轴/删除锚点 (写穿工位 anchor_tags.yaml, 全局兜底不动)"""
+        from src.utils.config_guard import load_anchor_tags
+        from src.calibration.workspace_manager import load_workspace_anchor_tags
+        from tools.workspace_hub.hub_renderer import (
+            whitelist_cell_rect, anchor_row_rect, anchor_clear_rect, anchor_padkey_rect
+        )
+        tmp_cfg = os.path.join(self.test_root, "anchor_config.yaml")
+        with open(tmp_cfg, "w", encoding="utf-8") as f:
+            f.write(
+                "tags_map_path: map/test_map.yaml\n"
+                "calibration:\n"
+                "  # 每-Tag 世界坐标锚点表 (旧版全局源)\n"
+                "  anchor_tags:\n"
+                "    0:\n"
+                "      xyz_mm: [10.0, 20.0, 30.0]\n"
+                "      known: [true, true, true]\n"
+                "    1:\n"
+                "      xyz_mm: [0.0, 520.0, 196.0]\n"
+                "      known: [true, true, true]\n"
+            )
+        clean_cfg = os.path.join(self.test_root, "anchor_settings.json")
+        app = WorkspaceHubApp(force_mock=True, settings_file=clean_cfg)
+        state = app.state
+        state.anchor_config_path = tmp_cfg  # 全局兜底源注入
+        ws = state.get_selected_workspace()
+        state.set_tab(HubState.TAB_WHITELIST)
+        state.enter_whitelist_edit()
+        state.enter_anchor_mode()
+
+        def read_global_text():
+            with open(tmp_cfg, "r", encoding="utf-8") as f:
+                return f.read()
+
+        def rect_center(rect):
+            rx, ry, rw, rh = rect
+            return (rx + rw // 2, ry + rh // 2)
+
+        def pad_center(label):
+            labels = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "-/+", "清空", "退格", "确认"]
+            return rect_center(anchor_padkey_rect(labels.index(label)))
+
+        # 1. 锚点模式单击无锚芯片 #3 → 打开弹窗 (草稿来自全局兜底, tag3 无锚 → 全未记录)
+        cx, cy, cw, ch = whitelist_cell_rect(3)
+        app._on_mouse_event(cv2.EVENT_LBUTTONDOWN, cx + cw // 2, cy + ch // 2, 0, None)
+        self.assertTrue(state.anchor_modal_open)
+        self.assertEqual(state.anchor_modal_tag, 3)
+        self.assertEqual(state.anchor_known_count(), 0)
+        self.assertFalse(os.path.exists(ws.anchor_path), "未保存前不应创建工位锚点文件")
+
+        # 2. X 轴输入 12.5 → 保存 = 写穿工位锚点文件 (兜底条目随迁, 部分已知 [T,F,F])
+        app._handle_anchor_modal_click(*rect_center(anchor_row_rect(0)))
+        for d in "12.5":
+            app._handle_anchor_modal_click(*pad_center(d))
+        app._handle_anchor_modal_click(*pad_center("确认"))
+        ok, msg = state.save_anchor_modal()
+        self.assertTrue(ok, msg)
+        self.assertFalse(state.anchor_modal_open)
+        self.assertTrue(os.path.exists(ws.anchor_path))
+        own = load_workspace_anchor_tags(ws.workspace_dir)
+        self.assertEqual(own[3]["known"], [True, False, False])
+        self.assertAlmostEqual(own[3]["xyz_mm"][0], 12.5)
+        self.assertEqual(set(own), {0, 1, 3}, "首次写穿应包含全局兜底条目 (以当前标定为基础)")
+        # 全局兜底源不被修改 (注释保留)
+        self.assertIn("# 每-Tag 世界坐标锚点表", read_global_text())
+        self.assertEqual(set(load_anchor_tags(tmp_cfg)), {0, 1})
+
+        # 3. 工位锚点回填草稿; 清除 Z 轴 → [T,T,F] 写穿工位文件
+        state.open_anchor_editor(1)
+        self.assertEqual(state.anchor_known_count(), 3)
+        app._handle_anchor_modal_click(*rect_center(anchor_clear_rect(2)))
+        self.assertEqual(state.anchor_known_count(), 2)
+        ok, _ = state.save_anchor_modal()
+        self.assertTrue(ok)
+        own = load_workspace_anchor_tags(ws.workspace_dir)
+        self.assertEqual(own[1]["known"], [True, True, False])
+        self.assertAlmostEqual(own[1]["xyz_mm"][1], 520.0)
+
+        # 4. 负数输入: 3.25 → -/+ → -3.25 (tag0 草稿三轴全知)
+        state.open_anchor_editor(0)
+        app._handle_anchor_modal_click(*rect_center(anchor_row_rect(0)))
+        for d in "3.25":
+            app._handle_anchor_modal_click(*pad_center(d))
+        app._handle_anchor_modal_click(*pad_center("-/+"))
+        app._handle_anchor_modal_click(*pad_center("确认"))
+        ok, _ = state.save_anchor_modal()
+        self.assertTrue(ok)
+        own = load_workspace_anchor_tags(ws.workspace_dir)
+        self.assertEqual(own[0]["known"], [True, True, True])
+        self.assertAlmostEqual(own[0]["xyz_mm"][0], -3.25)
+
+        # 5. [清除锚点] → 从工位锚点删除 tag0 条目 (全局兜底不受影响)
+        state.open_anchor_editor(0)
+        ok, _ = state.clear_anchor_modal()
+        self.assertTrue(ok)
+        self.assertNotIn(0, load_workspace_anchor_tags(ws.workspace_dir))
+        self.assertIn(0, load_anchor_tags(tmp_cfg))
+
+        # 6. 全部轴清除后保存 = 从工位锚点删除条目
+        state.open_anchor_editor(1)
+        for axis in range(3):
+            state.anchor_axis_clear(axis)
+        ok, _ = state.save_anchor_modal()
+        self.assertTrue(ok)
+        own = load_workspace_anchor_tags(ws.workspace_dir)
+        self.assertNotIn(1, own)
+        self.assertEqual(set(own), {3})
+
+        # 7. 取消 → 不落盘
+        state.open_anchor_editor(3)
+        state.anchor_axis_select(1)
+        for _ in "999":
+            state.anchor_pad_key("9")
+        state.cancel_anchor_modal()
+        own = load_workspace_anchor_tags(ws.workspace_dir)
+        self.assertAlmostEqual(own[3]["xyz_mm"][0], 12.5)
+        self.assertAlmostEqual(own[3]["xyz_mm"][1], 0.0)
+
+        # 8. 弹窗渲染冒烟 (960x720)
+        state.open_anchor_editor(3)
+        canvas = app.renderer.render(state)
+        self.assertEqual(canvas.shape, (720, 960, 3))
+
+        state.exit_anchor_mode()
+        self.assertFalse(state.anchor_modal_open)
+        state.exit_whitelist_edit()
+        self.assertFalse(state.whitelist_edit_mode)
+
+    def test_legacy_whitelist_migration(self):
+        """测试旧格式白名单一次性迁移: whitelist_tag_ids → allowed_ids 写回 (保留其余字段, 同义旧键移除)"""
+        import yaml
+        from src.calibration.workspace_manager import load_workspace_tag_whitelist
+        ws_dir = os.path.join(self.test_root, "ws_legacy_wl")
+        os.makedirs(ws_dir, exist_ok=True)
+        p = os.path.join(ws_dir, "tag_whitelist.yaml")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("description: 旧格式白名单\nwhitelist_tag_ids:\n- 0\n- 18\n- 29\nworkspace_id: legacy\n")
+
+        # 首次读取触发迁移, 返回旧名单语义
+        self.assertEqual(load_workspace_tag_whitelist(ws_dir), [0, 18, 29])
+        with open(p, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        self.assertEqual(data["allowed_ids"], [0, 18, 29])
+        self.assertNotIn("whitelist_tag_ids", data)
+        self.assertEqual(data["description"], "旧格式白名单")
+        self.assertEqual(data["workspace_id"], "legacy")
+
+        # 再次读取幂等, 且新格式空 allowed_ids 保持探索模式不被迁移
+        self.assertEqual(load_workspace_tag_whitelist(ws_dir), [0, 18, 29])
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("workspace_id: legacy\nallowed_ids: []\n")
+        self.assertEqual(load_workspace_tag_whitelist(ws_dir), [])
+
+    def test_workspace_tag_whitelist_runtime_semantics(self):
+        """测试工位白名单恒启用语义: allowed_ids 非空 → 权威过滤; 空/缺失/旧 enabled 字段 → 探索模式"""
+        from src.calibration.workspace_manager import load_workspace_tag_whitelist
+        ws_dir = os.path.join(self.test_root, "ws_wl_semantics")
+        os.makedirs(ws_dir, exist_ok=True)
+
+        # 文件缺失 → [] (探索模式)
+        self.assertEqual(load_workspace_tag_whitelist(ws_dir), [])
+
+        # 旧格式 (带 enabled: false) → enabled 被忽略, 只看 allowed_ids
+        with open(os.path.join(ws_dir, "tag_whitelist.yaml"), "w", encoding="utf-8") as f:
+            f.write("workspace_id: x\nenabled: false\nallowed_ids: [0, 1, 18]\n")
+        self.assertEqual(load_workspace_tag_whitelist(ws_dir), [0, 1, 18])
+
+        # allowed_ids 为空 → [] (探索模式)
+        with open(os.path.join(ws_dir, "tag_whitelist.yaml"), "w", encoding="utf-8") as f:
+            f.write("workspace_id: x\nallowed_ids: []\n")
+        self.assertEqual(load_workspace_tag_whitelist(ws_dir), [])
+
+        # 非法 ID → 忽略文件 (探索模式, 不半生效)
+        with open(os.path.join(ws_dir, "tag_whitelist.yaml"), "w", encoding="utf-8") as f:
+            f.write("workspace_id: x\nallowed_ids: [0, abc, 2]\n")
+        self.assertEqual(load_workspace_tag_whitelist(ws_dir), [])
 
     def test_workspace_description_update(self):
         """测试工位备注(description)更新并原子持久化"""
