@@ -105,7 +105,7 @@ class ToolCardMeta:
 
 
 def build_tools_catalog() -> List[ToolCardMeta]:
-    """构建全系统核心工具目录：11 张卡片，三大功能分组 (A环境场景→B Tag标定→D生产调试)"""
+    """构建全系统核心工具目录：12 张卡片，三大功能分组 (A环境场景→B Tag标定→D生产调试)"""
 
     COLOR_A = (195, 155, 45)   # A 环境场景  : 琥珀金 (Amber)
     COLOR_B = (65,  175, 160)  # B Tag标定   : 精密工业深青 (Teal)
@@ -263,27 +263,48 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             quick_tips="快捷键: [7] 启动 | 界面内 W/S/A/D 点动 | [G28] 回零 | [ESC] 退出"
         ),
 
-        # ===== D — 硬件调试与系统运维 (续，AprilTag 图纸生成) =====
+        # ===== D — 硬件调试与系统运维 (续，分离轮 MQTT 调试) =====
         ToolCardMeta(
-            key_id="tag_paper_gen",
+            key_id="isolate_wheels_debug",
             shortcut="8",
-            title="AprilTag 图纸生成",
-            subtitle="一键生成 ID 0~29 标靶与 A4 打印 PDF",
+            title="Isolator WHEELS 调试",
+            subtitle="[8] 分离轮 MQTT 调试 (8 托架节拍)",
             category="D — 硬件调试与系统运维",
-            is_gui=False,
-            command=[sys.executable, "tools/calibration/generate_apriltags.py"],
+            is_gui=True,
+            command=[sys.executable, "tools/isolate_wheels_debug/app.py"],
             tag_color=COLOR_D,
-            summary="一键批量生成 AprilTag 16h5 标靶（ID 0~29）矢量高清图及标准 A4 排版打印 PDF。",
+            summary="flux_isolate_wheels 分离轮 ESP32 的 MQTT 调试视窗，支持设备发现、状态监视与 8 托架节拍命令下发。",
             details=[
-                "图纸批量生成：一键生成 ID 0~29 标靶高清图像与矢量排版文件",
-                "标准 A4 布局：自动按工业规范以 50mm 物理尺寸排版于 A4 页面",
-                "矢量 PDF 导出：调用 ReportLab 高保真输出至 data/apriltags_16h5/",
-                "打印标准警示：按 100% 实际尺寸打印，禁止缩放或适应页面"
+                "设备发现：订阅 flux/loader/+/* 通配符自动列出在线分离轮设备",
+                "状态监视：state 保留消息初始化、done 节拍应答、log 固件日志实时滚动",
+                "节拍下发：8 托架数量步进器 (0~9)、全部清零与稳妥模式发送 (idle 受理)",
+                "协议对齐：voicevon.vicp.io:1883, 协议 v1.0, 仅 idle 受理命令"
             ],
-            inputs=["ReportLab 依赖库 (用于矢量 PDF 排版导出)"],
-            outputs=["data/apriltags_16h5/apriltags_16h5_A4_print.pdf"],
-            quick_tips="快捷键: [8] 启动 (控制台生成) | 自动生成图纸并写盘，请以 100% 比例打印",
-            mode="CMD"
+            inputs=["MQTT Broker (voicevon.vicp.io:1883, 账号 von)"],
+            outputs=["节拍命令 JSON {\"cmd\":\"load\",\"counts\":[...]} 与运行日志面板"],
+            quick_tips="快捷键: [8] 启动 | 启动即自动连接 Broker，点设备芯片切换目标设备",
+        ),
+
+        # ===== D — 硬件调试与系统运维 (续，NetCamera 调试) =====
+        ToolCardMeta(
+            key_id="net_camera_debug",
+            shortcut="9",
+            title="NetCamera 调试",
+            subtitle="[9] 手机网络摄像机 MQTT+RTSP 调试",
+            category="D — 硬件调试与系统运维",
+            is_gui=True,
+            command=[sys.executable, "tools/net_camera_debug/app.py"],
+            tag_color=COLOR_D,
+            summary="android_as_camera 手机网络摄像机的调试视窗，支持 MQTT 设备发现、状态监视、远程命令下发与 RTSP 实时预览。",
+            details=[
+                "设备发现：订阅 camera/+/state 通配符自动列出在线摄像机及其推流状态",
+                "远程控制：开始/停止推流、前后摄切换、变焦、拍照、录像、移动侦测开关与灵敏度",
+                "RTSP 预览：按 state 上报 IP 拉取 rtsp://{ip}:8554/live 实时画面 (TCP 交错)",
+                "事件告警：motion/photo/record 事件实时滚动显示与 toast 提示"
+            ],
+            inputs=["MQTT Broker (voicevon.vicp.io:1883, 账号 von)", "手机 App RTSP 流 rtsp://{ip}:8554/live"],
+            outputs=["命令 JSON {\"action\":...} 下发至 camera/{id}/cmd 与事件日志面板"],
+            quick_tips="快捷键: [9] 启动 | 启动即自动连接 Broker，点设备芯片切换目标，点拉流预览看画面",
         ),
 
         # ===== D — 硬件调试与系统运维 (续，系统诊断) =====
@@ -331,26 +352,27 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             mode="TERM"
         ),
 
-        # ===== D — 硬件调试与系统运维 (续，分离轮 MQTT 调试) =====
+        # ===== D — 硬件调试与系统运维 (续，AprilTag 图纸生成) =====
         ToolCardMeta(
-            key_id="isolate_wheels_debug",
+            key_id="tag_paper_gen",
             shortcut="W",
-            title="Isolator WHEELS 调试",
-            subtitle="[W] 分离轮 MQTT 调试 (8 托架节拍)",
+            title="AprilTag 图纸生成",
+            subtitle="[W] 一键生成 ID 0~29 标靶与 A4 打印 PDF",
             category="D — 硬件调试与系统运维",
-            is_gui=True,
-            command=[sys.executable, "tools/isolate_wheels_debug/app.py"],
+            is_gui=False,
+            command=[sys.executable, "tools/calibration/generate_apriltags.py"],
             tag_color=COLOR_D,
-            summary="flux_isolate_wheels 分离轮 ESP32 的 MQTT 调试视窗，支持设备发现、状态监视与 8 托架节拍命令下发。",
+            summary="一键批量生成 AprilTag 16h5 标靶（ID 0~29）矢量高清图及标准 A4 排版打印 PDF。",
             details=[
-                "设备发现：订阅 flux/loader/+/* 通配符自动列出在线分离轮设备",
-                "状态监视：state 保留消息初始化、done 节拍应答、log 固件日志实时滚动",
-                "节拍下发：8 托架数量步进器 (0~9)、全部清零与稳妥模式发送 (idle 受理)",
-                "协议对齐：voicevon.vicp.io:1883, 协议 v1.0, 仅 idle 受理命令"
+                "图纸批量生成：一键生成 ID 0~29 标靶高清图像与矢量排版文件",
+                "标准 A4 布局：自动按工业规范以 50mm 物理尺寸排版于 A4 页面",
+                "矢量 PDF 导出：调用 ReportLab 高保真输出至 data/apriltags_16h5/",
+                "打印标准警示：按 100% 实际尺寸打印，禁止缩放或适应页面"
             ],
-            inputs=["MQTT Broker (voicevon.vicp.io:1883, 账号 von)"],
-            outputs=["节拍命令 JSON {\"cmd\":\"load\",\"counts\":[...]} 与运行日志面板"],
-            quick_tips="快捷键: [W] 启动 | 启动即自动连接 Broker，点设备芯片切换目标设备",
+            inputs=["ReportLab 依赖库 (用于矢量 PDF 排版导出)"],
+            outputs=["data/apriltags_16h5/apriltags_16h5_A4_print.pdf"],
+            quick_tips="快捷键: [W] 启动 (控制台生成) | 自动生成图纸并写盘，请以 100% 比例打印",
+            mode="CMD"
         ),
     ]
     return catalog
@@ -687,10 +709,11 @@ class GuiLauncherApp:
             '5': "robot_online_tracker",  # B Robot 在线跟踪
             '6': "d435_live",             # D RealSense 诊断
             '7': "scara_debug",           # D SCARA 机械臂调试
-            '8': "tag_paper_gen",         # D AprilTag 图纸生成 (存量补缺)
+            '8': "isolate_wheels_debug",  # D Isolator WHEELS 调试
+            '9': "net_camera_debug",      # D NetCamera 调试
             't': "sys_diagnose_tests",
             'p': "pip_install",
-            'w': "isolate_wheels_debug",  # D Isolator WHEELS 调试
+            'w': "tag_paper_gen",         # D AprilTag 图纸生成 (存量补缺)
         }
 
         if key_char in shortcut_map:
@@ -705,10 +728,10 @@ class GuiLauncherApp:
     def _get_card_rect(self, idx: int) -> Tuple[int, int, int, int]:
         """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
-        布局 (6行，3分组，共 11 张卡片):
+        布局 (7行，3分组，共 12 张卡片):
           row 0     A Workspace (1张全宽: idx 0)
           rows 1-2  B 标定建图与生产验证流水线 (4张: 2+2, idx 1~4)
-          rows 3-5  D 硬件调试与系统运维 (6张: 2+2+2, idx 5~10)
+          rows 3-6  D 硬件调试与系统运维 (7张: 2+2+2+1, idx 5~11)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
@@ -729,7 +752,7 @@ class GuiLauncherApp:
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        # D: 6张 (2+2+2, 3行: idx 5~10)
+        # D: 7张 (2+2+2+1, 4行: idx 5~11)
         d = idx - 5
         base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
         return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH

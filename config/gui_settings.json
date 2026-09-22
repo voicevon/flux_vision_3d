@@ -4,10 +4,10 @@
   "canvas_h": 1000,
   "updated_at": "2026-09-18 07:25:11",
   "gui_launcher": {
-    "scale_pct": 120,
-    "canvas_w": 1366,
-    "canvas_h": 705,
-    "updated_at": "2026-09-22 13:28:03"
+    "scale_pct": 130,
+    "canvas_w": 1664,
+    "canvas_h": 1061,
+    "updated_at": "2026-09-22 22:08:24"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -121,5 +121,17 @@
         }
       }
     }
+  },
+  "isolate_wheels_debug": {
+    "scale_pct": 140,
+    "canvas_w": 1540,
+    "canvas_h": 1007,
+    "updated_at": "2026-09-22 22:06:09"
+  },
+  "net_camera_debug": {
+    "scale_pct": 100,
+    "canvas_w": 1920,
+    "canvas_h": 1017,
+    "updated_at": "2026-09-22 19:46:06"
   }
 }
