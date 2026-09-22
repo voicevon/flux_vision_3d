@@ -2,9 +2,20 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# 忽略整个 data 目录及其所有子目录与文件
-data/
-**/data/
+# data 目录仅同步各工位原始图片与根配置 yaml，其余 (地图/观测/报告/可视化) 一律不入库
+data/**
+# !data/workspaces/
+# data/workspaces/**
+# !data/workspaces/*/
+# !data/workspaces/*/anchor_tags.yaml
+# !data/workspaces/*/tag_whitelist.yaml
+# !data/workspaces/*/workspace_meta.yaml
+# !data/workspaces/*/calibration/
+# !data/workspaces/*/production/
+# !data/workspaces/*/calibration/raw_images/
+# !data/workspaces/*/calibration/raw_images/**
+# !data/workspaces/*/production/raw_images/
+# !data/workspaces/*/production/raw_images/**
 *.npy
 *.bag
 
