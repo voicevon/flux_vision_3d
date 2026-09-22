@@ -105,7 +105,7 @@ class ToolCardMeta:
 
 
 def build_tools_catalog() -> List[ToolCardMeta]:
-    """构建全系统核心工具目录：12 张卡片，三大功能分组 (A环境场景→B Tag标定→D生产调试)"""
+    """构建全系统核心工具目录：11 张卡片，三大功能分组 (A环境场景→B Tag标定→D生产调试)"""
 
     COLOR_A = (195, 155, 45)   # A 环境场景  : 琥珀金 (Amber)
     COLOR_B = (65,  175, 160)  # B Tag标定   : 精密工业深青 (Teal)
@@ -329,6 +329,28 @@ def build_tools_catalog() -> List[ToolCardMeta]:
             outputs=["pip 安装进度与版本锁定结果"],
             quick_tips="快捷键: [P] 启动 (内嵌终端) | 首次克隆项目后必执行",
             mode="TERM"
+        ),
+
+        # ===== D — 硬件调试与系统运维 (续，分离轮 MQTT 调试) =====
+        ToolCardMeta(
+            key_id="isolate_wheels_debug",
+            shortcut="W",
+            title="Isolator WHEELS 调试",
+            subtitle="[W] 分离轮 MQTT 调试 (8 托架节拍)",
+            category="D — 硬件调试与系统运维",
+            is_gui=True,
+            command=[sys.executable, "tools/isolate_wheels_debug/app.py"],
+            tag_color=COLOR_D,
+            summary="flux_isolate_wheels 分离轮 ESP32 的 MQTT 调试视窗，支持设备发现、状态监视与 8 托架节拍命令下发。",
+            details=[
+                "设备发现：订阅 flux/loader/+/* 通配符自动列出在线分离轮设备",
+                "状态监视：state 保留消息初始化、done 节拍应答、log 固件日志实时滚动",
+                "节拍下发：8 托架数量步进器 (0~9)、全部清零与稳妥模式发送 (idle 受理)",
+                "协议对齐：voicevon.vicp.io:1883, 协议 v1.0, 仅 idle 受理命令"
+            ],
+            inputs=["MQTT Broker (voicevon.vicp.io:1883, 账号 von)"],
+            outputs=["节拍命令 JSON {\"cmd\":\"load\",\"counts\":[...]} 与运行日志面板"],
+            quick_tips="快捷键: [W] 启动 | 启动即自动连接 Broker，点设备芯片切换目标设备",
         ),
     ]
     return catalog
@@ -564,7 +586,7 @@ class GuiLauncherApp:
                 self._launch_tool(self.tools[card_idx])
 
     def _handle_keyboard(self, raw_key: int):
-        """键盘快捷键响应 (3分组: row0 A 2张并列, rows1-3 B 5张(2+2+1), rows4-6 D 5张(2+2+1))"""
+        """键盘快捷键响应 (3分组: row0 A 1张全宽, rows1-2 B 4张(2+2), rows3-5 D 6张(2+2+2))"""
         if self.is_subtool_running:
             return  # 子应用运行期间，主视窗处于安全挂起待命态，屏蔽一切按键操作
 
@@ -581,14 +603,14 @@ class GuiLauncherApp:
         # 方向键：将卡片索引映射到 (row, col) 坐标后导航
         # row 0: idx 0 (A Workspace，全宽)
         # rows 1-2: idx 1-4 (B 区 4张: 2+2)
-        # rows 3-5: idx 5-9 (D 区 5张: 2+2+1)
+        # rows 3-5: idx 5-10 (D 区 6张: 2+2+2)
         def idx_to_rc(i: int) -> Tuple[int, int]:
             if i <= 0:
                 return (0, 0)
             if 1 <= i <= 4:   # B 区 4张 (row1: idx 1, 2; row2: idx 3, 4)
                 b = i - 1
                 return (b // 2 + 1, b % 2)
-            d = i - 5         # D 区 5张 (row3: idx 5, 6; row4: idx 7, 8; row5: idx 9)
+            d = i - 5         # D 区 6张 (row3: idx 5, 6; row4: idx 7, 8; row5: idx 9, 10)
             return (d // 2 + 3, d % 2)
 
         def rc_to_idx(r: int, c: int) -> int:
@@ -597,10 +619,10 @@ class GuiLauncherApp:
             if 1 <= r <= 2:   # B 区 (row1: idx 1, 2; row2: idx 3, 4)
                 base_b = (r - 1) * 2
                 return min(1 + base_b + c, 4)
-            if 3 <= r <= 5:   # D 区 (row3: idx 5, 6; row4: idx 7, 8; row5: idx 9)
+            if 3 <= r <= 5:   # D 区 (row3: idx 5, 6; row4: idx 7, 8; row5: idx 9, 10)
                 base_d = (r - 3) * 2
-                return min(5 + base_d + c, 9)
-            return 9
+                return min(5 + base_d + c, 10)
+            return 10
 
         row, col = idx_to_rc(self.selected_tool_idx)
 
@@ -665,8 +687,10 @@ class GuiLauncherApp:
             '5': "robot_online_tracker",  # B Robot 在线跟踪
             '6': "d435_live",             # D RealSense 诊断
             '7': "scara_debug",           # D SCARA 机械臂调试
+            '8': "tag_paper_gen",         # D AprilTag 图纸生成 (存量补缺)
             't': "sys_diagnose_tests",
             'p': "pip_install",
+            'w': "isolate_wheels_debug",  # D Isolator WHEELS 调试
         }
 
         if key_char in shortcut_map:
@@ -681,10 +705,10 @@ class GuiLauncherApp:
     def _get_card_rect(self, idx: int) -> Tuple[int, int, int, int]:
         """返回第 idx 张卡片的 (x, y, w, h)，与渲染布局严格保持一致
 
-        布局 (6行，3分组，共 10 张卡片):
+        布局 (6行，3分组，共 11 张卡片):
           row 0     A Workspace (1张全宽: idx 0)
           rows 1-2  B 标定建图与生产验证流水线 (4张: 2+2, idx 1~4)
-          rows 3-5  D 硬件调试与系统运维 (5张: 2+2+1, idx 5~9)
+          rows 3-5  D 硬件调试与系统运维 (6张: 2+2+2, idx 5~10)
         """
         s = self.scale_pct / 100.0
         LH = max(14, int(20 * s))
@@ -705,7 +729,7 @@ class GuiLauncherApp:
             base_y = Y0 + LH + CH + GY + LH
             return X0 + (b % 2) * (CW + SX), base_y + (b // 2) * (CH + SY), CW, CH
 
-        # D: 5张 (2+2+1, 3行: idx 5~9)
+        # D: 6张 (2+2+2, 3行: idx 5~10)
         d = idx - 5
         base_y = Y0 + LH + CH + GY + LH + 2 * (CH + SY) + GY + LH
         return X0 + (d % 2) * (CW + SX), base_y + (d // 2) * (CH + SY), CW, CH
