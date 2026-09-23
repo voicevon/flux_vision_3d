@@ -158,6 +158,15 @@ class WorkspaceHubApp:
         if event not in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_LBUTTONDBLCLK):
             return
 
+        # =================== 2.5 坐标系与 3D ROI 结构化弹窗交互 ===================
+        if self.state.frame_modal_open:
+            self._handle_frame_modal_click(x, y)
+            return
+
+        if self.state.roi_modal_open:
+            self._handle_roi_modal_click(x, y)
+            return
+
         # =================== 3. 生产机制 Help 说明窗下的点击 ===================
         if self.state.is_help_modal_open:
             mx = (self.renderer.canvas_w - HELP_MODAL_W) // 2
@@ -236,6 +245,11 @@ class WorkspaceHubApp:
         # 5.5 右侧动态区四页签内容交互 (x: 340~960, y: 50~670)
         if not self.state.expanded_preview_mode:
             tab = self.state.active_tab
+
+            # 5.5.0 坐标系与 3D ROI 页签交互
+            if tab == HubState.TAB_FRAMES_ROIS:
+                self._handle_frames_rois_click(x, y)
+                return
 
             # 5.5.1 Tag 白名单页签: [刷新] [编辑/完成] + 编辑态芯片矩阵/批量按钮/数字键盘
             if tab == HubState.TAB_WHITELIST:
@@ -618,6 +632,253 @@ class WorkspaceHubApp:
             self.state.set_toast(f"一致性核验完成: 物理与元数据已是最新 (标定 {ws.image_count} 帧, 生产 {ws.prod_image_count} 帧)")
         else:
             self.state.set_toast(f"已同步数据一致性: 标定 {old_calib}→{ws.image_count} 帧, 生产 {old_prod}→{ws.prod_image_count} 帧")
+
+    def _handle_frames_rois_click(self, x: int, y: int):
+        """处理【坐标系&ROI】列表页签的按钮交互"""
+        hit = self.renderer.hit_test(x, y, self.state)
+        if not hit:
+            return
+        if hit == "geom_refresh":
+            self.state.load_geometry_managers()
+            self.state.set_toast("已重新加载当前工位的坐标系与 ROI 配置。")
+        elif hit == "geom_open_dir":
+            self._handle_open_directory()
+        elif hit == "btn_add_frame":
+            self.state.open_frame_modal()
+        elif hit == "btn_add_roi":
+            self.state.open_roi_modal()
+        elif isinstance(hit, tuple) and hit[0] == "frame_edit":
+            frames = self.state.get_coordinate_frames()
+            idx = hit[1]
+            if 0 <= idx < len(frames):
+                self.state.open_frame_modal(frames[idx].frame_id)
+        elif isinstance(hit, tuple) and hit[0] == "frame_del":
+            frames = self.state.get_coordinate_frames()
+            idx = hit[1]
+            if 0 <= idx < len(frames) and frames[idx].frame_id != "world":
+                f = frames[idx]
+                if prompt_confirm("确认删除坐标系", f"确定要删除机构相对坐标系 【{f.name}】 ({f.frame_id}) 吗？\n关联的子坐标系或 ROI 将自动回退至父级。"):
+                    self.state.delete_frame(f.frame_id)
+        elif isinstance(hit, tuple) and hit[0] == "roi_edit":
+            rois = self.state.get_roi_spaces()
+            idx = hit[1]
+            if 0 <= idx < len(rois):
+                self.state.open_roi_modal(rois[idx].roi_id)
+        elif isinstance(hit, tuple) and hit[0] == "roi_del":
+            rois = self.state.get_roi_spaces()
+            idx = hit[1]
+            if 0 <= idx < len(rois):
+                r = rois[idx]
+                if prompt_confirm("确认删除 3D ROI", f"确定要删除 3D ROI 空间物件 【{r.name}】 ({r.roi_id}) 吗？"):
+                    self.state.delete_roi(r.roi_id)
+
+    def _handle_frame_modal_click(self, x: int, y: int):
+        """处理机构相对坐标系表单弹窗交互"""
+        hit = self.renderer.hit_test(x, y, self.state)
+        if not hit:
+            return
+
+        # 0. 下拉选择框事件拦截
+        if hit == "dropdown_dismiss":
+            self.state.active_dropdown = None
+            return
+
+        if isinstance(hit, tuple) and hit[0] == "dropdown_toggle":
+            dd_type = hit[1]
+            self.state.active_dropdown = None if self.state.active_dropdown == dd_type else dd_type
+            return
+
+        if isinstance(hit, tuple) and hit[0] == "dropdown_select":
+            dd_type, val = hit[1], hit[2]
+            self.state.active_dropdown = None
+            d = self.state.frame_modal_data
+            if dd_type == "frame_type":
+                d["type"] = val
+                desc = "固定刚体外参" if val == "fixed_transform" else "AprilTag动标绑定"
+                self.state.set_toast(f"已切换坐标系类型为: {desc}")
+            elif dd_type == "frame_parent":
+                d["parent_frame_id"] = val
+                self.state.set_toast(f"已变更父坐标系为: [{val}]")
+            return
+
+        self.state.active_dropdown = None
+        d = self.state.frame_modal_data
+        if hit in ("frame_modal_close", "frame_modal_cancel", "frame_modal_mask"):
+            self.state.close_frame_modal()
+            self.state.set_toast("已取消编辑坐标系。")
+            return
+        if hit == "frame_modal_save":
+            ok, msg = self.state.save_frame_modal()
+            if not ok:
+                self.state.set_toast(f"保存失败: {msg}")
+            return
+        if hit == "frame_field_name":
+            old_name = d.get("name", "")
+            new_name = prompt_input_text("编辑坐标系名称", "请输入坐标系人类可读名称:", initial=old_name)
+            if new_name and new_name.strip():
+                d["name"] = new_name.strip()
+                self.state.set_toast(f"已修改坐标系名称为: 【{new_name.strip()}】")
+            return
+        if hit == "frame_field_id":
+            old_id = d.get("frame_id", "")
+            if old_id == "world":
+                self.state.set_toast("绝对世界基准坐标系 [world] 禁止修改 ID！")
+                return
+            new_id = prompt_input_text("编辑坐标系唯一ID", "请输入唯一标识符 (英文字母/数字/下划线):", initial=old_id)
+            if new_id and new_id.strip():
+                new_id_clean = new_id.strip()
+                frames = self.state.get_coordinate_frames()
+                conflict = any(f.frame_id == new_id_clean and f.frame_id != self.state.frame_modal_orig_id for f in frames)
+                if conflict:
+                    self.state.set_toast(f"修改失败: 坐标系 ID [{new_id_clean}] 已被占用！")
+                    return
+                d["frame_id"] = new_id_clean
+                self.state.set_toast(f"已设置坐标系唯一 ID 为: {new_id_clean} (点击[保存]后正式生效并级联更新)")
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_field_num":
+            field_category, axis_idx = hit[1], hit[2]
+            if field_category == "translation":
+                axis_name = ["X (前向)", "Y (横向)", "Z (垂向)"][axis_idx]
+                curr_val = d.get("translation_xyz_mm", [0, 0, 0])[axis_idx]
+                val_str = prompt_input_text(f"平移 {axis_name}", "请输入平移数值 (mm):", initial=f"{curr_val:.1f}")
+                if val_str is not None and val_str.strip():
+                    try:
+                        v = float(val_str.strip())
+                        d.setdefault("translation_xyz_mm", [0.0, 0.0, 0.0])[axis_idx] = v
+                        self.state.set_toast(f"已更新平移 {axis_name}: {v:.1f} mm")
+                    except ValueError:
+                        self.state.set_toast("输入无效，请输入有效数字！")
+            elif field_category == "rotation":
+                axis_name = ["Roll 翻滚", "Pitch 俯仰", "Yaw 偏航"][axis_idx]
+                curr_val = d.get("rotation_rpy_deg", [0, 0, 0])[axis_idx]
+                val_str = prompt_input_text(f"旋转 {axis_name}", "请输入欧拉角 (°):", initial=f"{curr_val:.1f}")
+                if val_str is not None and val_str.strip():
+                    try:
+                        v = float(val_str.strip())
+                        d.setdefault("rotation_rpy_deg", [0.0, 0.0, 0.0])[axis_idx] = v
+                        self.state.set_toast(f"已更新旋转 {axis_name}: {v:.1f}°")
+                    except ValueError:
+                        self.state.set_toast("输入无效，请输入有效数字！")
+            elif field_category == "tag_id":
+                curr_val = d.get("tag_id", 0)
+                val_str = prompt_input_text("动标绑定 AprilTag ID", "请输入绑定的标靶编号 (整数):", initial=str(curr_val))
+                if val_str is not None and val_str.strip():
+                    try:
+                        tid = int(val_str.strip())
+                        d["tag_id"] = tid
+                        self.state.set_toast(f"已绑定 AprilTag #{tid}")
+                    except ValueError:
+                        self.state.set_toast("Tag ID 必须为整数！")
+            elif field_category == "offset":
+                axis_name = ["dx (前向)", "dy (横向)", "dz (垂向)"][axis_idx]
+                curr_val = d.get("offset_xyz_mm", [0, 0, 0])[axis_idx]
+                val_str = prompt_input_text(f"动标局部偏移 {axis_name}", "请输入局部偏移数值 (mm):", initial=f"{curr_val:.1f}")
+                if val_str is not None and val_str.strip():
+                    try:
+                        v = float(val_str.strip())
+                        d.setdefault("offset_xyz_mm", [0.0, 0.0, 0.0])[axis_idx] = v
+                        self.state.set_toast(f"已更新动标局部偏移 {axis_name}: {v:.1f} mm")
+                    except ValueError:
+                        self.state.set_toast("输入无效，请输入有效数字！")
+
+    def _handle_roi_modal_click(self, x: int, y: int):
+        """处理 3D ROI 空间物件表单弹窗交互"""
+        hit = self.renderer.hit_test(x, y, self.state)
+        if not hit:
+            return
+
+        # 0. 下拉选择框事件拦截
+        if hit == "dropdown_dismiss":
+            self.state.active_dropdown = None
+            return
+
+        if isinstance(hit, tuple) and hit[0] == "dropdown_toggle":
+            dd_type = hit[1]
+            self.state.active_dropdown = None if self.state.active_dropdown == dd_type else dd_type
+            return
+
+        if isinstance(hit, tuple) and hit[0] == "dropdown_select":
+            dd_type, val = hit[1], hit[2]
+            self.state.active_dropdown = None
+            d = self.state.roi_modal_data
+            if dd_type == "roi_category":
+                d["category"] = val
+                cat_map = {"belt": "同步带工作面", "wheel": "驱动轮干涉区", "tray": "料盘工装区", "general": "通用机构部件"}
+                self.state.set_toast(f"已切换部件类别为: [{cat_map.get(val, val)}]")
+            elif dd_type == "roi_frame":
+                d["frame_id"] = val
+                self.state.set_toast(f"已变更所属坐标系为: [{val}]")
+            return
+
+        self.state.active_dropdown = None
+        d = self.state.roi_modal_data
+        if hit in ("roi_modal_close", "roi_modal_cancel", "roi_modal_mask"):
+            self.state.close_roi_modal()
+            self.state.set_toast("已取消编辑 3D ROI。")
+            return
+        if hit == "roi_modal_save":
+            ok, msg = self.state.save_roi_modal()
+            if not ok:
+                self.state.set_toast(f"保存失败: {msg}")
+            return
+        if hit == "roi_field_name":
+            old_name = d.get("name", "")
+            new_name = prompt_input_text("编辑 ROI 物件名称", "请输入 3D ROI 物件名称:", initial=old_name)
+            if new_name and new_name.strip():
+                d["name"] = new_name.strip()
+                self.state.set_toast(f"已修改 3D ROI 名称为: 【{new_name.strip()}】")
+            return
+        if hit == "roi_field_id":
+            old_id = d.get("roi_id", "")
+            new_id = prompt_input_text("编辑 ROI 唯一ID", "请输入唯一标识符 (英文字母/数字/下划线):", initial=old_id)
+            if new_id and new_id.strip():
+                new_id_clean = new_id.strip()
+                rois = self.state.get_rois()
+                conflict = any(r.roi_id == new_id_clean and r.roi_id != self.state.roi_modal_orig_id for r in rois)
+                if conflict:
+                    self.state.set_toast(f"修改失败: ROI ID [{new_id_clean}] 已被占用！")
+                    return
+                d["roi_id"] = new_id_clean
+                self.state.set_toast(f"已设置 3D ROI 唯一 ID 为: {new_id_clean} (点击[保存]后正式生效)")
+            return
+        if isinstance(hit, tuple) and hit[0] == "roi_field_num":
+            field_category, axis_idx = hit[1], hit[2]
+            if field_category == "center":
+                axis_name = ["X", "Y", "Z"][axis_idx]
+                curr_val = d.get("center_xyz_mm", [0, 0, 0])[axis_idx]
+                val_str = prompt_input_text(f"局部中心 {axis_name}", "请输入中心坐标 (mm):", initial=f"{curr_val:.1f}")
+                if val_str is not None and val_str.strip():
+                    try:
+                        v = float(val_str.strip())
+                        d.setdefault("center_xyz_mm", [0.0, 0.0, 0.0])[axis_idx] = v
+                        self.state.set_toast(f"已更新局部中心 {axis_name}: {v:.1f} mm")
+                    except ValueError:
+                        self.state.set_toast("输入无效，请输入有效数字！")
+            elif field_category == "size":
+                axis_name = ["长 dx", "宽 dy", "高 dz"][axis_idx]
+                curr_val = d.get("size_xyz_mm", [50, 50, 50])[axis_idx]
+                val_str = prompt_input_text(f"空间尺寸 {axis_name}", "请输入长方体尺寸 (mm, 必须 > 0):", initial=f"{curr_val:.1f}")
+                if val_str is not None and val_str.strip():
+                    try:
+                        v = float(val_str.strip())
+                        if v <= 0:
+                            self.state.set_toast("空间尺寸必须严格大于 0！")
+                        else:
+                            d.setdefault("size_xyz_mm", [50.0, 50.0, 50.0])[axis_idx] = v
+                            self.state.set_toast(f"已更新空间尺寸 {axis_name}: {v:.1f} mm")
+                    except ValueError:
+                        self.state.set_toast("输入无效，请输入有效数字！")
+            elif field_category == "rotation":
+                axis_name = ["Roll 翻滚", "Pitch 俯仰", "Yaw 偏航"][axis_idx]
+                curr_val = d.get("rotation_rpy_deg", [0, 0, 0])[axis_idx]
+                val_str = prompt_input_text(f"局部旋转 {axis_name}", "请输入旋转角 (°):", initial=f"{curr_val:.1f}")
+                if val_str is not None and val_str.strip():
+                    try:
+                        v = float(val_str.strip())
+                        d.setdefault("rotation_rpy_deg", [0.0, 0.0, 0.0])[axis_idx] = v
+                        self.state.set_toast(f"已更新局部旋转 {axis_name}: {v:.1f}°")
+                    except ValueError:
+                        self.state.set_toast("输入无效，请输入有效数字！")
 
 
 def main():

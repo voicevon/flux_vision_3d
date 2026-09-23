@@ -16,6 +16,7 @@ import glob
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 import yaml
+import numpy as np
 
 from src.utils.logger import get_logger
 
@@ -68,6 +69,16 @@ class Workspace:
     def anchor_path(self) -> str:
         """【工位核心资产】本工位世界坐标锚点文件 (缺失时系统回退全局 config.yaml 旧源)"""
         return os.path.join(self.workspace_dir, "anchor_tags.yaml")
+
+    @property
+    def frames_path(self) -> str:
+        """【工位核心资产】本工位多坐标系拓扑树配置文件"""
+        return os.path.join(self.workspace_dir, "frames.yaml")
+
+    @property
+    def rois_path(self) -> str:
+        """【工位核心资产】本工位 3D ROI 空间物件集合配置文件"""
+        return os.path.join(self.workspace_dir, "rois.yaml")
 
     @property
     def meta_path(self) -> str:
@@ -434,6 +445,16 @@ class WorkspaceManager:
                 "description": f"{display_name} Tag 白名单"
             }, f, allow_unicode=True, default_flow_style=False)
 
+        # 生成初始多坐标系模板 (默认包含世界系)
+        from src.calibration.coordinate_manager import CoordinateTreeManager
+        coord_mgr = CoordinateTreeManager(workspace_id=ws_id, frames_yaml_path=ws.frames_path)
+        coord_mgr.save()
+
+        # 生成初始 ROI 集合模板
+        from src.calibration.roi_manager import RoiSpaceManager
+        roi_mgr = RoiSpaceManager(workspace_id=ws_id, rois_yaml_path=ws.rois_path)
+        roi_mgr.save()
+
         self._cached_workspaces[ws_id] = ws
         return ws
 
@@ -457,6 +478,11 @@ class WorkspaceManager:
         # 1.1 拷贝工位世界坐标锚点 (沙盒资产随工位走)
         if os.path.exists(src_ws.anchor_path):
             shutil.copy2(src_ws.anchor_path, new_ws.anchor_path)
+        # 1.2 拷贝工位多坐标系与 ROI 空间资产
+        if os.path.exists(src_ws.frames_path):
+            shutil.copy2(src_ws.frames_path, new_ws.frames_path)
+        if os.path.exists(src_ws.rois_path):
+            shutil.copy2(src_ws.rois_path, new_ws.rois_path)
 
         # 2. 拷贝标定图片与清单
         if os.path.exists(src_ws.calib_raw_images_dir):
@@ -603,4 +629,41 @@ def save_workspace_anchor_tags(workspace: Workspace, anchors: Dict[int, Dict]) -
     except Exception as e:
         log.warning(f"[WS] 写回工位锚点失败 ({workspace.anchor_path}): {e}")
         return False
+
+
+def load_workspace_coordinate_manager(workspace: Workspace) -> "CoordinateTreeManager":
+    """获取指定工位的多坐标系管理器 (自动挂接 tags_map.yaml，文件缺失自动自愈模板)"""
+    from src.calibration.coordinate_manager import CoordinateTreeManager
+    mgr = CoordinateTreeManager(workspace_id=workspace.workspace_id, frames_yaml_path=workspace.frames_path)
+    if not os.path.exists(workspace.frames_path):
+        mgr.save()
+
+    # 若工位已有立体地图，挂载其 tag poses
+    if os.path.exists(workspace.map_path):
+        try:
+            with open(workspace.map_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            tags = data.get("tags", {})
+            tag_poses = {}
+            for tid_str, tinfo in tags.items():
+                tid = int(tid_str)
+                t_mat = tinfo.get("transform_matrix")
+                if t_mat and len(t_mat) == 4:
+                    tag_poses[tid] = np.array(t_mat, dtype=np.float64)
+            if tag_poses:
+                mgr.set_tags_map(tag_poses)
+        except Exception as e:
+            log.warning(f"[WS] 加载工位地图 Tag 姿态失败: {e}")
+    return mgr
+
+
+def load_workspace_roi_manager(workspace: Workspace) -> "RoiSpaceManager":
+    """获取指定工位的 ROI 空间物件集合管理器 (文件缺失自动自愈模板)"""
+    from src.calibration.roi_manager import RoiSpaceManager
+    mgr = RoiSpaceManager(workspace_id=workspace.workspace_id, rois_yaml_path=workspace.rois_path)
+    if not os.path.exists(workspace.rois_path):
+        mgr.save()
+    return mgr
+
+
 

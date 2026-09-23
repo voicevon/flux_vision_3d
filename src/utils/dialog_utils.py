@@ -84,21 +84,24 @@ def prompt_confirm(title: str, message: str) -> bool:
         return True
 
 
-def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
+def prompt_input_text(title: str, prompt_text: str, initial: str = "", default: str = "") -> str:
     """
     弹出跨平台原生单行文本输入对话框，完美支持中文拼音/五笔输入法。
 
     :param title: 弹窗标题
     :param prompt_text: 提示文字
     :param initial: 初始文本
+    :param default: 初始文本 (别名兼容)
     :return: 用户输入的字符串（自动去除首尾空白）；取消或关闭返回空字符串 ""
     """
+    init_val = default if default else initial
+
     # 1. Linux 环境下优先调用系统原生 zenity（原生挂载系统 Fcitx/IBus 中文输入法）
     if sys.platform.startswith("linux") and shutil.which("zenity"):
         try:
             cmd = ["zenity", "--entry", "--title", title, "--text", prompt_text]
-            if initial:
-                cmd.extend(["--entry-text", initial])
+            if init_val:
+                cmd.extend(["--entry-text", init_val])
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode == 0:
                 return res.stdout.strip()
@@ -113,7 +116,7 @@ def prompt_input_text(title: str, prompt_text: str, initial: str = "") -> str:
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
-        val = simpledialog.askstring(title, prompt_text, initialvalue=initial, parent=root)
+        val = simpledialog.askstring(title, prompt_text, initialvalue=init_val, parent=root)
         root.destroy()
         return val.strip() if val else ""
     except Exception as e:

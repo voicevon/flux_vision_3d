@@ -51,13 +51,14 @@ def imwrite_unicode(filepath: str, img: np.ndarray) -> bool:
 class HubState:
     """工作空间中枢 (Workspace Hub) 统一状态与缓存模型"""
 
-    # 右侧动态区页签 (左右两栏布局: 左侧 Workspace 导航固定, 右侧动态内容四页签)
-    TAB_CALIB_IMAGES = "tab_calib_images"   # 页签1: 标定相册 (当前工位采样相册)
-    TAB_PROD_IMAGES = "tab_prod_images"     # 页签2: 生产相册 (生产基准工位相册)
-    TAB_REPORT = "tab_report"               # 页签3: 体检报告 (几何健康大屏)
-    TAB_WHITELIST = "tab_whitelist"         # 页签4: Tag 白名单
-    # 页签展示顺序: 1 Dashboard / 2 Tag白名单 / 3 标定相册 / 4 生产相册
-    TAB_ORDER = (TAB_REPORT, TAB_WHITELIST, TAB_CALIB_IMAGES, TAB_PROD_IMAGES)
+    # 右侧动态区页签 (左右两栏布局: 左侧 Workspace 导航固定, 右侧动态内容五页签)
+    TAB_CALIB_IMAGES = "tab_calib_images"   # 页签: 标定相册 (当前工位采样相册)
+    TAB_PROD_IMAGES = "tab_prod_images"     # 页签: 生产相册 (生产基准工位相册)
+    TAB_REPORT = "tab_report"               # 页签: 体检报告 (几何健康大屏)
+    TAB_WHITELIST = "tab_whitelist"         # 页签: Tag 白名单
+    TAB_FRAMES_ROIS = "tab_frames_rois"     # 页签: 坐标系与 3D ROI 空间
+    # 页签展示顺序: 1 Dashboard / 2 坐标系&ROI / 3 Tag白名单 / 4 标定相册 / 5 生产相册
+    TAB_ORDER = (TAB_REPORT, TAB_FRAMES_ROIS, TAB_WHITELIST, TAB_CALIB_IMAGES, TAB_PROD_IMAGES)
 
     # 视图模式 (全宽大图沉浸预览, 仅在标定相册页签下双击卡片展开)
     VIEW_STANDARD = "standard"    # 标准: 左栏 + 右侧页签内容
@@ -98,6 +99,24 @@ class HubState:
 
         # 右侧动态区当前激活页签 (默认: 体检报告)
         self.active_tab = self.TAB_REPORT
+
+        # 多坐标系与 3D ROI 空间管理器缓存
+        self.coord_mgr = None
+        self.roi_mgr = None
+
+        # 结构化表单弹窗状态 (坐标系 / ROI)
+        self.frame_modal_open: bool = False
+        self.frame_modal_is_new: bool = False
+        self.frame_modal_data: dict = {}
+
+        self.roi_modal_open: bool = False
+        self.roi_modal_is_new: bool = False
+        self.roi_modal_data: dict = {}
+
+        # 弹窗内下拉选择框展开状态 (如 "frame_type" / "frame_parent" / "roi_category" / "roi_frame" 或 None)
+        self.active_dropdown: str | None = None
+        self.frame_modal_orig_id: str | None = None
+        self.roi_modal_orig_id: str | None = None
 
         # Tag 白名单缓存 (按文件 mtime 自动感知外部编辑并刷新)
         self._whitelist_cache: dict = {}
@@ -191,6 +210,7 @@ class HubState:
             self.prod_grid_offset = 0
         self.load_current_workspace_images()
         self.load_prod_images()
+        self.load_geometry_managers()
         self.save_selected_workspace()
         ws = self.get_selected_workspace()
         if ws:
@@ -221,6 +241,7 @@ class HubState:
 
         self.load_current_workspace_images()
         self.load_prod_images()
+        self.load_geometry_managers()
         # 列表变动 (新建/克隆/重命名/删除) 后同步落盘激活卡片
         self.save_selected_workspace()
 
@@ -243,10 +264,37 @@ class HubState:
             self.prod_grid_offset = 0
             self.load_current_workspace_images()
             self.load_prod_images()
+            self.load_geometry_managers()
         self.save_selected_workspace()
         ws = self.get_selected_workspace()
         if ws:
             self.workspace_mgr.set_current_workspace(ws.workspace_id)
+
+    def load_geometry_managers(self):
+        """加载当前选中工位的多坐标系与 ROI 管理器"""
+        ws = self.get_selected_workspace()
+        if ws:
+            from src.calibration.workspace_manager import (
+                load_workspace_coordinate_manager,
+                load_workspace_roi_manager
+            )
+            self.coord_mgr = load_workspace_coordinate_manager(ws)
+            self.roi_mgr = load_workspace_roi_manager(ws)
+        else:
+            self.coord_mgr = None
+            self.roi_mgr = None
+
+    def get_coordinate_frames(self):
+        """获取当前工位的所有坐标系定义列表"""
+        if self.coord_mgr:
+            return self.coord_mgr.list_frames()
+        return []
+
+    def get_roi_spaces(self):
+        """获取当前工位的所有 ROI 空间物件列表"""
+        if self.roi_mgr:
+            return self.roi_mgr.list_rois()
+        return []
 
     def load_current_workspace_images(self):
         """载入当前选中工位的照片列表"""
@@ -763,8 +811,9 @@ class HubState:
                 self.TAB_PROD_IMAGES: "生产相册",
                 self.TAB_REPORT: "体检报告",
                 self.TAB_WHITELIST: "Tag 白名单",
+                self.TAB_FRAMES_ROIS: "坐标系&ROI",
             }
-            self.set_toast(f"已切换页签: 【{names[tab]}】")
+            self.set_toast(f"已切换页签: 【{names.get(tab, tab)}】")
 
     def rename_current_workspace(self, new_name: str) -> bool:
         """重命名当前选中的工位显示名称 (支持中文)"""
@@ -801,3 +850,206 @@ class HubState:
             self.set_toast("已呼出【Workspace 工位与生产体系】业务说明窗")
         else:
             self.set_toast("已关闭说明窗。")
+
+    # ---------------- 结构化坐标系表单弹窗方法 ----------------
+    def open_frame_modal(self, frame_id: str | None = None):
+        if not self.coord_mgr:
+            self.load_geometry_managers()
+        if not self.coord_mgr:
+            self.set_toast("未选择任何工位，无法配置坐标系！")
+            return
+
+        if frame_id and frame_id in self.coord_mgr._frames:
+            f = self.coord_mgr.get_frame(frame_id)
+            self.frame_modal_is_new = False
+            self.frame_modal_orig_id = f.frame_id
+            self.frame_modal_data = {
+                "frame_id": f.frame_id,
+                "name": f.name,
+                "parent_frame_id": f.parent_frame_id or "world",
+                "type": f.type,
+                "translation_xyz_mm": [float(x) for x in f.translation_xyz_mm],
+                "rotation_rpy_deg": [float(x) for x in f.rotation_rpy_deg],
+                "tag_id": f.tag_id or 0,
+                "offset_xyz_mm": [float(x) for x in f.offset_xyz_mm],
+                "offset_rpy_deg": [float(x) for x in f.offset_rpy_deg],
+            }
+        else:
+            self.frame_modal_is_new = True
+            self.frame_modal_orig_id = None
+            idx = len(self.coord_mgr.list_frames())
+            self.frame_modal_data = {
+                "frame_id": f"frame_sub_{idx}",
+                "name": f"{idx}号机构坐标系",
+                "parent_frame_id": "world",
+                "type": "fixed_transform",
+                "translation_xyz_mm": [100.0, 0.0, 0.0],
+                "rotation_rpy_deg": [0.0, 0.0, 0.0],
+                "tag_id": 0,
+                "offset_xyz_mm": [0.0, 0.0, 0.0],
+                "offset_rpy_deg": [0.0, 0.0, 0.0],
+            }
+        self.frame_modal_open = True
+        self.roi_modal_open = False
+        self.active_dropdown = None
+
+    def close_frame_modal(self):
+        self.frame_modal_open = False
+        self.frame_modal_data = {}
+        self.frame_modal_orig_id = None
+        self.active_dropdown = None
+
+    def save_frame_modal(self) -> tuple[bool, str]:
+        if not self.coord_mgr or not self.frame_modal_data:
+            return False, "无有效坐标系数据"
+        from src.calibration.coordinate_manager import FrameDefinition
+        d = self.frame_modal_data
+        fid = str(d.get("frame_id", "")).strip()
+        if not fid:
+            return False, "坐标系 ID 不能为空"
+
+        orig_fid = self.frame_modal_orig_id
+        if not self.frame_modal_is_new and orig_fid and orig_fid != fid:
+            if orig_fid == "world":
+                return False, "绝对世界坐标系禁止修改 ID"
+            ok_rename = self.coord_mgr.rename_frame(orig_fid, fid)
+            if not ok_rename:
+                return False, f"重命名坐标系 ID 失败 (ID '{fid}' 可能已被占用)"
+            if self.roi_mgr:
+                roi_modified = False
+                for r in self.roi_mgr.list_rois():
+                    if r.frame_id == orig_fid:
+                        r.frame_id = fid
+                        roi_modified = True
+                if roi_modified:
+                    self.roi_mgr.save()
+        
+        ftype = d.get("type", "fixed_transform")
+        parent = None if fid == "world" else d.get("parent_frame_id", "world")
+        frame = FrameDefinition(
+            frame_id=fid,
+            name=str(d.get("name", fid)).strip(),
+            parent_frame_id=parent,
+            type=ftype,
+            translation_xyz_mm=[float(x) for x in d.get("translation_xyz_mm", [0, 0, 0])],
+            rotation_rpy_deg=[float(x) for x in d.get("rotation_rpy_deg", [0, 0, 0])],
+            tag_id=int(d.get("tag_id", 0)),
+            offset_xyz_mm=[float(x) for x in d.get("offset_xyz_mm", [0, 0, 0])],
+            offset_rpy_deg=[float(x) for x in d.get("offset_rpy_deg", [0, 0, 0])],
+        )
+        ok = self.coord_mgr.add_frame(frame)
+        if not ok:
+            return False, "保存坐标系失败 (可能导致拓扑环路或父级不存在)"
+        self.coord_mgr.save()
+        self.close_frame_modal()
+        self.set_toast(f"已成功保存坐标系: 【{frame.name}】")
+        return True, "保存成功"
+
+    def delete_frame(self, frame_id: str) -> tuple[bool, str]:
+        if not self.coord_mgr:
+            return False, "坐标系管理器未就绪"
+        if frame_id == "world":
+            return False, "绝对世界坐标系禁止删除"
+        ok = self.coord_mgr.remove_frame(frame_id)
+        if ok:
+            self.coord_mgr.save()
+            self.set_toast(f"已成功删除坐标系: {frame_id}")
+            return True, "删除成功"
+        return False, "删除失败"
+
+    # ---------------- 结构化 ROI 表单弹窗方法 ----------------
+    def open_roi_modal(self, roi_id: str | None = None):
+        if not self.roi_mgr:
+            self.load_geometry_managers()
+        if not self.roi_mgr:
+            self.set_toast("未选择任何工位，无法配置 ROI！")
+            return
+
+        frames = self.get_coordinate_frames()
+        default_frame = frames[1].frame_id if len(frames) > 1 else "world"
+
+        if roi_id and roi_id in self.roi_mgr._rois:
+            r = self.roi_mgr.get_roi(roi_id)
+            self.roi_modal_is_new = False
+            self.roi_modal_orig_id = r.roi_id
+            self.roi_modal_data = {
+                "roi_id": r.roi_id,
+                "name": r.name,
+                "frame_id": r.frame_id,
+                "category": r.category,
+                "center_xyz_mm": [float(x) for x in r.center_xyz_mm],
+                "size_xyz_mm": [float(x) for x in r.size_xyz_mm],
+                "rotation_rpy_deg": [float(x) for x in r.rotation_rpy_deg],
+                "visual_color_rgb": [int(c) for c in (r.visual_color_rgb or [0, 255, 128])],
+            }
+        else:
+            self.roi_modal_is_new = True
+            self.roi_modal_orig_id = None
+            idx = len(self.roi_mgr.list_rois()) + 1
+            self.roi_modal_data = {
+                "roi_id": f"roi_part_{idx}",
+                "name": f"{idx}号机构部件空间",
+                "frame_id": default_frame,
+                "category": "belt",
+                "center_xyz_mm": [0.0, 100.0, 20.0],
+                "size_xyz_mm": [80.0, 200.0, 30.0],
+                "rotation_rpy_deg": [0.0, 0.0, 0.0],
+                "visual_color_rgb": [0, 255, 128],
+            }
+        self.roi_modal_open = True
+        self.frame_modal_open = False
+        self.active_dropdown = None
+
+    def close_roi_modal(self):
+        self.roi_modal_open = False
+        self.roi_modal_data = {}
+        self.roi_modal_orig_id = None
+        self.active_dropdown = None
+
+    def save_roi_modal(self) -> tuple[bool, str]:
+        if not self.roi_mgr or not self.roi_modal_data:
+            return False, "无有效 ROI 数据"
+        from src.calibration.roi_manager import RoiDefinition
+        d = self.roi_modal_data
+        rid = str(d.get("roi_id", "")).strip()
+        if not rid:
+            return False, "ROI ID 不能为空"
+
+        orig_rid = self.roi_modal_orig_id
+        if not self.roi_modal_is_new and orig_rid and orig_rid != rid:
+            ok_rename = self.roi_mgr.rename_roi(orig_rid, rid)
+            if not ok_rename:
+                return False, f"重命名 ROI ID 失败 (ID '{rid}' 可能已被占用)"
+        
+        # 强 Schema 尺寸校验: dx, dy, dz 必须 > 0
+        sizes = [float(x) for x in d.get("size_xyz_mm", [10, 10, 10])]
+        if any(s <= 0 for s in sizes):
+            return False, "空间尺寸 (长宽高) 必须严格大于 0"
+
+        roi = RoiDefinition(
+            roi_id=rid,
+            name=str(d.get("name", rid)).strip(),
+            frame_id=str(d.get("frame_id", "world")),
+            category=str(d.get("category", "general")),
+            enabled=True,
+            center_xyz_mm=[float(x) for x in d.get("center_xyz_mm", [0, 0, 0])],
+            size_xyz_mm=sizes,
+            rotation_rpy_deg=[float(x) for x in d.get("rotation_rpy_deg", [0, 0, 0])],
+            visual_color_rgb=[int(c) for c in d.get("visual_color_rgb", [0, 255, 128])],
+        )
+        self.roi_mgr.add_roi(roi)
+        self.roi_mgr.save()
+        self.close_roi_modal()
+        self.set_toast(f"已成功保存 3D ROI 物件: 【{roi.name}】")
+        return True, "保存成功"
+
+    def delete_roi(self, roi_id: str) -> tuple[bool, str]:
+        if not self.roi_mgr:
+            return False, "ROI 管理器未就绪"
+        ok = self.roi_mgr.remove_roi(roi_id)
+        if ok:
+            self.roi_mgr.save()
+            self.set_toast(f"已成功删除 ROI 物件: {roi_id}")
+            return True, "删除成功"
+        return False, "删除失败"
+
