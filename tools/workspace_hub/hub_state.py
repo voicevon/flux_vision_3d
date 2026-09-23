@@ -51,13 +51,18 @@ def imwrite_unicode(filepath: str, img: np.ndarray) -> bool:
 class HubState:
     """工作空间中枢 (Workspace Hub) 统一状态与缓存模型"""
 
-    # 右侧动态区页签 (左右两栏布局: 左侧 Workspace 导航固定, 右侧动态内容五页签)
-    TAB_CALIB_IMAGES = "tab_calib_images"   # 页签: 标定相册 (当前工位采样相册)
+    # 右侧动态区页签 (工位宏观视图三页签 + 坐标系微观视图两页签)
+    TAB_CALIB_IMAGES = "tab_calib_images"   # 页签: 标定相册 (工位采样相册)
     TAB_PROD_IMAGES = "tab_prod_images"     # 页签: 生产相册 (生产基准工位相册)
-    TAB_REPORT = "tab_report"               # 页签: 体检报告 (几何健康大屏)
-    TAB_WHITELIST = "tab_whitelist"         # 页签: Tag 白名单
-    TAB_FRAMES_ROIS = "tab_frames_rois"     # 页签: 坐标系与 3D ROI 空间
-    # 页签展示顺序: 1 Dashboard / 2 坐标系&ROI / 3 Tag白名单 / 4 标定相册 / 5 生产相册
+    TAB_REPORT = "tab_report"               # 页签: 大盘看板 (体检报告/全局拓扑)
+    TAB_WHITELIST = "tab_whitelist"         # 兼容旧页签: Tag 白名单
+    TAB_FRAMES_ROIS = "tab_frames_rois"     # 兼容旧页签: 坐标系与 3D ROI 空间
+    TAB_FRAME_POSE_TAGS = "tab_frame_pose_tags" # 坐标系页签: 机构位姿与 Tag 标靶
+    TAB_FRAME_ROIS = "tab_frame_rois"           # 坐标系页签: 3D ROI 空间物件
+    # 工位宏观视图页签顺序
+    WS_TAB_ORDER = (TAB_REPORT, TAB_CALIB_IMAGES, TAB_PROD_IMAGES)
+    # 坐标系微观视图页签顺序
+    FRAME_TAB_ORDER = (TAB_FRAME_POSE_TAGS, TAB_FRAME_ROIS)
     TAB_ORDER = (TAB_REPORT, TAB_FRAMES_ROIS, TAB_WHITELIST, TAB_CALIB_IMAGES, TAB_PROD_IMAGES)
 
     # 视图模式 (全宽大图沉浸预览, 仅在标定相册页签下双击卡片展开)
@@ -74,6 +79,10 @@ class HubState:
 
         self.workspaces: list[Workspace] = []
         self.selected_workspace_idx = 0
+
+        # 左侧两层树导航状态: ("workspace", ws_idx, None) 或 ("frame", ws_idx, frame_id)
+        self.selected_tree_item: tuple[str, int, str | None] = ("workspace", 0, None)
+        self.expanded_workspaces: set[str] = set()
 
         # 当前选中工位的照片列表与卡片网格选中项
         self.current_images: list[str] = []
@@ -97,7 +106,7 @@ class HubState:
         # 当前视图模式 (默认标准; 按 F 键在标定相册页签内进入全宽大图)
         self.view_mode = self.VIEW_STANDARD
 
-        # 右侧动态区当前激活页签 (默认: 体检报告)
+        # 右侧动态区当前激活页签 (默认: 大盘看板)
         self.active_tab = self.TAB_REPORT
 
         # 多坐标系与 3D ROI 空间管理器缓存
@@ -146,6 +155,10 @@ class HubState:
         # 当前鼠标悬停坐标 (用于按钮 Hover 高亮效果)
         self.mouse_x = -1
         self.mouse_y = -1
+
+        # 左侧两层树导航状态: ("workspace", ws_idx, None) 或 ("frame", ws_idx, frame_id)
+        self.selected_tree_item: tuple[str, int, str | None] = ("workspace", 0, None)
+        self.expanded_workspaces: set[str] = set()
 
         # 左侧激活卡片的持久化 (按 workspace_id 定位, 不受列表排序变化影响)
         self._saved_workspace_id = self._read_saved_workspace_id()
@@ -296,6 +309,117 @@ class HubState:
             return self.roi_mgr.list_rois()
         return []
 
+    # ------------------------------ 树形导航与 Tag 分段管理 ------------------------------
+    def select_tree_workspace(self, ws_idx: int):
+        """激活左侧工位根节点 (切换至工位宏观视图: 大盘看板/标定相册/生产相册)"""
+        if not self.workspaces or not (0 <= ws_idx < len(self.workspaces)):
+            return
+        self.select_workspace_at_index(ws_idx)
+        self.selected_tree_item = ("workspace", ws_idx, None)
+        ws = self.get_selected_workspace()
+        if ws:
+            self.expanded_workspaces.add(ws.workspace_id)
+        if self.active_tab not in (self.TAB_REPORT, self.TAB_CALIB_IMAGES, self.TAB_PROD_IMAGES):
+            self.active_tab = self.TAB_REPORT
+
+    def select_tree_frame(self, arg1, arg2: str = None):
+        """激活左侧坐标系子节点 (支持 (ws_idx, frame_id) 或单传 (frame_id))"""
+        if arg2 is not None:
+            ws_idx = int(arg1)
+            frame_id = str(arg2)
+        else:
+            ws_idx = self.selected_workspace_idx
+            frame_id = str(arg1)
+        if not self.workspaces or not (0 <= ws_idx < len(self.workspaces)):
+            return
+        self.select_workspace_at_index(ws_idx)
+        self.selected_tree_item = ("frame", ws_idx, frame_id)
+        ws = self.get_selected_workspace()
+        if ws:
+            self.expanded_workspaces.add(ws.workspace_id)
+        if self.active_tab not in (self.TAB_FRAME_POSE_TAGS, self.TAB_FRAME_ROIS):
+            self.active_tab = self.TAB_FRAME_POSE_TAGS
+
+    def toggle_workspace_expanded(self, ws_id: str):
+        """展开/折叠指定工位卡片"""
+        if ws_id in self.expanded_workspaces:
+            self.expanded_workspaces.remove(ws_id)
+        else:
+            self.expanded_workspaces.add(ws_id)
+
+    def get_current_tabs(self) -> list[tuple[str, str]]:
+        """根据当前左侧选中的树节点 (工位 vs 坐标系) 动态返回对应的右侧 Tab 列表"""
+        item_type = self.selected_tree_item[0]
+        if item_type == "frame":
+            return [
+                (self.TAB_FRAME_POSE_TAGS, "机构参数与Tag"),
+                (self.TAB_FRAME_ROIS, "3D ROI 空间物件")
+            ]
+        else:
+            return [
+                (self.TAB_REPORT, "大盘看板"),
+                (self.TAB_CALIB_IMAGES, "标定相册"),
+                (self.TAB_PROD_IMAGES, "★ 生产相册")
+            ]
+
+    def get_current_frame_id(self) -> str | None:
+        """获取当前激活的坐标系 ID (若当前选中工位根节点则返回 None)"""
+        if self.selected_tree_item[0] == "frame":
+            return self.selected_tree_item[2]
+        return None
+
+    def get_frame_tag_range(self, frame_id: str) -> list[int]:
+        """获取坐标系分配的专属 Tag ID 命名空间区间 (0~9, 10~19, 20~29...)"""
+        if frame_id == "world":
+            return list(range(0, 10))
+        frames = self.get_coordinate_frames()
+        non_world_frames = [f.frame_id for f in frames if f.frame_id != "world"]
+        if frame_id in non_world_frames:
+            k = non_world_frames.index(frame_id) + 1
+            start = k * 10
+            return list(range(start, start + 10))
+        return list(range(10, 20))
+
+    def toggle_frame_tag_allowed(self, frame_id: str, tag_id: int) -> bool:
+        """在当前坐标系专属区间内切换某 Tag 的放行状态，并原子写穿工位 tag_whitelist.yaml"""
+        ws = self.get_selected_workspace()
+        if not ws:
+            return False
+        import yaml
+        wl_path = os.path.join(ws.workspace_dir, "tag_whitelist.yaml")
+        curr_cfg = {}
+        if os.path.isfile(wl_path):
+            try:
+                with open(wl_path, "r", encoding="utf-8") as f:
+                    curr_cfg = yaml.safe_load(f) or {}
+            except Exception:
+                curr_cfg = {}
+        allowed = set(curr_cfg.get("allowed_ids", []))
+        if tag_id in allowed:
+            allowed.remove(tag_id)
+            now_allowed = False
+        else:
+            allowed.add(tag_id)
+            now_allowed = True
+        curr_cfg["allowed_ids"] = sorted(list(allowed))
+        with open(wl_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(curr_cfg, f, allow_unicode=True)
+        self.refresh_whitelist_cache()
+        action_desc = "放行" if now_allowed else "禁行"
+        self.set_toast(f"坐标系 [{frame_id}] 标靶 Tag #{tag_id} 已{action_desc} (已同步工位白名单)")
+        return now_allowed
+
+    def get_frame_tags_status(self, frame_id: str) -> list[int]:
+        """获取当前坐标系在工位白名单中属于其分配区间的已放行 Tag ID 列表"""
+        tag_range = set(self.get_frame_tag_range(frame_id))
+        wl = self.get_tag_whitelist() or {}
+        allowed_set = set(wl.get("allowed_ids") or [])
+        return sorted(list(tag_range.intersection(allowed_set)))
+
+    def get_frame_rois(self, frame_id: str):
+        """获取专属归属于当前坐标系的 3D ROI 空间物件"""
+        return [r for r in self.get_roi_spaces() if r.frame_id == frame_id]
+
     def load_current_workspace_images(self):
         """载入当前选中工位的照片列表"""
         ws = self.get_selected_workspace()
@@ -402,6 +526,10 @@ class HubState:
         new_idx = max(0, min(self.selected_prod_image_idx + delta, len(self.prod_images) - 1))
         self.selected_prod_image_idx = new_idx
         self._ensure_prod_visible()
+
+    def get_whitelist_data(self) -> dict:
+        """获取当前工位的白名单与锚点数据 (get_tag_whitelist 的别名)"""
+        return self.get_tag_whitelist()
 
     def get_tag_whitelist(self) -> dict:
         """读取当前选中工位的 tag_whitelist.yaml (基于 mtime 自动感知外部编辑并刷新缓存)"""
@@ -1052,4 +1180,17 @@ class HubState:
             self.set_toast(f"已成功删除 ROI 物件: {roi_id}")
             return True, "删除成功"
         return False, "删除失败"
+
+    def get_selected_frame(self):
+        """获取当前树导航选中的机构坐标系对象"""
+        item_type, ws_idx, frame_id = self.selected_tree_item
+        if item_type == "frame" and frame_id and self.coord_mgr:
+            return self.coord_mgr.get_frame(frame_id)
+        return None
+
+    def set_tab(self, tab: str):
+        """切换当前激活的页签 (若处于全屏大图预览则自动回退至标准视图)"""
+        self.active_tab = tab
+        if self.view_mode == self.VIEW_EXPANDED:
+            self.view_mode = self.VIEW_STANDARD
 

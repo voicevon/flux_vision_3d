@@ -44,7 +44,7 @@ from src.utils.dialog_utils import prompt_confirm, prompt_input_text
 class WorkspaceHubApp:
     """Workspace Hub 主应用"""
 
-    def __init__(self, force_mock: bool = False, settings_file: str = None):
+    def __init__(self, force_mock: bool = False, settings_file: str = None, workspace_mgr: WorkspaceManager = None):
         self.force_mock = force_mock
         self.win_mgr = GuiWindowManager(
             app_id="workspace_hub",
@@ -53,7 +53,7 @@ class WorkspaceHubApp:
             settings_file=settings_file,
             enable_keyboard_zoom=False  # 全鼠标化: 不启用 Ctrl/+/- 键盘缩放热键
         )
-        self.workspace_mgr = WorkspaceManager()
+        self.workspace_mgr = workspace_mgr or WorkspaceManager()
         self.state = HubState(self.workspace_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
         # 窗口内部 key 必须纯 ASCII (namedWindow ANSI API), 中文标题走 set_unicode_title
@@ -189,35 +189,68 @@ class WorkspaceHubApp:
             return
 
         # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
-        # 4.0 顶部标题栏交互 (右侧动态区四页签 Tab + 紧邻生产相册的 [退出] 按钮)
-        # 4.0.0 四页签 Tab 胶囊 (单源常量驱动)
-        tab_total_w = len(HubState.TAB_ORDER) * HEADER_TAB_STEP
-        if HEADER_TAB_Y0 <= y <= HEADER_TAB_Y0 + HEADER_TAB_H and HEADER_TAB_X0 <= x <= HEADER_TAB_X0 + tab_total_w:
-            tab_idx = (x - HEADER_TAB_X0) // HEADER_TAB_STEP
-            if 0 <= tab_idx < len(HubState.TAB_ORDER):
-                self.state.set_tab(HubState.TAB_ORDER[tab_idx])
-            return
+        # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
+        # 统一使用 renderer.hit_test 进行像素级高精度命中测试
+        hit = self.renderer.hit_test(x, y, self.state)
 
-        # 4.0.2 [退出] 按钮紧贴生产相册右侧
-        if BTN_EXIT_X0 <= x <= BTN_EXIT_X0 + BTN_EXIT_W and BTN_EXIT_Y0 <= y <= BTN_EXIT_Y0 + BTN_EXIT_H:
+        # 4.0 顶部标题栏交互 (退出按钮与自适应 Tab 胶囊)
+        if hit == "btn_exit":
             self._running = False
             return
-
-        # 5.1 点击左侧 Workspace 列表卡片 (x: 10~330, y: 58~520, 支持 6 张卡片)
-        if 10 <= x <= 330 and 58 <= y <= 520:
-            card_h = 70
-            gap = 8
-            idx_in_view = (y - 58) // (card_h + gap)
-            max_cards = 6
-            scroll_start = max(0, self.state.selected_workspace_idx - max_cards + 1)
-            target_idx = scroll_start + idx_in_view
-            if 0 <= target_idx < len(self.state.workspaces):
-                self.state.select_workspace_at_index(target_idx)
+        if isinstance(hit, tuple) and hit[0] == "hdr_tab_key":
+            self.state.set_tab(hit[1])
             return
 
-        # 5.2 点击左侧通用全局 Workspace 管理按钮 (y: 614~654)
-        if 10 <= x <= 330 and 614 <= y <= 654:
+        # 4.1 左侧面板两层树结构交互
+        if hit == "btn_new_workspace":
             self._handle_create_workspace()
+            return
+        if isinstance(hit, tuple) and hit[0] == "tree_ws_toggle":
+            ws_id = hit[2]
+            self.state.toggle_workspace_expanded(ws_id)
+            return
+        if isinstance(hit, tuple) and hit[0] == "tree_ws_select":
+            ws_idx = hit[1]
+            self.state.select_tree_workspace(ws_idx)
+            return
+        if isinstance(hit, tuple) and hit[0] == "tree_frame_select":
+            ws_idx, frame_id = hit[1], hit[2]
+            self.state.select_tree_frame(ws_idx, frame_id)
+            return
+
+        # 4.2 坐标系专属视图交互
+        if hit == "btn_edit_frame_pose":
+            cur_frame = self.state.get_selected_frame()
+            if cur_frame:
+                self.state.open_frame_modal(cur_frame.frame_id)
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_tag_toggle":
+            tag_id = hit[1]
+            cur_frame = self.state.get_selected_frame()
+            if cur_frame:
+                is_now_allowed = self.state.toggle_frame_tag_allowed(cur_frame.frame_id, tag_id)
+                status_txt = "已放行 (已加入工位白名单)" if is_now_allowed else "已取消放行 (已移出工位白名单)"
+                self.state.set_toast(f"标靶 Tag #{tag_id:02d} {status_txt}")
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_tag_edit_xyz":
+            tag_id = hit[1]
+            self._handle_frame_tag_edit_xyz(tag_id)
+            return
+        if hit == "btn_add_frame_roi":
+            cur_frame = self.state.get_selected_frame()
+            self.state.open_roi_modal()
+            if cur_frame:
+                self.state.roi_modal_data["frame_id"] = cur_frame.frame_id
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_roi_edit":
+            roi_id = hit[1]
+            self.state.open_roi_modal(roi_id)
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_roi_delete":
+            roi_id = hit[1]
+            if prompt_confirm("确认删除 3D ROI", f"确定要删除 3D ROI 空间物件 [{roi_id}] 吗？"):
+                self.state.delete_roi(roi_id)
+                self.state.set_toast(f"已删除 ROI: {roi_id}")
             return
 
         # 5.4 全宽大图预览模式下的右上角按钮交互 (x: 340~960)
@@ -242,11 +275,11 @@ class WorkspaceHubApp:
                 self.state.toggle_expanded_preview()
                 return
 
-        # 5.5 右侧动态区四页签内容交互 (x: 340~960, y: 50~670)
+        # 5.5 右侧动态区各页签内容交互
         if not self.state.expanded_preview_mode:
             tab = self.state.active_tab
 
-            # 5.5.0 坐标系与 3D ROI 页签交互
+            # 5.5.0 坐标系与 3D ROI 页签交互 (旧版备用)
             if tab == HubState.TAB_FRAMES_ROIS:
                 self._handle_frames_rois_click(x, y)
                 return
@@ -266,7 +299,6 @@ class WorkspaceHubApp:
                             self._handle_tag_whitelist()
                         return
 
-                # 编辑态: 锚点弹窗优先, 其后芯片/批量/锚点切换点击分发 (视图态芯片不可点, 防误触)
                 if self.state.whitelist_edit_mode:
                     if self.state.anchor_modal_open:
                         self._handle_anchor_modal_click(x, y)
@@ -274,29 +306,23 @@ class WorkspaceHubApp:
                         self._handle_whitelist_edit_click(x, y)
                     return
 
-            # 5.5.1.5 体检报告页签：工位信息卡片内嵌按钮点击处理 (x: 864~938, 776~854)
+            # 5.5.1.5 体检报告页签：工位信息卡片内嵌按钮点击处理
             if tab == HubState.TAB_REPORT:
-                # [重命名]
                 if 864 <= x <= 938 and 68 <= y <= 94:
                     self._handle_rename_workspace()
                     return
-                # [打开]
                 if 864 <= x <= 938 and 96 <= y <= 122:
                     self._handle_open_directory()
                     return
-                # [修改]
                 if 864 <= x <= 938 and 152 <= y <= 178:
                     self._handle_edit_description()
                     return
-                # [更新元数据] (移至卡片1底栏左侧, x: 372~504, y: 190~220)
                 if 372 <= x <= 504 and 190 <= y <= 220:
                     self._handle_sync_data_consistency()
                     return
-                # [克隆工位] (紧随其后 x: 512~592, y: 190~220)
                 if (512 <= x <= 592 or 776 <= x <= 854) and 190 <= y <= 220:
                     self._handle_clone_workspace()
                     return
-                # [删除] (x: 600~678, y: 190~220)
                 if (600 <= x <= 678 or 864 <= x <= 938) and 190 <= y <= 220:
                     self._handle_delete_workspace()
                     return
@@ -632,6 +658,68 @@ class WorkspaceHubApp:
             self.state.set_toast(f"一致性核验完成: 物理与元数据已是最新 (标定 {ws.image_count} 帧, 生产 {ws.prod_image_count} 帧)")
         else:
             self.state.set_toast(f"已同步数据一致性: 标定 {old_calib}→{ws.image_count} 帧, 生产 {old_prod}→{ws.prod_image_count} 帧")
+
+    def _handle_frame_tag_edit_xyz(self, tag_id: int):
+        """编辑某个 Tag 在当前坐标系下的已知物理局部真值坐标 [x, y, z]"""
+        cur_frame = self.state.get_selected_frame()
+        if not cur_frame:
+            return
+        wl_data = self.state.get_whitelist_data()
+        anchors = wl_data.get("tag_anchors", {}) if isinstance(wl_data, dict) else {}
+        curr_pos = anchors.get(tag_id) or anchors.get(str(tag_id))
+        init_str = f"{curr_pos[0]:.1f}, {curr_pos[1]:.1f}, {curr_pos[2]:.1f}" if curr_pos else "0.0, 0.0, 0.0"
+
+        val_str = prompt_input_text(
+            f"标注 Tag #{tag_id:02d} 局部坐标",
+            f"请输入 Tag #{tag_id:02d} 在坐标系 [{cur_frame.frame_id}] 下的已知物理坐标 (x, y, z，单位 mm，以逗号分隔，留空或输入 clear 清除):",
+            initial=init_str
+        )
+        if val_str is not None:
+            clean_str = val_str.strip()
+            ws = self.state.get_selected_workspace()
+            if not ws:
+                return
+            import yaml
+            wl_path = os.path.join(ws.workspace_dir, "tag_whitelist.yaml")
+            curr_cfg = {}
+            if os.path.isfile(wl_path):
+                try:
+                    with open(wl_path, "r", encoding="utf-8") as f:
+                        curr_cfg = yaml.safe_load(f) or {}
+                except Exception:
+                    curr_cfg = {}
+            if "tag_anchors" not in curr_cfg:
+                curr_cfg["tag_anchors"] = {}
+
+            if not clean_str or clean_str.lower() == "clear":
+                if tag_id in curr_cfg["tag_anchors"]:
+                    del curr_cfg["tag_anchors"][tag_id]
+                if str(tag_id) in curr_cfg["tag_anchors"]:
+                    del curr_cfg["tag_anchors"][str(tag_id)]
+                with open(wl_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(curr_cfg, f, allow_unicode=True)
+                self.state.refresh_whitelist_cache()
+                self.state.set_toast(f"已清除 Tag #{tag_id:02d} 的物理坐标标注。")
+                return
+
+            parts = [p.strip() for p in clean_str.replace("，", ",").split(",")]
+            if len(parts) == 3:
+                try:
+                    xyz = [float(parts[0]), float(parts[1]), float(parts[2])]
+                    curr_cfg["tag_anchors"][tag_id] = xyz
+                    # 自动将其并入放行集合
+                    allowed_set = set(curr_cfg.get("allowed_ids", []))
+                    allowed_set.add(tag_id)
+                    curr_cfg["allowed_ids"] = sorted(list(allowed_set))
+
+                    with open(wl_path, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(curr_cfg, f, allow_unicode=True)
+                    self.state.refresh_whitelist_cache()
+                    self.state.set_toast(f"已成功标注 Tag #{tag_id:02d} 坐标: ({xyz[0]:.1f}, {xyz[1]:.1f}, {xyz[2]:.1f}) mm 并自动放行")
+                except ValueError:
+                    self.state.set_toast("坐标格式无效，请输入 3 个以逗号分隔的浮点数！")
+            else:
+                self.state.set_toast("坐标格式无效，需包含 x, y, z 三轴坐标！")
 
     def _handle_frames_rois_click(self, x: int, y: int):
         """处理【坐标系&ROI】列表页签的按钮交互"""
