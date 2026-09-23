@@ -4,10 +4,10 @@
   "canvas_h": 1000,
   "updated_at": "2026-09-18 07:25:11",
   "gui_launcher": {
-    "scale_pct": 130,
-    "canvas_w": 1366,
-    "canvas_h": 705,
-    "updated_at": "2026-09-24 04:41:13"
+    "scale_pct": 120,
+    "canvas_w": 1536,
+    "canvas_h": 1061,
+    "updated_at": "2026-09-24 04:57:21"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -34,11 +34,11 @@
     "scale_pct": 200,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-24 04:41:17",
+    "updated_at": "2026-09-24 04:55:41",
     "hub_state": {
       "selected_workspace_id": "20260915_bench_default",
       "selected_workspace_name": "首次测试_Only15",
-      "updated_at": "2026-09-24 04:41:15"
+      "updated_at": "2026-09-24 04:55:39"
     }
   },
   "hardware_config": {
@@ -124,9 +124,9 @@
   },
   "isolate_wheels_debug": {
     "scale_pct": 140,
-    "canvas_w": 1366,
-    "canvas_h": 705,
-    "updated_at": "2026-09-23 20:39:10"
+    "canvas_w": 1920,
+    "canvas_h": 1017,
+    "updated_at": "2026-09-24 04:57:07"
   },
   "net_camera_debug": {
     "scale_pct": 100,
