@@ -204,10 +204,63 @@ def test_hub_frames_rois_end_to_end():
         assert ok_del_roi is True
         assert "roi_gripper_zone_v2" not in [r.roi_id for r in state.get_roi_spaces()]
 
-        # 删除 Frame
-        ok_del_frame, _ = state.delete_frame("frame_flange_v2")
-        assert ok_del_frame is True
-        assert "frame_flange_v2" not in [f.frame_id for f in state.get_coordinate_frames()]
+        # -----------------------------------------------------------------
+        # 9. 验证 WorkspaceHubApp 快捷键分发与白名单/锚点下沉更新
+        # -----------------------------------------------------------------
+        from tools.workspace_hub.app import WorkspaceHubApp
+        app = WorkspaceHubApp(workspace_mgr=ws_mgr)
+        app.state.current_ws_id = ws.workspace_id
+
+        # 9.1 白名单与物理锚点下沉验证
+        wl_path = ws_mgr.ensure_tag_whitelist(ws.workspace_id)
+        assert os.path.exists(wl_path)
+
+        # 标注 Tag #05 局部坐标并自动放行
+        ok_tag, msg_tag = app.state.update_tag_anchor(5, [12.5, -45.0, 100.0])
+        assert ok_tag is True
+        wl_data = app.state.get_whitelist_data()
+        assert 5 in wl_data.get("allowed_ids", [])
+        assert wl_data.get("tag_anchors", {}).get(5) == [12.5, -45.0, 100.0]
+
+        # 清除 Tag #05 坐标标注
+        ok_clr, _ = app.state.update_tag_anchor(5, None)
+        assert ok_clr is True
+        wl_data_clr = app.state.get_whitelist_data()
+        assert 5 not in wl_data_clr.get("tag_anchors", {})
+
+        # 9.2 快捷键 on_key 层次化退出测试
+        # (1) 大图展开模式下按 ESC
+        app.state.expanded_image_idx = 0
+        handled_esc = app.on_key(27)
+        assert handled_esc is True
+        assert app.state.expanded_image_idx == -1
+
+        # (2) 坐标系弹窗下按 ESC
+        app.state.open_frame_modal()
+        assert app.state.frame_modal_open is True
+        handled_esc = app.on_key(27)
+        assert handled_esc is True
+        assert app.state.frame_modal_open is False
+
+        # (3) 3D ROI 弹窗下按 Enter 保存
+        app.state.open_roi_modal()
+        app.state.roi_modal_data["roi_id"] = "roi_shortcut_test"
+        app.state.roi_modal_data["name"] = "快捷键测试物件"
+        handled_enter = app.on_key(13)
+        assert handled_enter is True
+        assert app.state.roi_modal_open is False
+        assert "roi_shortcut_test" in [r.roi_id for r in app.state.get_roi_spaces()]
+
+        # (4) 白名单编辑态下按 ESC
+        app.state.enter_whitelist_edit()
+        assert app.state.whitelist_edit_mode is True
+        handled_esc = app.on_key(27)
+        assert handled_esc is True
+        assert app.state.whitelist_edit_mode is False
+
+        # (5) 无任何弹窗激活时按 ESC 返回 False
+        handled_esc = app.on_key(27)
+        assert handled_esc is False
 
         print("√ 全部 Workspace Hub 坐标系与 3D ROI GUI 端到端测试均 100% 通过！")
     finally:

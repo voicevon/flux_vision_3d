@@ -1,0 +1,509 @@
+# -*- coding: utf-8 -*-
+"""
+Workspace Hub 模态弹窗专用渲染模块
+========================================
+负责全系统所有独立模态弹窗与浮层的视觉绘制：
+1. 模态脚手架底板 (全屏半透明遮罩 + 卡片底板 + 标题栏 + 关闭/保存/取消操作底栏)
+2. 机构相对坐标系结构化表单弹窗 (Fixed Transform / AprilTag 动标绑定)
+3. 3D ROI 空间物件结构化表单弹窗 (类别/坐标系下拉选择 + 中心/尺寸/旋转 3 轴有向长方体)
+4. AprilTag 世界坐标物理锚点矩阵弹窗 (15 键软键盘 + 逐轴输入/已知状态指示)
+5. 工位沙盒与生产机制业务架构说明弹窗 (自包含沙盒架构阐释卡片)
+6. 下拉选择框浮层 (委托公共 render_dropdown_popup) 与数值输入卡片
+"""
+
+from typing import Any, Tuple, List, Optional
+import cv2
+import numpy as np
+
+from src.utils.text_rendering import draw_text
+from src.utils.gui_components import (
+    GuiTheme,
+    draw_dropdown_button,
+    render_dropdown_popup,
+    draw_rounded_rectangle
+)
+from tools.workspace_hub.hub_state import HubState
+
+
+class HubModalsRenderer:
+    """Workspace Hub 模态弹窗与浮层渲染器"""
+
+    def __init__(self, parent_renderer: Any):
+        self.r = parent_renderer
+
+    # ==================== 模态通用脚手架 ====================
+
+    def render_modal_scaffold(
+        self,
+        canvas: np.ndarray,
+        state: HubState,
+        title: str,
+        border_col: Tuple[int, int, int] = (0, 240, 220),
+        box_w: Optional[int] = None,
+        box_h: Optional[int] = None,
+        show_action_buttons: bool = True
+    ) -> Tuple[int, int, int, int, Tuple[int, int]]:
+        """
+        统一绘制模态弹窗通用脚手架底板：
+        全屏半透明暗色遮罩 + 主卡片底板 + 顶部标题栏 + [X] 关闭按钮 + 底部取消/保存操作栏
+        返回: (mx, my, mw, mh, mpos)
+        """
+        from tools.workspace_hub.hub_renderer import (
+            GEOM_MODAL_X, GEOM_MODAL_Y, GEOM_MODAL_W, GEOM_MODAL_H,
+            GEOM_MODAL_CLOSE, GEOM_MODAL_SAVE, GEOM_MODAL_CANCEL
+        )
+        mw = box_w if box_w is not None else GEOM_MODAL_W
+        mh = box_h if box_h is not None else GEOM_MODAL_H
+        mx = (self.r.canvas_w - mw) // 2 if box_w is not None else GEOM_MODAL_X
+        my = (self.r.canvas_h - mh) // 2 if box_h is not None else GEOM_MODAL_Y
+        mpos = (state.mouse_x, state.mouse_y)
+
+        # 1. 全屏半透明黑色遮罩
+        mask = canvas.copy()
+        cv2.rectangle(mask, (0, 0), (self.r.canvas_w, self.r.canvas_h), (0, 0, 0), -1)
+        cv2.addWeighted(mask, 0.72, canvas, 0.28, 0, canvas)
+
+        # 2. 弹窗主底板与边框 (双层科技线框)
+        cv2.rectangle(canvas, (mx, my), (mx + mw, my + mh), (20, 25, 34), -1)
+        cv2.rectangle(canvas, (mx, my), (mx + mw, my + mh), border_col, 2)
+        cv2.rectangle(canvas, (mx + 3, my + 3), (mx + mw - 3, my + mh - 3), (45, 55, 75), 1)
+
+        # 3. 顶部标题栏
+        cv2.rectangle(canvas, (mx, my), (mx + mw, my + 44), (16, 20, 28), -1)
+        cv2.line(canvas, (mx, my + 44), (mx + mw, my + 44), border_col, 1)
+        cv2.circle(canvas, (mx + 18, my + 22), 5, border_col, -1)
+        draw_text(canvas, title, (mx + 32, my + 13), font_size=15, color=GuiTheme.WHITE, bold=True)
+
+        # 4. 右上角 [X] 关闭按钮
+        self.r._draw_button(canvas, GEOM_MODAL_CLOSE, "X", mpos, theme_color=border_col)
+
+        # 5. 底部操作按钮栏
+        if show_action_buttons:
+            cv2.line(canvas, (mx, my + mh - 50), (mx + mw, my + mh - 50), (45, 55, 70), 1)
+            self.r._draw_button(canvas, GEOM_MODAL_CANCEL, "取消", mpos)
+            self.r._draw_button(canvas, GEOM_MODAL_SAVE, "保存并生效", mpos, theme_color=border_col)
+
+        return mx, my, mw, mh, mpos
+
+    # ==================== 表单组件绘制辅助 ====================
+
+    def draw_text_input(
+        self,
+        canvas: np.ndarray,
+        rect: Tuple[int, int, int, int],
+        text: str,
+        mouse_pos: Tuple[int, int]
+    ) -> bool:
+        """统一绘制高可编辑感知的输入框 (深暗内凹底色 + 科技发光边框 + 铅笔修改图标 ✎)"""
+        bx, by, bw, bh = rect
+        mx, my = mouse_pos
+        is_hover = (bx <= mx <= bx + bw and by <= my <= by + bh)
+
+        bg_col = (14, 18, 25) if not is_hover else (22, 32, 44)
+        border_col = (0, 255, 180) if is_hover else (45, 65, 75)
+        text_col = (0, 255, 220) if is_hover else (220, 235, 235)
+
+        cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), bg_col, -1)
+        cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border_col, 2 if is_hover else 1)
+
+        disp = text if text else "点击输入..."
+        if len(disp) > 22:
+            disp = disp[:20] + ".."
+        draw_text(canvas, disp, (bx + 8, by + (bh - 16) // 2), font_size=12,
+                  color=text_col, bold=is_hover)
+
+        # 右侧绘制微型矢量铅笔图标 (45° 科技暗绿/亮青，平滑抗锯齿)
+        px = bx + bw - 14
+        py = by + bh // 2
+        pen_col = (0, 255, 180) if is_hover else (80, 110, 120)
+        cv2.line(canvas, (px - 4, py + 3), (px + 3, py - 4), pen_col, 2, cv2.LINE_AA)
+        cv2.circle(canvas, (px - 5, py + 4), 1, pen_col, -1, cv2.LINE_AA)
+        return is_hover
+
+    def draw_vector3_input_row(
+        self,
+        canvas: np.ndarray,
+        row_label: str,
+        label_pos: Tuple[int, int],
+        rects: List[Tuple[int, int, int, int]],
+        axis_names: List[str],
+        values: List[float],
+        mouse_pos: Tuple[int, int]
+    ):
+        """统一绘制 3 轴向量输入行 (Label + 3 个数值输入卡片)"""
+        draw_text(canvas, row_label, label_pos, font_size=13, color=GuiTheme.WHITE)
+        for rect, axis_name, val in zip(rects, axis_names, values):
+            self.draw_text_input(canvas, rect, f"{axis_name}: {val:.1f}", mouse_pos)
+
+    def draw_dropdown_trigger(
+        self,
+        canvas: np.ndarray,
+        rect: Tuple[int, int, int, int],
+        text: str,
+        mouse_pos: Tuple[int, int],
+        is_open: bool = False
+    ) -> bool:
+        """统一绘制现代下拉选择框触发条 (委托给公共 draw_dropdown_button 控件)"""
+        bx, by, bw, bh = rect
+        rect_pts = (bx, by, bx + bw, by + bh)
+        return draw_dropdown_button(canvas, rect_pts, text, is_open, mouse_pos=mouse_pos, font_size=12)
+
+    def get_dropdown_data(self, dd_type: str, state: HubState):
+        """统一获取下拉框的布局矩形、当前选中值以及候选枚举列表"""
+        from tools.workspace_hub.hub_renderer import GEOM_MODAL_X, GEOM_MODAL_Y
+        mx_box, my_box = GEOM_MODAL_X, GEOM_MODAL_Y
+        form_y = my_box + 56
+        if dd_type == "frame_type":
+            rect = (mx_box + 115, form_y + 40, 360, 28)
+            cur_val = state.frame_modal_data.get("type", "fixed_transform")
+            options = [
+                ("fixed_transform", "固定刚体外参 (平移 + 旋转)"),
+                ("tag_bound", "AprilTag 动标绑定 (动态跟踪)")
+            ]
+            return rect, cur_val, options
+
+        if dd_type == "frame_parent":
+            rect = (mx_box + 115, form_y + 80, 360, 28)
+            cur_val = state.frame_modal_data.get("parent_frame_id", "world")
+            cur_fid = state.frame_modal_data.get("frame_id")
+            frames = state.get_coordinate_frames()
+            options = [("world", "world (世界基准绝对原点)")]
+            for f in frames:
+                if f.frame_id != cur_fid and f.frame_id != "world":
+                    options.append((f.frame_id, f"{f.frame_id} ({f.name})"))
+            return rect, cur_val, options
+
+        roi_form_y = my_box + 54
+        if dd_type == "roi_category":
+            rect = (mx_box + 115, roi_form_y + 40, 360, 28)
+            cur_val = state.roi_modal_data.get("category", "belt")
+            options = [
+                ("belt", "同步带工作面 (belt)"),
+                ("wheel", "驱动轮干涉区 (wheel)"),
+                ("tray", "料盘工装区 (tray)"),
+                ("general", "通用机构部件 (general)")
+            ]
+            return rect, cur_val, options
+
+        if dd_type == "roi_frame":
+            rect = (mx_box + 115, roi_form_y + 80, 360, 28)
+            cur_val = state.roi_modal_data.get("frame_id", "world")
+            frames = state.get_coordinate_frames()
+            options = [("world", "world (世界基准绝对原点)")]
+            for f in frames:
+                if f.frame_id != "world":
+                    options.append((f.frame_id, f"{f.frame_id} ({f.name})"))
+            return rect, cur_val, options
+
+        return None
+
+    def render_active_dropdown(self, canvas: np.ndarray, state: HubState):
+        """在弹窗顶层高亮绘制当前展开的下拉菜单浮层 (委托给公共 render_dropdown_popup 控件)"""
+        dd_type = state.active_dropdown
+        if not dd_type:
+            return
+        dd_data = self.get_dropdown_data(dd_type, state)
+        if not dd_data:
+            return
+        (tx, ty, tw, th), cur_val, options = dd_data
+        anchor_rect = (tx, ty, tx + tw, ty + th)
+        render_dropdown_popup(canvas, anchor_rect, options, cur_val, item_h=30)
+
+    # ==================== 5 大独立弹窗渲染 ====================
+
+    def render_frame_modal(self, canvas: np.ndarray, state: HubState):
+        """渲染机构相对坐标系结构化表单弹窗"""
+        d = state.frame_modal_data
+        title_prefix = "新建机构相对坐标系" if state.frame_modal_is_new else f"编辑坐标系: 【{d.get('name', '')}】"
+        mx, my, mw, mh, mpos = self.render_modal_scaffold(canvas, state, title_prefix, border_col=(0, 240, 220))
+
+        # 表单字段排布
+        form_y = my + 56
+
+        # 1. 坐标系名称与唯一标识行
+        draw_text(canvas, "坐标系名称:", (mx + 24, form_y + 4), font_size=13, color=self.r.COLOR_GRAY)
+        self.draw_text_input(canvas, (mx + 115, form_y, 220, 28), str(d.get("name", "")), mpos)
+
+        draw_text(canvas, "唯一 ID:", (mx + 360, form_y + 4), font_size=13, color=self.r.COLOR_GRAY)
+        self.draw_text_input(canvas, (mx + 430, form_y, 220, 28), str(d.get("frame_id", "")), mpos)
+
+        # 2. 坐标系类型下拉框
+        type_y = form_y + 40
+        draw_text(canvas, "坐标系类型:", (mx + 24, type_y + 4), font_size=13, color=self.r.COLOR_GRAY)
+        cur_type = d.get("type", "fixed_transform")
+        type_label = "固定刚体外参 (平移 + 旋转)" if cur_type == "fixed_transform" else "AprilTag 动标绑定 (动态跟踪)"
+        self.draw_dropdown_trigger(canvas, (mx + 115, type_y, 360, 28), type_label, mpos,
+                                   is_open=(state.active_dropdown == "frame_type"))
+
+        # 3. 挂载父坐标系下拉框
+        parent_y = form_y + 80
+        draw_text(canvas, "父坐标系:", (mx + 24, parent_y + 4), font_size=13, color=self.r.COLOR_GRAY)
+        cur_parent = d.get("parent_frame_id", "world")
+        frames = state.get_coordinate_frames()
+        p_name = "世界基准绝对原点" if cur_parent == "world" else ""
+        for f in frames:
+            if f.frame_id == cur_parent:
+                p_name = f.name
+                break
+        parent_label = f"[{cur_parent}] {p_name}" if p_name else f"[{cur_parent}]"
+        self.draw_dropdown_trigger(canvas, (mx + 115, parent_y, 360, 28), parent_label, mpos,
+                                   is_open=(state.active_dropdown == "frame_parent"))
+
+        # 4. 几何参数根据类型切换
+        param_y = form_y + 128
+        cv2.rectangle(canvas, (mx + 20, param_y), (mx + mw - 20, param_y + 155), (28, 34, 46), -1)
+        cv2.rectangle(canvas, (mx + 20, param_y), (mx + mw - 20, param_y + 155), (45, 55, 75), 1)
+
+        if cur_type == "fixed_transform":
+            draw_text(canvas, "固定外参变换矩阵 (相对于父级坐标系):", (mx + 32, param_y + 12), font_size=13, color=(0, 240, 220), bold=True)
+            t = d.get("translation_xyz_mm", [0, 0, 0])
+            r = d.get("rotation_rpy_deg", [0, 0, 0])
+
+            # 平移 X, Y, Z
+            t_rects = [(mx + 125, param_y + 42, 130, 28), (mx + 265, param_y + 42, 130, 28), (mx + 405, param_y + 42, 130, 28)]
+            self.draw_vector3_input_row(canvas, "平移 (mm):", (mx + 32, param_y + 48), t_rects, ["X", "Y", "Z"], t, mpos)
+
+            # 旋转 Roll, Pitch, Yaw
+            r_rects = [(mx + 125, param_y + 92, 130, 28), (mx + 265, param_y + 92, 130, 28), (mx + 405, param_y + 92, 130, 28)]
+            self.draw_vector3_input_row(canvas, "旋转 (°):", (mx + 32, param_y + 98), r_rects, ["Roll", "Pitch", "Yaw"], r, mpos)
+        else:
+            draw_text(canvas, "AprilTag 动标绑定配置:", (mx + 32, param_y + 12), font_size=13, color=(0, 210, 255), bold=True)
+            tid = d.get("tag_id", 0)
+            off = d.get("offset_xyz_mm", [0, 0, 0])
+
+            draw_text(canvas, "绑定的 AprilTag:", (mx + 32, param_y + 48), font_size=13, color=GuiTheme.WHITE)
+            self.draw_text_input(canvas, (mx + 165, param_y + 42, 160, 28), f"Tag ID: #{tid}", mpos)
+            draw_text(canvas, "(点击修改绑定的标靶编号)", (mx + 335, param_y + 48), font_size=11, color=self.r.COLOR_GRAY)
+
+            off_rects = [(mx + 185, param_y + 92, 120, 28), (mx + 315, param_y + 92, 120, 28), (mx + 445, param_y + 92, 120, 28)]
+            self.draw_vector3_input_row(canvas, "局部偏移 XYZ (mm):", (mx + 32, param_y + 98), off_rects, ["dx", "dy", "dz"], off, mpos)
+
+        # 5. 顶层渲染活跃下拉浮层
+        self.render_active_dropdown(canvas, state)
+
+    def render_roi_modal(self, canvas: np.ndarray, state: HubState):
+        """渲染 3D ROI 空间物件结构化表单弹窗"""
+        d = state.roi_modal_data
+        title_prefix = "新建 3D ROI 空间物件" if state.roi_modal_is_new else f"编辑 ROI 物件: 【{d.get('name', '')}】"
+        mx, my, mw, mh, mpos = self.render_modal_scaffold(canvas, state, title_prefix, border_col=(0, 255, 180))
+
+        # 表单字段排布
+        form_y = my + 54
+
+        # 1. 名称与标识行
+        draw_text(canvas, "物件名称:", (mx + 24, form_y + 4), font_size=13, color=self.r.COLOR_GRAY)
+        self.draw_text_input(canvas, (mx + 115, form_y, 220, 28), str(d.get("name", "")), mpos)
+
+        draw_text(canvas, "唯一 ID:", (mx + 360, form_y + 4), font_size=13, color=self.r.COLOR_GRAY)
+        self.draw_text_input(canvas, (mx + 430, form_y, 220, 28), str(d.get("roi_id", "")), mpos)
+
+        # 2. 部件类别下拉框
+        cat_y = form_y + 40
+        draw_text(canvas, "部件类别:", (mx + 24, cat_y + 4), font_size=13, color=self.r.COLOR_GRAY)
+        cur_cat = d.get("category", "belt")
+        cat_map = {
+            "belt": "同步带工作面 (belt)",
+            "wheel": "驱动轮干涉区 (wheel)",
+            "tray": "料盘工装区 (tray)",
+            "general": "通用机构部件 (general)"
+        }
+        cat_label = cat_map.get(cur_cat, f"{cur_cat}")
+        self.draw_dropdown_trigger(canvas, (mx + 115, cat_y, 360, 28), cat_label, mpos,
+                                   is_open=(state.active_dropdown == "roi_category"))
+
+        # 3. 所属坐标系下拉框
+        parent_y = form_y + 80
+        draw_text(canvas, "所属坐标系:", (mx + 24, parent_y + 4), font_size=13, color=self.r.COLOR_GRAY)
+        cur_frame = d.get("frame_id", "world")
+        frames = state.get_coordinate_frames()
+        f_name = "世界基准绝对原点" if cur_frame == "world" else ""
+        for f in frames:
+            if f.frame_id == cur_frame:
+                f_name = f.name
+                break
+        frame_label = f"[{cur_frame}] {f_name}" if f_name else f"[{cur_frame}]"
+        self.draw_dropdown_trigger(canvas, (mx + 115, parent_y, 360, 28), frame_label, mpos,
+                                   is_open=(state.active_dropdown == "roi_frame"))
+
+        # 4. 几何长方体参数区 (中心 + 尺寸 + 姿态)
+        geom_y = form_y + 128
+        cv2.rectangle(canvas, (mx + 20, geom_y), (mx + mw - 20, geom_y + 165), (28, 34, 46), -1)
+        cv2.rectangle(canvas, (mx + 20, geom_y), (mx + mw - 20, geom_y + 165), (45, 55, 75), 1)
+
+        draw_text(canvas, "3D 有向长方体空间定义 (在所属局部坐标系下):", (mx + 32, geom_y + 10), font_size=13, color=(0, 240, 220), bold=True)
+
+        c = d.get("center_xyz_mm", [0, 0, 0])
+        s = d.get("size_xyz_mm", [50, 50, 50])
+        r = d.get("rotation_rpy_deg", [0, 0, 0])
+
+        # 局部中心
+        c_rects = [(mx + 155, geom_y + 36, 115, 28), (mx + 280, geom_y + 36, 115, 28), (mx + 405, geom_y + 36, 115, 28)]
+        self.draw_vector3_input_row(canvas, "局部中心 (mm):", (mx + 32, geom_y + 42), c_rects, ["X", "Y", "Z"], c, mpos)
+
+        # 尺寸长宽高 (强 Schema 约束)
+        s_rects = [(mx + 155, geom_y + 76, 115, 28), (mx + 280, geom_y + 76, 115, 28), (mx + 405, geom_y + 76, 115, 28)]
+        self.draw_vector3_input_row(canvas, "空间尺寸 (mm):", (mx + 32, geom_y + 82), s_rects, ["长 dx", "宽 dy", "高 dz"], s, mpos)
+        draw_text(canvas, "★ 约束: 必须 > 0", (mx + 530, geom_y + 82), font_size=11,
+                  color=(0, 255, 180) if all(x > 0 for x in s) else (0, 100, 255))
+
+        # 微调姿态
+        r_rects = [(mx + 155, geom_y + 116, 115, 28), (mx + 280, geom_y + 116, 115, 28), (mx + 405, geom_y + 116, 115, 28)]
+        self.draw_vector3_input_row(canvas, "局部旋转 (°):", (mx + 32, geom_y + 122), r_rects, ["R", "P", "Y"], r, mpos)
+
+        # 5. 顶层渲染活跃下拉浮层
+        self.render_active_dropdown(canvas, state)
+
+    def render_anchor_modal(self, canvas: np.ndarray, state: HubState):
+        """渲染 AprilTag 物理锚点坐标编辑弹窗"""
+        from tools.workspace_hub.hub_renderer import (
+            WL_ANCHOR_X, WL_ANCHOR_Y, WL_ANCHOR_W, WL_ANCHOR_H,
+            WL_ANCHOR_SAVE, WL_ANCHOR_CANCEL, WL_ANCHOR_DELETE,
+            anchor_row_rect, anchor_clear_rect, anchor_padkey_rect, point_in_rect
+        )
+        MX, MY, MW, MH = WL_ANCHOR_X, WL_ANCHOR_Y, WL_ANCHOR_W, WL_ANCHOR_H
+        mpos = (state.mouse_x, state.mouse_y)
+
+        # 半透明黑色遮罩
+        mask = canvas.copy()
+        cv2.rectangle(mask, (0, 0), (self.r.canvas_w, self.r.canvas_h), (0, 0, 0), -1)
+        cv2.addWeighted(mask, 0.6, canvas, 0.4, 0, canvas)
+
+        # 弹窗底板
+        cv2.rectangle(canvas, (MX, MY), (MX + MW, MY + MH), (20, 24, 32), -1)
+        cv2.rectangle(canvas, (MX, MY), (MX + MW, MY + MH), (0, 200, 240), 2)
+        cv2.rectangle(canvas, (MX + 3, MY + 3), (MX + MW - 3, MY + MH - 3), (40, 50, 66), 1)
+
+        # 标题栏
+        tag_id = state.anchor_modal_tag
+        draw_text(canvas, f"Tag #{tag_id:02d} 世界坐标物理锚点", (MX + 18, MY + 12),
+                  font_size=15, color=GuiTheme.WHITE, bold=True)
+        n_known = sum(1 for b in state.anchor_modal_known if b)
+        if n_known == 3:
+            status_desc, status_col = "完整锚点 (5 DoF 解算)", (0, 230, 150)
+        elif n_known >= 1:
+            status_desc, status_col = "部分锚点 (约束积累)", (0, 200, 230)
+        else:
+            status_desc, status_col = "未记录 (保存 = 清除该锚点)", (150, 160, 175)
+        draw_text(canvas, f"已知 {n_known}/3 轴: {status_desc}", (MX + 18, MY + 34),
+                  font_size=12, color=status_col)
+
+        # 三轴行: 轴名 + 值 + 已知/未记录 + [清除]
+        for axis in range(3):
+            rx, ry, rw, rh = anchor_row_rect(axis)
+            hovered = point_in_rect(mpos[0], mpos[1], (rx, ry, rw, rh))
+            is_sel = (state.anchor_axis_sel == axis)
+            is_known = bool(state.anchor_modal_known[axis])
+            row_bg = (30, 38, 52) if is_sel else ((36, 42, 54) if hovered else (26, 30, 40))
+            cv2.rectangle(canvas, (rx, ry), (rx + rw, ry + rh), row_bg, -1)
+            cv2.rectangle(canvas, (rx, ry), (rx + rw, ry + rh),
+                          (0, 200, 240) if is_sel else (60, 70, 88), 1)
+            draw_text(canvas, "XYZ"[axis], (rx + 12, ry + 9), font_size=14,
+                      color=(0, 255, 200) if is_known else (150, 160, 175), bold=True)
+            if is_sel and state.anchor_axis_buf:
+                val_text, val_col = state.anchor_axis_buf + "_", GuiTheme.WHITE
+            elif is_known:
+                val_text, val_col = f"{state.anchor_modal_xyz[axis]:.1f}", GuiTheme.WHITE
+            else:
+                val_text, val_col = "---", (120, 130, 145)
+            draw_text(canvas, val_text, (rx + 42, ry + 8), font_size=15, color=val_col, bold=True)
+            know_text = "已知" if is_known else "未记录"
+            draw_text(canvas, know_text, (rx + 180, ry + 10), font_size=12,
+                      color=(0, 220, 140) if is_known else (110, 120, 135))
+            # 行内 [清除] 按钮
+            cx, cy, cw, ch = anchor_clear_rect(axis)
+            chov = point_in_rect(mpos[0], mpos[1], (cx, cy, cw, ch))
+            cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), (70, 46, 36) if chov else (58, 38, 30), -1)
+            cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), (150, 90, 60), 1)
+            draw_text(canvas, "清除", (cx + 17, cy + 7), font_size=12, color=(230, 170, 140))
+
+        # 15 键键盘: 1~9 / . / 0 / -+/ 清空 / 退格 / 确认
+        key_labels = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "-/+", "清空", "退格", "确认"]
+        for idx, label in enumerate(key_labels):
+            kx, ky, kw, kh = anchor_padkey_rect(idx)
+            hov = point_in_rect(mpos[0], mpos[1], (kx, ky, kw, kh))
+            if label == "确认":
+                bg = (26, 88, 60) if hov else (22, 70, 48)
+                border, col = (0, 230, 150), (120, 255, 200)
+            elif label in ("退格", "清空"):
+                bg = (70, 46, 36) if hov else (58, 38, 30)
+                border, col = (150, 90, 60), (230, 170, 140)
+            else:
+                bg = (40, 48, 64) if hov else (32, 38, 50)
+                border, col = (90, 105, 135), (220, 228, 240)
+            cv2.rectangle(canvas, (kx, ky), (kx + kw, ky + kh), bg, -1)
+            cv2.rectangle(canvas, (kx, ky), (kx + kw, ky + kh), border, 1)
+            est_w = 8 * len(label) if label.isascii() else 14 * len(label)
+            draw_text(canvas, label, (kx + (kw - est_w) // 2, ky + 11), font_size=13, color=col, bold=True)
+
+        # 底部: 保存 / 取消 / 清除锚点
+        self.r._draw_button(canvas, WL_ANCHOR_SAVE, "保存", mpos)
+        self.r._draw_button(canvas, WL_ANCHOR_CANCEL, "取消", mpos)
+        self.r._draw_button(canvas, WL_ANCHOR_DELETE, "清除锚点", mpos, theme_color=(180, 60, 60))
+
+    def render_help_modal(self, canvas: np.ndarray, state: HubState):
+        """渲染工位沙盒与生产机制业务架构说明弹窗"""
+        from tools.workspace_hub.hub_renderer import HELP_MODAL_W, HELP_MODAL_H
+        modal_w, modal_h = HELP_MODAL_W, HELP_MODAL_H
+        mx = (self.r.canvas_w - modal_w) // 2
+        my = (self.r.canvas_h - modal_h) // 2
+        mpos = (state.mouse_x, state.mouse_y)
+
+        # 半透明黑色遮罩
+        mask = canvas.copy()
+        cv2.rectangle(mask, (0, 0), (self.r.canvas_w, self.r.canvas_h), (0, 0, 0), -1)
+        cv2.addWeighted(mask, 0.72, canvas, 0.28, 0, canvas)
+
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (20, 24, 32), -1)
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + modal_h), (0, 220, 160), 2)
+        cv2.rectangle(canvas, (mx + 4, my + 4), (mx + modal_w - 4, my + modal_h - 4), (40, 50, 66), 1)
+
+        # 标题栏
+        cv2.rectangle(canvas, (mx, my), (mx + modal_w, my + 54), (16, 20, 28), -1)
+        cv2.line(canvas, (mx, my + 54), (mx + modal_w, my + 54), self.r.COLOR_BORDER, 1)
+
+        cv2.circle(canvas, (mx + 24, my + 27), 6, self.r.COLOR_GOLD, -1)
+        draw_text(canvas, "★ 业务架构解析: Workspace 工位沙盒与生产体系", (mx + 38, my + 15),
+                  font_size=17, color=GuiTheme.WHITE, bold=True)
+
+        # 右上角 [X] 关闭按钮
+        self.r._draw_button(canvas, (mx + modal_w - 116, my + 11, 100, 32), "[X] 关闭 [H]", mpos)
+
+        # 4 条架构阐释卡片
+        intro_text = "在工业机器视觉与机械臂抓取工程中，各工位实行完全自包含的【物理沙盒】机制："
+        draw_text(canvas, intro_text, (mx + 30, my + 68), font_size=14, color=(0, 240, 220))
+
+        sections = [
+            ("1. 独立工位安全沙盒 (Sandbox Isolation)",
+             "每个工位（如“1号机台”、“现场工位A”）均为独立物理沙盒，拥有专属标定照片集、生产照片集与平差结果，互不干扰。",
+             (0, 255, 180)),
+
+            ("2. 工位专属生产地图 (Per-Workspace Production Map)",
+             "系统无全局唯一地图。每个工位均自包含经过严格平差的高精度几何地图 (tags_map.yaml)，作为该工位专属的空间几何基准。",
+             (0, 220, 255)),
+
+            ("3. 地图原子持久化与安全备份 (Safe Atomic Persistence)",
+             "平差优化完成后，直接原子持久化写入当前工位沙盒内，并自动保留带时间戳的 .bak 历史备份，杜绝跨工位数据污染与误操作。",
+             self.r.COLOR_GOLD),
+
+            ("4. 生产作业按需指定工位 (Production Anchored to Workspace)",
+             "实际流水线作业时，生产服务直接对接目标工位，读取本工位专属的几何标定矩阵与白名单，实现按工位精准受控作业！",
+             (160, 255, 120))
+        ]
+
+        sy = my + 98
+        for title, desc, col in sections:
+            cv2.rectangle(canvas, (mx + 28, sy), (mx + modal_w - 28, sy + 74), (25, 30, 40), -1)
+            cv2.rectangle(canvas, (mx + 28, sy), (mx + modal_w - 28, sy + 74), (44, 52, 68), 1)
+            cv2.rectangle(canvas, (mx + 28, sy), (mx + 32, sy + 74), col, -1)
+
+            draw_text(canvas, title, (mx + 42, sy + 8), font_size=14, color=col, bold=True)
+            d1 = desc[:48]
+            d2 = desc[48:96]
+            draw_text(canvas, d1, (mx + 42, sy + 30), font_size=12, color=GuiTheme.WHITE)
+            if d2:
+                draw_text(canvas, d2, (mx + 42, sy + 48), font_size=12, color=self.r.COLOR_GRAY)
+            sy += 82
+
+        footer_y = my + modal_h - 36
+        draw_text(canvas, "快捷提示: 鼠标点击右上角 [X]、点击遮罩或直接按键盘 [ESC / H] 即可秒级关闭！",
+                  (mx + 32, footer_y), font_size=13, color=self.r.COLOR_GRAY)

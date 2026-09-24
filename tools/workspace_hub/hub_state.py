@@ -595,6 +595,23 @@ class HubState:
         self._whitelist_cache_mtime = -1.0
         self._whitelist_cache_ws = ""
 
+    def ensure_tag_whitelist_file(self) -> str:
+        """确保当前选中工位的白名单文件存在并有效"""
+        ws = self.get_selected_workspace()
+        if not ws:
+            return ""
+        return self.workspace_mgr.ensure_tag_whitelist(ws.workspace_id)
+
+    def update_tag_anchor(self, tag_id: int, xyz: Optional[list[float]]) -> tuple[bool, str]:
+        """更新或清除当前工位 tag_whitelist 中的 tag_anchors 标注，并刷新缓存"""
+        ws = self.get_selected_workspace()
+        if not ws:
+            return False, "未选择工位"
+        ok, msg = self.workspace_mgr.update_tag_anchor(ws.workspace_id, tag_id, xyz)
+        if ok:
+            self.refresh_whitelist_cache()
+        return ok, msg
+
     # ==================== 白名单页内编辑态 (芯片矩阵写穿保存) ====================
 
     def enter_whitelist_edit(self):

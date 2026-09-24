@@ -375,6 +375,63 @@ class WorkspaceManager:
         """获取指定工位的 tag_whitelist.yaml 绝对路径"""
         return os.path.join(self.workspaces_dir, workspace_id, "tag_whitelist.yaml")
 
+    def ensure_tag_whitelist(self, workspace_id: str) -> str:
+        """确保指定工位的 tag_whitelist.yaml 存在，若不存在则自愈生成规范模板"""
+        path = self.get_tag_whitelist_path(workspace_id)
+        if not os.path.exists(path):
+            ws = self.get_workspace_by_id(workspace_id)
+            default_config = {
+                "workspace_id": workspace_id,
+                "workspace_name": ws.name if ws else workspace_id,
+                "allowed_ids": ws.valid_tag_ids if (ws and ws.valid_tag_ids) else [],
+                "description": f"Workspace {ws.name if ws else workspace_id} 标靶白名单配置",
+                "notes": "工位物理白名单恒启用 (名单内容即行为): allowed_ids 非空时仅放行名单内标靶 (权威约束)；留空 = 探索模式放行所有检测标靶",
+            }
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    yaml.dump(default_config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            except Exception as e:
+                log.warning(f"创建默认 tag_whitelist.yaml 失败: {e}")
+        return path
+
+    def update_tag_anchor(self, workspace_id: str, tag_id: int, xyz: Optional[List[float]]) -> Tuple[bool, str]:
+        """
+        更新或清除 tag_whitelist.yaml 中的 tag_anchors 物理坐标标注
+        - xyz is None: 清除该 tag 的坐标标注
+        - xyz 为 [x, y, z]: 更新坐标标注，并自动将 tag_id 加入 allowed_ids
+        """
+        path = self.ensure_tag_whitelist(workspace_id)
+        curr_cfg = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    curr_cfg = yaml.safe_load(f) or {}
+            except Exception as e:
+                return False, f"读取白名单失败: {e}"
+
+        if "tag_anchors" not in curr_cfg:
+            curr_cfg["tag_anchors"] = {}
+
+        if xyz is None:
+            curr_cfg["tag_anchors"].pop(tag_id, None)
+            curr_cfg["tag_anchors"].pop(str(tag_id), None)
+            msg = f"已清除 Tag #{tag_id:02d} 的物理坐标标注。"
+        else:
+            curr_cfg["tag_anchors"][tag_id] = [float(v) for v in xyz]
+            # 自动并入放行集合
+            allowed_set = set(curr_cfg.get("allowed_ids", []))
+            allowed_set.add(tag_id)
+            curr_cfg["allowed_ids"] = sorted(list(allowed_set))
+            msg = f"已成功标注 Tag #{tag_id:02d} 坐标: ({xyz[0]:.1f}, {xyz[1]:.1f}, {xyz[2]:.1f}) mm 并自动放行"
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                yaml.dump(curr_cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return True, msg
+        except Exception as e:
+            return False, f"保存白名单失败: {e}"
+
     def get_current_workspace_id(self) -> str:
         """获取当前工位 ID (运行时显式选择优先, 兜底最新工位; 无任何落盘标记)"""
         cur_id = WorkspaceManager._current_ws_id
@@ -441,9 +498,11 @@ class WorkspaceManager:
         with open(ws.whitelist_path, "w", encoding="utf-8") as f:
             yaml.dump({
                 "workspace_id": ws_id,
-                "whitelist_tag_ids": [],
-                "description": f"{display_name} Tag 白名单"
-            }, f, allow_unicode=True, default_flow_style=False)
+                "workspace_name": display_name,
+                "allowed_ids": [],
+                "description": f"{display_name} Tag 白名单",
+                "notes": "工位物理白名单恒启用 (名单内容即行为): allowed_ids 非空时仅放行名单内标靶 (权威约束)；留空 = 探索模式放行所有检测标靶",
+            }, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
         # 生成初始多坐标系模板 (默认包含世界系)
         from src.calibration.coordinate_manager import CoordinateTreeManager

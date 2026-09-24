@@ -1,0 +1,404 @@
+# -*- coding: utf-8 -*-
+"""
+Workspace Hub 交互碰撞与命中测试引擎 (HubHitTester)
+======================================================
+负责界面所有可交互热区、卡片、按钮、树节点与模态控件的几何判定：
+1. 顶部 Header 页签胶囊与退出按钮热区
+2. 左侧两层树结构 (工位卡片折叠/选中、坐标系子节点选中) 动态几何排版与命中测试
+3. 右侧各页签内操作按钮 (大盘看板、相册翻页/删帧、坐标系与 ROI 新增/编辑/删除)
+4. 结构化表单弹窗内部输入框、下拉框展开与枚举选项命中探测
+5. 动标说明胶囊 Tooltip 悬浮感应
+"""
+
+from typing import Any, Tuple, List, Optional
+from tools.workspace_hub.hub_state import HubState
+
+
+class HubHitTester:
+    """Workspace Hub 碰撞与命中探测引擎"""
+
+    def __init__(self, parent_renderer: Any):
+        self.r = parent_renderer
+
+    def get_tabs_layout(self, state: HubState) -> List[Tuple[str, str, Tuple[int, int, int, int]]]:
+        """计算顶部 Tab 胶囊的动态布局矩形 (自适应工位 3 页签与坐标系 2 页签)"""
+        from tools.workspace_hub.hub_renderer import HEADER_TAB_Y0, HEADER_TAB_H
+        tabs = state.get_current_tabs()
+        n = len(tabs)
+        tab_w = 148 if n == 2 else 115
+        tab_step = tab_w + 12
+        start_x = 348
+        res = []
+        for idx, (tab_key, tab_label) in enumerate(tabs):
+            tx = start_x + idx * tab_step
+            rect = (tx, HEADER_TAB_Y0, tab_w, HEADER_TAB_H)
+            res.append((tab_key, tab_label, rect))
+        return res
+
+    def get_tree_layout(self, state: HubState) -> List[dict]:
+        """计算左侧两层树结构各项的几何矩形与数据标识，供渲染与点击测试统一使用"""
+        items = []
+        cur_y = 58
+        max_y = 604
+        for ws_idx, ws in enumerate(state.workspaces):
+            if cur_y + 44 > max_y:
+                break
+            ws_id = ws.workspace_id
+            is_expanded = (ws_id in state.expanded_workspaces)
+            is_ws_selected = (
+                state.selected_tree_item[0] == "workspace"
+                and state.selected_workspace_idx == ws_idx
+            )
+
+            ws_rect = (10, cur_y, 320, 44)
+            arrow_rect = (10, cur_y, 30, 44)
+            body_rect = (40, cur_y, 290, 44)
+
+            items.append({
+                "type": "workspace",
+                "ws_idx": ws_idx,
+                "workspace": ws,
+                "is_expanded": is_expanded,
+                "is_selected": is_ws_selected,
+                "ws_rect": ws_rect,
+                "arrow_rect": arrow_rect,
+                "body_rect": body_rect,
+            })
+            cur_y += 48
+
+            # 若工位展开，渲染其坐标系子节点
+            if is_expanded:
+                mgr = state.get_workspace_coord_mgr(ws)
+                frames = mgr.list_frames() if mgr else []
+
+                for f in frames:
+                    if cur_y + 30 > max_y:
+                        break
+                    is_frame_selected = (
+                        state.selected_tree_item[0] == "frame"
+                        and state.selected_workspace_idx == ws_idx
+                        and state.selected_tree_item[2] == f.frame_id
+                    )
+                    frame_rect = (34, cur_y, 296, 30)
+                    items.append({
+                        "type": "frame",
+                        "ws_idx": ws_idx,
+                        "workspace": ws,
+                        "frame": f,
+                        "frame_id": f.frame_id,
+                        "is_selected": is_frame_selected,
+                        "rect": frame_rect,
+                    })
+                    cur_y += 34
+        return items
+
+    def hit_test(self, mx: int, my: int, state: HubState) -> Any:
+        """根据逻辑坐标探测当前命中交互元素"""
+        old_x, old_y = state.mouse_x, state.mouse_y
+        try:
+            state.mouse_x, state.mouse_y = mx, my
+            return self.get_interactive_hover_key(state)
+        finally:
+            state.mouse_x, state.mouse_y = old_x, old_y
+
+    def get_interactive_hover_key(self, state: HubState) -> Any:
+        """获取当前鼠标悬停的交互元素标识 (若鼠标未落在任何可交互组件上返回 None)"""
+        from tools.workspace_hub.hub_renderer import (
+            GEOM_MODAL_X, GEOM_MODAL_Y, GEOM_MODAL_W, GEOM_MODAL_H,
+            GEOM_MODAL_CLOSE, GEOM_MODAL_SAVE, GEOM_MODAL_CANCEL,
+            HELP_MODAL_W, HELP_MODAL_H,
+            BTN_EXIT_X0, BTN_EXIT_Y0, BTN_EXIT_W, BTN_EXIT_H,
+            WS_BTN_RENAME, WS_BTN_OPEN_DIR, WS_BTN_EDIT_DESC,
+            WS_BTN_SYNC_DATA, WS_BTN_CLONE, WS_BTN_DELETE, WS_BTN_NEW_FRAME,
+            FRAME_EDIT_POSE_BTN, FRAME_ADD_ROI_BTN,
+            frame_tag_chip_rect, frame_roi_edit_btn, frame_roi_del_btn,
+            frame_btn_add_rect, roi_btn_add_rect,
+            frame_row_edit_rect, frame_row_del_rect,
+            roi_row_edit_rect, roi_row_del_rect,
+            grid_hit_test, point_in_rect
+        )
+
+        mx, my = state.mouse_x, state.mouse_y
+        if mx < 0 or my < 0:
+            return None
+
+        # 0. 坐标系与 3D ROI 结构化弹窗模式 (最高交互层)
+        if state.frame_modal_open:
+            mx_box, my_box = GEOM_MODAL_X, GEOM_MODAL_Y
+            mw, mh = GEOM_MODAL_W, GEOM_MODAL_H
+
+            # 0.a 活跃下拉框浮层检测 (浮层拥有最高层级交互优先级)
+            if state.active_dropdown in ("frame_type", "frame_parent"):
+                dd_data = self.r._get_dropdown_data(state.active_dropdown, state)
+                if dd_data:
+                    (tx, ty, tw, th), cur_val, options = dd_data
+                    drop_x = tx
+                    drop_y = ty + th + 2
+                    item_h = 30
+                    drop_h = len(options) * item_h
+                    if drop_x <= mx <= drop_x + tw and drop_y <= my <= drop_y + drop_h:
+                        opt_idx = min(len(options) - 1, max(0, (my - drop_y) // item_h))
+                        return ("dropdown_select", state.active_dropdown, options[opt_idx][0])
+                    if point_in_rect(mx, my, (tx, ty, tw, th)):
+                        return ("dropdown_toggle", state.active_dropdown)
+                    return "dropdown_dismiss"
+
+            if point_in_rect(mx, my, GEOM_MODAL_CLOSE):
+                return "frame_modal_close"
+            if point_in_rect(mx, my, GEOM_MODAL_SAVE):
+                return "frame_modal_save"
+            if point_in_rect(mx, my, GEOM_MODAL_CANCEL):
+                return "frame_modal_cancel"
+            form_y = my_box + 56
+            if point_in_rect(mx, my, (mx_box + 115, form_y, 220, 28)):
+                return "frame_field_name"
+            if point_in_rect(mx, my, (mx_box + 430, form_y, 220, 28)):
+                return "frame_field_id"
+
+            # 下拉框触发条
+            type_y = form_y + 40
+            if point_in_rect(mx, my, (mx_box + 115, type_y, 360, 28)):
+                return ("dropdown_toggle", "frame_type")
+
+            parent_y = form_y + 80
+            if point_in_rect(mx, my, (mx_box + 115, parent_y, 360, 28)):
+                return ("dropdown_toggle", "frame_parent")
+
+            param_y = form_y + 128
+            d = state.frame_modal_data
+            cur_type = d.get("type", "fixed_transform")
+            if cur_type == "fixed_transform":
+                if point_in_rect(mx, my, (mx_box + 125, param_y + 42, 130, 28)):
+                    return ("frame_field_num", "translation", 0)
+                if point_in_rect(mx, my, (mx_box + 265, param_y + 42, 130, 28)):
+                    return ("frame_field_num", "translation", 1)
+                if point_in_rect(mx, my, (mx_box + 405, param_y + 42, 130, 28)):
+                    return ("frame_field_num", "translation", 2)
+                if point_in_rect(mx, my, (mx_box + 125, param_y + 92, 130, 28)):
+                    return ("frame_field_num", "rotation", 0)
+                if point_in_rect(mx, my, (mx_box + 265, param_y + 92, 130, 28)):
+                    return ("frame_field_num", "rotation", 1)
+                if point_in_rect(mx, my, (mx_box + 405, param_y + 92, 130, 28)):
+                    return ("frame_field_num", "rotation", 2)
+            else:
+                if point_in_rect(mx, my, (mx_box + 165, param_y + 42, 160, 28)):
+                    return ("frame_field_num", "tag_id", 0)
+                if point_in_rect(mx, my, (mx_box + 185, param_y + 92, 120, 28)):
+                    return ("frame_field_num", "offset", 0)
+                if point_in_rect(mx, my, (mx_box + 315, param_y + 92, 120, 28)):
+                    return ("frame_field_num", "offset", 1)
+                if point_in_rect(mx, my, (mx_box + 445, param_y + 92, 120, 28)):
+                    return ("frame_field_num", "offset", 2)
+            if mx < mx_box or mx > mx_box + mw or my < my_box or my > my_box + mh:
+                return "frame_modal_mask"
+            return "frame_modal_body"
+
+        if state.roi_modal_open:
+            mx_box, my_box = GEOM_MODAL_X, GEOM_MODAL_Y
+            mw, mh = GEOM_MODAL_W, GEOM_MODAL_H
+
+            # 0.b 活跃下拉框浮层检测
+            if state.active_dropdown in ("roi_category", "roi_frame"):
+                dd_data = self.r._get_dropdown_data(state.active_dropdown, state)
+                if dd_data:
+                    (tx, ty, tw, th), cur_val, options = dd_data
+                    drop_x = tx
+                    drop_y = ty + th + 2
+                    item_h = 30
+                    drop_h = len(options) * item_h
+                    if drop_x <= mx <= drop_x + tw and drop_y <= my <= drop_y + drop_h:
+                        opt_idx = min(len(options) - 1, max(0, (my - drop_y) // item_h))
+                        return ("dropdown_select", state.active_dropdown, options[opt_idx][0])
+                    if point_in_rect(mx, my, (tx, ty, tw, th)):
+                        return ("dropdown_toggle", state.active_dropdown)
+                    return "dropdown_dismiss"
+
+            if point_in_rect(mx, my, GEOM_MODAL_CLOSE):
+                return "roi_modal_close"
+            if point_in_rect(mx, my, GEOM_MODAL_SAVE):
+                return "roi_modal_save"
+            if point_in_rect(mx, my, GEOM_MODAL_CANCEL):
+                return "roi_modal_cancel"
+            form_y = my_box + 54
+            if point_in_rect(mx, my, (mx_box + 115, form_y, 220, 28)):
+                return "roi_field_name"
+            if point_in_rect(mx, my, (mx_box + 430, form_y, 220, 28)):
+                return "roi_field_id"
+
+            cat_y = form_y + 40
+            if point_in_rect(mx, my, (mx_box + 115, cat_y, 360, 28)):
+                return ("dropdown_toggle", "roi_category")
+
+            parent_y = form_y + 80
+            if point_in_rect(mx, my, (mx_box + 115, parent_y, 360, 28)):
+                return ("dropdown_toggle", "roi_frame")
+
+            geom_y = form_y + 128
+            if point_in_rect(mx, my, (mx_box + 155, geom_y + 36, 115, 28)):
+                return ("roi_field_num", "center", 0)
+            if point_in_rect(mx, my, (mx_box + 280, geom_y + 36, 115, 28)):
+                return ("roi_field_num", "center", 1)
+            if point_in_rect(mx, my, (mx_box + 405, geom_y + 36, 115, 28)):
+                return ("roi_field_num", "center", 2)
+            if point_in_rect(mx, my, (mx_box + 155, geom_y + 76, 115, 28)):
+                return ("roi_field_num", "size", 0)
+            if point_in_rect(mx, my, (mx_box + 280, geom_y + 76, 115, 28)):
+                return ("roi_field_num", "size", 1)
+            if point_in_rect(mx, my, (mx_box + 405, geom_y + 76, 115, 28)):
+                return ("roi_field_num", "size", 2)
+            if point_in_rect(mx, my, (mx_box + 155, geom_y + 116, 115, 28)):
+                return ("roi_field_num", "rotation", 0)
+            if point_in_rect(mx, my, (mx_box + 280, geom_y + 116, 115, 28)):
+                return ("roi_field_num", "rotation", 1)
+            if point_in_rect(mx, my, (mx_box + 405, geom_y + 116, 115, 28)):
+                return ("roi_field_num", "rotation", 2)
+            if mx < mx_box or mx > mx_box + mw or my < my_box or my > my_box + mh:
+                return "roi_modal_mask"
+            return "roi_modal_body"
+
+        # 0.1 生产机制业务说明弹窗模式
+        if state.is_help_modal_open:
+            modal_w, modal_h = HELP_MODAL_W, HELP_MODAL_H
+            mx_box = (self.r.canvas_w - modal_w) // 2
+            my_box = (self.r.canvas_h - modal_h) // 2
+            bx1 = mx_box + modal_w - 116
+            by1 = my_box + 11
+            bx2 = bx1 + 100
+            by2 = by1 + 32
+            # 关闭按钮 (带 6px 容差热区)
+            if (bx1 - 6) <= mx <= (bx2 + 6) and (by1 - 6) <= my <= (by2 + 6):
+                return "help_close"
+            # 外部半透明遮罩
+            if mx < mx_box or mx > mx_box + modal_w or my < my_box or my > my_box + modal_h:
+                return "help_mask"
+            return "help_modal_body"
+
+        # 1. 常规看板模式
+        # 顶部 Header 交互 (右侧动态区页签 Tab + [退出] 按钮)
+        if 0 <= my <= 50:
+            for tab_key, tab_label, rect in self.get_tabs_layout(state):
+                if point_in_rect(mx, my, rect):
+                    return ("hdr_tab_key", tab_key)
+            # [退出] 按钮
+            if BTN_EXIT_X0 <= mx <= BTN_EXIT_X0 + BTN_EXIT_W and BTN_EXIT_Y0 <= my <= BTN_EXIT_Y0 + BTN_EXIT_H:
+                return "btn_exit"
+
+        # 左侧面板按钮与两层树交互
+        if 0 <= mx <= 340:
+            div_y1 = 604
+            btn1_y = div_y1 + 10
+            if 10 <= mx <= 330 and btn1_y <= my <= btn1_y + 40:
+                return "btn_new_workspace"
+
+            # 遍历两层树节点
+            tree_items = self.get_tree_layout(state)
+            for item in tree_items:
+                if item["type"] == "workspace":
+                    if point_in_rect(mx, my, item["arrow_rect"]):
+                        return ("tree_ws_toggle", item["ws_idx"], item["workspace"].workspace_id)
+                    if point_in_rect(mx, my, item["body_rect"]):
+                        return ("tree_ws_select", item["ws_idx"])
+                elif item["type"] == "frame":
+                    if point_in_rect(mx, my, item["rect"]):
+                        return ("tree_frame_select", item["ws_idx"], item["frame_id"])
+
+        # 右侧动态区页签内容按钮 (x: 340~960)
+        if state.view_mode == HubState.VIEW_EXPANDED:
+            if 58 <= my <= 92:
+                if 680 <= mx <= 740:
+                    return "exp_prev"
+                if 746 <= mx <= 806:
+                    return "exp_next"
+                if 812 <= mx <= 880:
+                    return "album_delete"
+                if 886 <= mx <= 950:
+                    return "exp_restore"
+        elif 58 <= my <= 88:
+            # 坐标系与 ROI 页签: [刷新] [打开目录]
+            if state.active_tab == HubState.TAB_FRAMES_ROIS:
+                if 760 <= mx <= 846:
+                    return "geom_refresh"
+                if 854 <= mx <= 944:
+                    return "geom_open_dir"
+            # Tag 白名单页签: [刷新] [编辑]
+            elif state.active_tab == HubState.TAB_WHITELIST:
+                if 760 <= mx <= 846:
+                    return "wl_refresh"
+                if 854 <= mx <= 944:
+                    return "wl_edit"
+
+        # 工位大盘看板 (TAB_REPORT) 卡片内嵌按钮
+        if state.active_tab == HubState.TAB_REPORT and state.view_mode == HubState.VIEW_STANDARD:
+            if point_in_rect(mx, my, WS_BTN_RENAME):
+                return "ws_rename"
+            if point_in_rect(mx, my, WS_BTN_OPEN_DIR):
+                return "ws_open_dir"
+            if point_in_rect(mx, my, WS_BTN_EDIT_DESC):
+                return "ws_edit_desc"
+            if point_in_rect(mx, my, WS_BTN_SYNC_DATA):
+                return "ws_sync_data"
+            if point_in_rect(mx, my, WS_BTN_CLONE):
+                return "ws_clone"
+            if point_in_rect(mx, my, WS_BTN_DELETE):
+                return "ws_delete"
+            if point_in_rect(mx, my, WS_BTN_NEW_FRAME):
+                return "btn_add_frame"
+
+        # 坐标系专属页签 1: 机构参数与 Tag 分段 (TAB_FRAME_POSE_TAGS)
+        if state.active_tab == HubState.TAB_FRAME_POSE_TAGS and state.view_mode == HubState.VIEW_STANDARD:
+            if point_in_rect(mx, my, FRAME_EDIT_POSE_BTN):
+                return "btn_edit_frame_pose"
+            if self.r._should_show_tag_bound_tooltip(state, (mx, my)):
+                return "tag_bound_help"
+            cur_frame = state.get_selected_frame()
+            if cur_frame:
+                tag_range = state.get_frame_tag_range(cur_frame.frame_id)
+                for slot_idx in range(10):
+                    chip_rect = frame_tag_chip_rect(slot_idx)
+                    if point_in_rect(mx, my, chip_rect):
+                        tag_id = tag_range[slot_idx]
+                        cx, cy, cw, ch = chip_rect
+                        if my >= cy + ch - 24:
+                            return ("frame_tag_edit_xyz", tag_id)
+                        return ("frame_tag_toggle", tag_id)
+
+        # 坐标系专属页签 2: 3D ROI 空间物件 (TAB_FRAME_ROIS)
+        if state.active_tab == HubState.TAB_FRAME_ROIS and state.view_mode == HubState.VIEW_STANDARD:
+            if point_in_rect(mx, my, FRAME_ADD_ROI_BTN):
+                return "btn_add_frame_roi"
+            cur_frame = state.get_selected_frame()
+            if cur_frame:
+                rois = state.get_frame_rois(cur_frame.frame_id)
+                for i, r in enumerate(rois[:6]):
+                    if point_in_rect(mx, my, frame_roi_edit_btn(i)):
+                        return ("frame_roi_edit", r.roi_id)
+                    if point_in_rect(mx, my, frame_roi_del_btn(i)):
+                        return ("frame_roi_delete", r.roi_id)
+
+        # 坐标系与 3D ROI 页签内的列表操作与新增按钮
+        if state.active_tab == HubState.TAB_FRAMES_ROIS and state.view_mode == HubState.VIEW_STANDARD:
+            if point_in_rect(mx, my, frame_btn_add_rect()):
+                return "btn_add_frame"
+            if point_in_rect(mx, my, roi_btn_add_rect()):
+                return "btn_add_roi"
+            frames = state.get_coordinate_frames()
+            for i, f in enumerate(frames[:3]):
+                if point_in_rect(mx, my, frame_row_edit_rect(i)):
+                    return ("frame_edit", i)
+                if f.frame_id != "world" and point_in_rect(mx, my, frame_row_del_rect(i)):
+                    return ("frame_del", i)
+            rois = state.get_roi_spaces()
+            for i in range(min(3, len(rois))):
+                if point_in_rect(mx, my, roi_row_edit_rect(i)):
+                    return ("roi_edit", i)
+                if point_in_rect(mx, my, roi_row_del_rect(i)):
+                    return ("roi_del", i)
+
+        # 图片卡片网格墙卡片 Hover (标定相册与生产相册通用)
+        if state.active_tab in (HubState.TAB_CALIB_IMAGES, HubState.TAB_PROD_IMAGES):
+            cell_idx = grid_hit_test(mx, my)
+            if cell_idx is not None:
+                offset = state.prod_grid_offset if state.active_tab == HubState.TAB_PROD_IMAGES else state.image_grid_offset
+                return ("grid_item", offset + cell_idx)
+
+        return None

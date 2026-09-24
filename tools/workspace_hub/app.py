@@ -193,97 +193,90 @@ class WorkspaceHubApp(BaseCvApp):
                 self.state.set_toast(f"已删除 ROI: {roi_id}")
             return
 
-        # 5.4 全宽大图预览模式下的右上角按钮交互 (x: 340~960)
-        if self.state.expanded_preview_mode:
-            # 顶部按钮行 (y: 58~92)
-            if 58 <= y <= 92:
-                if 680 <= x <= 740:
-                    self.state.select_image_by_offset(-1)
-                    return
-                if 746 <= x <= 806:
-                    self.state.select_image_by_offset(1)
-                    return
-                if 812 <= x <= 880:
-                    self.state.delete_selected_image()
-                    return
-                if 886 <= x <= 950:
-                    self.state.toggle_expanded_preview()
-                    return
+        # 4.3 全宽大图预览模式下的按钮交互
+        if hit == "exp_prev":
+            self.state.select_image_by_offset(-1)
+            return
+        if hit == "exp_next":
+            self.state.select_image_by_offset(1)
+            return
+        if hit == "album_delete":
+            self.state.delete_selected_image()
+            return
+        if hit == "exp_restore":
+            self.state.toggle_expanded_preview()
+            return
 
-            # 双击大图画面返回卡片网格墙
-            if event == cv2.EVENT_LBUTTONDBLCLK and 340 <= x <= 960 and 96 <= y <= 670:
-                self.state.toggle_expanded_preview()
-                return
+        # 4.4 工位大盘看板 (TAB_REPORT) 卡片内嵌按钮交互
+        if hit == "ws_rename":
+            self._handle_rename_workspace()
+            return
+        if hit == "ws_open_dir":
+            self._handle_open_directory()
+            return
+        if hit == "ws_edit_desc":
+            self._handle_edit_description()
+            return
+        if hit == "ws_sync_data":
+            self._handle_sync_data_consistency()
+            return
+        if hit == "ws_clone":
+            self._handle_clone_workspace()
+            return
+        if hit == "ws_delete":
+            self._handle_delete_workspace()
+            return
+        if hit in ("btn_add_frame", "ws_new_frame"):
+            self.state.open_frame_modal()
+            return
 
-        # 5.5 右侧动态区各页签内容交互
-        if not self.state.expanded_preview_mode:
-            tab = self.state.active_tab
+        # 4.5 Tag 白名单页签顶部操作与编辑态
+        if hit == "wl_refresh":
+            self.state.refresh_whitelist_cache()
+            self.state.set_toast("已刷新 Tag 白名单状态。")
+            return
+        if hit == "wl_edit":
+            if self.state.whitelist_edit_mode:
+                self.state.exit_whitelist_edit()
+                self.state.set_toast("已完成白名单编辑。")
+            else:
+                self._handle_tag_whitelist()
+            return
 
-            # 5.5.0 坐标系与 3D ROI 页签交互 (旧版备用)
-            if tab == HubState.TAB_FRAMES_ROIS:
-                self._handle_frames_rois_click(x, y)
-                return
+        if self.state.whitelist_edit_mode:
+            if self.state.anchor_modal_open:
+                self._handle_anchor_modal_click(x, y)
+            else:
+                self._handle_whitelist_edit_click(x, y)
+            return
 
-            # 5.5.1 Tag 白名单页签: [刷新] [编辑/完成] + 编辑态芯片矩阵/批量按钮/数字键盘
-            if tab == HubState.TAB_WHITELIST:
-                if 58 <= y <= 88:
-                    if 760 <= x <= 846:
-                        self.state.refresh_whitelist_cache()
-                        self.state.set_toast("已刷新 Tag 白名单状态。")
-                        return
-                    if 854 <= x <= 944:
-                        if self.state.whitelist_edit_mode:
-                            self.state.exit_whitelist_edit()
-                            self.state.set_toast("已完成白名单编辑。")
-                        else:
-                            self._handle_tag_whitelist()
-                        return
 
-                if self.state.whitelist_edit_mode:
-                    if self.state.anchor_modal_open:
-                        self._handle_anchor_modal_click(x, y)
-                    else:
-                        self._handle_whitelist_edit_click(x, y)
-                    return
-
-            # 5.5.1.5 体检报告页签：工位信息卡片内嵌按钮点击处理
-            if tab == HubState.TAB_REPORT:
-                if 864 <= x <= 938 and 68 <= y <= 94:
-                    self._handle_rename_workspace()
-                    return
-                if 864 <= x <= 938 and 96 <= y <= 122:
-                    self._handle_open_directory()
-                    return
-                if 864 <= x <= 938 and 152 <= y <= 178:
-                    self._handle_edit_description()
-                    return
-                if 372 <= x <= 504 and 190 <= y <= 220:
-                    self._handle_sync_data_consistency()
-                    return
-                if (512 <= x <= 592 or 776 <= x <= 854) and 190 <= y <= 220:
-                    self._handle_clone_workspace()
-                    return
-                if (600 <= x <= 678 or 864 <= x <= 938) and 190 <= y <= 220:
-                    self._handle_delete_workspace()
-                    return
-                if 682 <= x <= 812 and 190 <= y <= 220:
-                    self.state.open_frame_modal()
-                    return
-
-            # 5.5.2 图片卡片网格墙点击: 单击选中卡片, 双击放大查看
+            # 5.5.2 图片卡片网格墙点击: 单击选中卡片
             cell_idx = grid_hit_test(x, y)
             if cell_idx is not None:
                 if tab == HubState.TAB_CALIB_IMAGES:
                     target = self.state.image_grid_offset + cell_idx
                     if 0 <= target < len(self.state.current_images):
                         self.state.select_image_at_index(target)
-                        if event == cv2.EVENT_LBUTTONDBLCLK:
-                            self.state.toggle_expanded_preview()
                 elif tab == HubState.TAB_PROD_IMAGES:
                     target = self.state.prod_grid_offset + cell_idx
                     if 0 <= target < len(self.state.prod_images):
                         self.state.select_prod_image_at_index(target)
                 return
+
+    def on_double_click(self, x: int, y: int):
+        """鼠标左键双击: 支持相册卡片放大进入全宽大图沉浸预览，或双击大图返回卡片网格墙"""
+        if self.state.expanded_preview_mode:
+            if 340 <= x <= 960 and 96 <= y <= 670:
+                self.state.toggle_expanded_preview()
+                return
+        else:
+            cell_idx = grid_hit_test(x, y)
+            if cell_idx is not None and self.state.active_tab in (HubState.TAB_CALIB_IMAGES, HubState.TAB_PROD_IMAGES):
+                self.state.toggle_expanded_preview()
+                return
+        self.on_click(x, y)
+
 
     def _select_image_for_active_tab(self, delta: int):
         """按当前激活页签切换对应的相册照片 (标定相册/生产相册; 其余页签无相册则忽略)"""
@@ -367,28 +360,13 @@ class WorkspaceHubApp(BaseCvApp):
         self._run_subtool(cmd, "标靶高清生成与排版工具")
 
     def _handle_tag_whitelist(self):
-        """进入白名单页内芯片矩阵编辑模式 (方案A): 缺失时自动创建模板, 点击芯片写穿保存 yaml"""
+        """进入白名单页内芯片矩阵编辑模式: 缺失时自动创建模板, 点击芯片写穿保存 yaml"""
         ws = self.state.get_selected_workspace()
         if not ws:
             self.state.set_toast("未选择任何 Workspace")
             return
 
-        whitelist_path = self.workspace_mgr.get_tag_whitelist_path(ws.workspace_id)
-        if not os.path.exists(whitelist_path):
-            import yaml
-            default_config = {
-                "workspace_id": ws.workspace_id,
-                "workspace_name": ws.name,
-                "allowed_ids": ws.valid_tag_ids if ws.valid_tag_ids else [],
-                "description": f"Workspace {ws.name} 标靶白名单配置",
-                "notes": "工位物理白名单恒启用 (名单内容即行为): allowed_ids 非空时仅放行名单内标靶 (权威约束)；留空 = 探索模式放行所有检测标靶",
-            }
-            try:
-                os.makedirs(os.path.dirname(whitelist_path), exist_ok=True)
-                with open(whitelist_path, "w", encoding="utf-8") as f:
-                    yaml.dump(default_config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-            except Exception as e:
-                log.warning(f"创建默认 tag_whitelist.yaml 失败: {e}")
+        self.state.ensure_tag_whitelist_file()
 
         # 页内芯片矩阵编辑 (写穿保存, 不再委托外部文本编辑器)
         self.state.enter_whitelist_edit()
@@ -617,46 +595,17 @@ class WorkspaceHubApp(BaseCvApp):
         )
         if val_str is not None:
             clean_str = val_str.strip()
-            ws = self.state.get_selected_workspace()
-            if not ws:
-                return
-            import yaml
-            wl_path = os.path.join(ws.workspace_dir, "tag_whitelist.yaml")
-            curr_cfg = {}
-            if os.path.isfile(wl_path):
-                try:
-                    with open(wl_path, "r", encoding="utf-8") as f:
-                        curr_cfg = yaml.safe_load(f) or {}
-                except Exception:
-                    curr_cfg = {}
-            if "tag_anchors" not in curr_cfg:
-                curr_cfg["tag_anchors"] = {}
-
             if not clean_str or clean_str.lower() == "clear":
-                if tag_id in curr_cfg["tag_anchors"]:
-                    del curr_cfg["tag_anchors"][tag_id]
-                if str(tag_id) in curr_cfg["tag_anchors"]:
-                    del curr_cfg["tag_anchors"][str(tag_id)]
-                with open(wl_path, "w", encoding="utf-8") as f:
-                    yaml.safe_dump(curr_cfg, f, allow_unicode=True)
-                self.state.refresh_whitelist_cache()
-                self.state.set_toast(f"已清除 Tag #{tag_id:02d} 的物理坐标标注。")
+                ok, msg = self.state.update_tag_anchor(tag_id, None)
+                self.state.set_toast(msg)
                 return
 
             parts = [p.strip() for p in clean_str.replace("，", ",").split(",")]
             if len(parts) == 3:
                 try:
                     xyz = [float(parts[0]), float(parts[1]), float(parts[2])]
-                    curr_cfg["tag_anchors"][tag_id] = xyz
-                    # 自动将其并入放行集合
-                    allowed_set = set(curr_cfg.get("allowed_ids", []))
-                    allowed_set.add(tag_id)
-                    curr_cfg["allowed_ids"] = sorted(list(allowed_set))
-
-                    with open(wl_path, "w", encoding="utf-8") as f:
-                        yaml.safe_dump(curr_cfg, f, allow_unicode=True)
-                    self.state.refresh_whitelist_cache()
-                    self.state.set_toast(f"已成功标注 Tag #{tag_id:02d} 坐标: ({xyz[0]:.1f}, {xyz[1]:.1f}, {xyz[2]:.1f}) mm 并自动放行")
+                    ok, msg = self.state.update_tag_anchor(tag_id, xyz)
+                    self.state.set_toast(msg)
                 except ValueError:
                     self.state.set_toast("坐标格式无效，请输入 3 个以逗号分隔的浮点数！")
             else:
@@ -700,6 +649,32 @@ class WorkspaceHubApp(BaseCvApp):
                 r = rois[idx]
                 if prompt_confirm("确认删除 3D ROI", f"确定要删除 3D ROI 空间物件 【{r.name}】 ({r.roi_id}) 吗？"):
                     self.state.delete_roi(r.roi_id)
+
+    def _prompt_vector_axis(
+        self,
+        title: str,
+        prompt: str,
+        data_dict: dict,
+        field_key: str,
+        axis_idx: int,
+        default_vec: list[float],
+        unit: str = "mm",
+        must_positive: bool = False,
+    ):
+        """交互式弹窗编辑 3D 向量中的单轴数值，并写回字典字段"""
+        curr_val = data_dict.get(field_key, default_vec)[axis_idx]
+        val_str = prompt_input_text(title, prompt, initial=f"{curr_val:.1f}")
+        if val_str is not None and val_str.strip():
+            try:
+                v = float(val_str.strip())
+                if must_positive and v <= 0:
+                    self.state.set_toast(f"{title}必须严格大于 0！")
+                    return
+                vec = data_dict.setdefault(field_key, list(default_vec))
+                vec[axis_idx] = v
+                self.state.set_toast(f"已更新{title}: {v:.1f} {unit}".strip())
+            except ValueError:
+                self.state.set_toast("输入无效，请输入有效数字！")
 
     def _handle_frame_modal_click(self, x: int, y: int):
         """处理机构相对坐标系表单弹窗交互"""
@@ -768,26 +743,10 @@ class WorkspaceHubApp(BaseCvApp):
             field_category, axis_idx = hit[1], hit[2]
             if field_category == "translation":
                 axis_name = ["X (前向)", "Y (横向)", "Z (垂向)"][axis_idx]
-                curr_val = d.get("translation_xyz_mm", [0, 0, 0])[axis_idx]
-                val_str = prompt_input_text(f"平移 {axis_name}", "请输入平移数值 (mm):", initial=f"{curr_val:.1f}")
-                if val_str is not None and val_str.strip():
-                    try:
-                        v = float(val_str.strip())
-                        d.setdefault("translation_xyz_mm", [0.0, 0.0, 0.0])[axis_idx] = v
-                        self.state.set_toast(f"已更新平移 {axis_name}: {v:.1f} mm")
-                    except ValueError:
-                        self.state.set_toast("输入无效，请输入有效数字！")
+                self._prompt_vector_axis(f"平移 {axis_name}", "请输入平移数值 (mm):", d, "translation_xyz_mm", axis_idx, [0.0, 0.0, 0.0], unit="mm")
             elif field_category == "rotation":
                 axis_name = ["Roll 翻滚", "Pitch 俯仰", "Yaw 偏航"][axis_idx]
-                curr_val = d.get("rotation_rpy_deg", [0, 0, 0])[axis_idx]
-                val_str = prompt_input_text(f"旋转 {axis_name}", "请输入欧拉角 (°):", initial=f"{curr_val:.1f}")
-                if val_str is not None and val_str.strip():
-                    try:
-                        v = float(val_str.strip())
-                        d.setdefault("rotation_rpy_deg", [0.0, 0.0, 0.0])[axis_idx] = v
-                        self.state.set_toast(f"已更新旋转 {axis_name}: {v:.1f}°")
-                    except ValueError:
-                        self.state.set_toast("输入无效，请输入有效数字！")
+                self._prompt_vector_axis(f"旋转 {axis_name}", "请输入欧拉角 (°):", d, "rotation_rpy_deg", axis_idx, [0.0, 0.0, 0.0], unit="°")
             elif field_category == "tag_id":
                 curr_val = d.get("tag_id", 0)
                 val_str = prompt_input_text(
@@ -805,15 +764,7 @@ class WorkspaceHubApp(BaseCvApp):
                         self.state.set_toast("输入无效，Tag ID 必须包含有效数字编号！")
             elif field_category == "offset":
                 axis_name = ["dx (前向)", "dy (横向)", "dz (垂向)"][axis_idx]
-                curr_val = d.get("offset_xyz_mm", [0, 0, 0])[axis_idx]
-                val_str = prompt_input_text(f"动标局部偏移 {axis_name}", "请输入局部偏移数值 (mm):", initial=f"{curr_val:.1f}")
-                if val_str is not None and val_str.strip():
-                    try:
-                        v = float(val_str.strip())
-                        d.setdefault("offset_xyz_mm", [0.0, 0.0, 0.0])[axis_idx] = v
-                        self.state.set_toast(f"已更新动标局部偏移 {axis_name}: {v:.1f} mm")
-                    except ValueError:
-                        self.state.set_toast("输入无效，请输入有效数字！")
+                self._prompt_vector_axis(f"动标局部偏移 {axis_name}", "请输入局部偏移数值 (mm):", d, "offset_xyz_mm", axis_idx, [0.0, 0.0, 0.0], unit="mm")
 
     def _handle_roi_modal_click(self, x: int, y: int):
         """处理 3D ROI 空间物件表单弹窗交互"""
@@ -879,40 +830,65 @@ class WorkspaceHubApp(BaseCvApp):
             field_category, axis_idx = hit[1], hit[2]
             if field_category == "center":
                 axis_name = ["X", "Y", "Z"][axis_idx]
-                curr_val = d.get("center_xyz_mm", [0, 0, 0])[axis_idx]
-                val_str = prompt_input_text(f"局部中心 {axis_name}", "请输入中心坐标 (mm):", initial=f"{curr_val:.1f}")
-                if val_str is not None and val_str.strip():
-                    try:
-                        v = float(val_str.strip())
-                        d.setdefault("center_xyz_mm", [0.0, 0.0, 0.0])[axis_idx] = v
-                        self.state.set_toast(f"已更新局部中心 {axis_name}: {v:.1f} mm")
-                    except ValueError:
-                        self.state.set_toast("输入无效，请输入有效数字！")
+                self._prompt_vector_axis(f"局部中心 {axis_name}", "请输入中心坐标 (mm):", d, "center_xyz_mm", axis_idx, [0.0, 0.0, 0.0], unit="mm")
             elif field_category == "size":
                 axis_name = ["长 dx", "宽 dy", "高 dz"][axis_idx]
-                curr_val = d.get("size_xyz_mm", [50, 50, 50])[axis_idx]
-                val_str = prompt_input_text(f"空间尺寸 {axis_name}", "请输入长方体尺寸 (mm, 必须 > 0):", initial=f"{curr_val:.1f}")
-                if val_str is not None and val_str.strip():
-                    try:
-                        v = float(val_str.strip())
-                        if v <= 0:
-                            self.state.set_toast("空间尺寸必须严格大于 0！")
-                        else:
-                            d.setdefault("size_xyz_mm", [50.0, 50.0, 50.0])[axis_idx] = v
-                            self.state.set_toast(f"已更新空间尺寸 {axis_name}: {v:.1f} mm")
-                    except ValueError:
-                        self.state.set_toast("输入无效，请输入有效数字！")
+                self._prompt_vector_axis(f"空间尺寸 {axis_name}", "请输入长方体尺寸 (mm, 必须 > 0):", d, "size_xyz_mm", axis_idx, [50.0, 50.0, 50.0], unit="mm", must_positive=True)
             elif field_category == "rotation":
                 axis_name = ["Roll 翻滚", "Pitch 俯仰", "Yaw 偏航"][axis_idx]
-                curr_val = d.get("rotation_rpy_deg", [0, 0, 0])[axis_idx]
-                val_str = prompt_input_text(f"局部旋转 {axis_name}", "请输入旋转角 (°):", initial=f"{curr_val:.1f}")
-                if val_str is not None and val_str.strip():
-                    try:
-                        v = float(val_str.strip())
-                        d.setdefault("rotation_rpy_deg", [0.0, 0.0, 0.0])[axis_idx] = v
-                        self.state.set_toast(f"已更新局部旋转 {axis_name}: {v:.1f}°")
-                    except ValueError:
-                        self.state.set_toast("输入无效，请输入有效数字！")
+                self._prompt_vector_axis(f"局部旋转 {axis_name}", "请输入旋转角 (°):", d, "rotation_rpy_deg", axis_idx, [0.0, 0.0, 0.0], unit="°")
+
+    def on_key(self, key: int) -> bool:
+        """
+        键盘快捷键分发:
+        - ESC (27): 逐层退出当前展开视图或模态弹窗 (大图 -> 弹窗 -> 编辑态 -> 应用)
+        - Enter (13, 10): 模态表单快捷保存
+        """
+        state = self.state
+        # 1. ESC 键层次化退出拦截
+        if key == 27:
+            if state.active_dropdown:
+                state.active_dropdown = None
+                return True
+            if state.expanded_image_idx >= 0:
+                state.expanded_image_idx = -1
+                state.set_toast("已退出全宽看图")
+                return True
+            if state.frame_modal_open:
+                state.close_frame_modal()
+                state.set_toast("已取消编辑坐标系。")
+                return True
+            if state.roi_modal_open:
+                state.close_roi_modal()
+                state.set_toast("已取消编辑 3D ROI。")
+                return True
+            if state.anchor_modal_open:
+                state.exit_anchor_mode()
+                state.set_toast("已退出锚点编辑。")
+                return True
+            if state.whitelist_edit_mode:
+                state.exit_whitelist_edit()
+                state.set_toast("已退出白名单编辑态。")
+                return True
+            if state.is_help_modal_open:
+                state.is_help_modal_open = False
+                return True
+            return False
+
+        # 2. Enter 键提交保存当前激活表单
+        if key in (13, 10):
+            if state.frame_modal_open:
+                ok, msg = state.save_frame_modal()
+                if not ok:
+                    state.set_toast(f"保存失败: {msg}")
+                return True
+            if state.roi_modal_open:
+                ok, msg = state.save_roi_modal()
+                if not ok:
+                    state.set_toast(f"保存失败: {msg}")
+                return True
+
+        return False
 
 
 def main():
