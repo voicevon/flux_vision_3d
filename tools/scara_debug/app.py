@@ -44,7 +44,7 @@ from loader_core import (  # noqa: E402
     MockTransceiver,
 )
 from src.utils.logger import get_logger  # noqa: E402
-from src.utils.gui_window_manager import GuiWindowManager  # noqa: E402
+from src.utils.base_cv_app import BaseCvApp  # noqa: E402
 from tools.scara_debug.renderer import ScaraDebugRenderer, LOGIC_W, LOGIC_H  # noqa: E402
 
 log = get_logger(__name__)
@@ -83,10 +83,18 @@ class PresetManager:
         return dict(self._presets)
 
 
-class ScaraDebugApp:
-    """SCARA 调试终端 GUI 主应用：事件循环、动作调度与日志缓冲"""
+class ScaraDebugApp(BaseCvApp):
+    """SCARA 调试终端 GUI 主应用：事件循环、动作调度与日志缓冲 (基于 BaseCvApp)"""
 
     def __init__(self, port: Optional[str] = None, mock: bool = False):
+        super().__init__(
+            app_id="scara_debug",
+            base_w=LOGIC_W,
+            base_h=LOGIC_H,
+            window_name="flux_vision_3d | scara_debug",
+            window_title="flux_vision_3d | SCARA 调试",
+            enable_keyboard_zoom=False,
+        )
         self.mock_mode = mock
         self._config = LoaderConfig()
         tx = MockTransceiver() if mock else SerialTransceiver()
@@ -103,7 +111,6 @@ class ScaraDebugApp:
         self.macro_cycles = 1
         self.limit_lines = []
         self.log_lines = deque(maxlen=200)
-        self._running = True
 
         # 下拉框与自动刷新状态
         self.dd_serial_open = False
@@ -114,11 +121,6 @@ class ScaraDebugApp:
         self._last_auto_refresh = 0.0
 
         self.renderer = ScaraDebugRenderer()
-        self.win_mgr = GuiWindowManager(app_id="scara_debug", base_w=LOGIC_W, base_h=LOGIC_H)
-        # 窗口内部 key 必须纯 ASCII: OpenCV namedWindow 用 ANSI API 创建, 中文名会乱码
-        # 且导致 FindWindowW 无法命中, set_unicode_title 静默失效
-        self.window_name = "flux_vision_3d | scara_debug"
-        self.window_title = "flux_vision_3d | SCARA 调试"
 
         self.refresh_ports()
         self.add_log("[就绪] SCARA 调试已启动，请选择串口并点击 [连接]。")
@@ -418,57 +420,73 @@ class ScaraDebugApp:
         elif bid == "gcode_input":
             self.do_gcode()
 
-    def _on_mouse(self, event, x, y, flags, param) -> None:
-        # 物理坐标 -> 逻辑坐标
-        if self.win_mgr.canvas_w != LOGIC_W or self.win_mgr.canvas_h != LOGIC_H:
-            scale = min(self.win_mgr.canvas_w / LOGIC_W, self.win_mgr.canvas_h / LOGIC_H)
-            pad_x = (self.win_mgr.canvas_w - int(LOGIC_W * scale)) // 2
-            pad_y = (self.win_mgr.canvas_h - int(LOGIC_H * scale)) // 2
-            x = int((x - pad_x) / max(1e-6, scale))
-            y = int((y - pad_y) / max(1e-6, scale))
-        self.renderer.mouse_x = max(0, min(LOGIC_W - 1, x))
-        self.renderer.mouse_y = max(0, min(LOGIC_H - 1, y))
-        if event == cv2.EVENT_LBUTTONDOWN:
-            bid = self.renderer.hit_test(self.renderer.mouse_x, self.renderer.mouse_y)
-            # 下拉框开合优先处理
-            if bid == "dd_open:serial":
-                self.dd_serial_open = not self.dd_serial_open
-                self.dd_z_open = False
-                self.dd_step_open = False
-                return
-            if bid == "dd_open:z":
-                self.dd_z_open = not self.dd_z_open and self.robot.is_connected()
-                self.dd_serial_open = False
-                self.dd_step_open = False
-                return
-            if bid == "dd_open:step":
-                self.dd_step_open = not self.dd_step_open
-                self.dd_serial_open = False
-                self.dd_z_open = False
-                return
-            # 任一浮层展开时: 点击浮层项执行动作, 点击其他区域仅收起
-            any_open = self.dd_serial_open or self.dd_z_open or self.dd_step_open
-            if any_open:
-                if self.dd_serial_open and bid.startswith("dd_serial:"):
-                    try:
-                        self._on_button(bid)
-                    except Exception as exc:
-                        log.exception("下拉框动作异常: %s", exc)
-                        self.add_log(f"[ERR] 动作异常: {exc}")
-                elif self.dd_z_open and bid.startswith("dd_z:"):
-                    self.do_z(float(bid.split(":", 1)[1]))
-                elif self.dd_step_open and bid.startswith("dd_step:"):
-                    self.do_step(bid.split(":", 1)[1])
-                self.dd_serial_open = False
-                self.dd_z_open = False
-                self.dd_step_open = False
-                return
-            if bid:
+    # ==================== BaseCvApp 钩子实现 ====================
+    def on_tick(self):
+        """自动刷新坐标 (checkbox 开启后每 0.3s 静默 M114, 不写日志)"""
+        if self.auto_refresh and self.robot.is_connected() \
+                and time.time() - self._last_auto_refresh >= 0.3:
+            self._last_auto_refresh = time.time()
+            try:
+                self.robot.refresh_state()
+            except Exception:
+                pass
+
+    def render(self) -> np.ndarray:
+        """核心渲染: 同步鼠标坐标并调用 ScaraDebugRenderer 渲染"""
+        self.renderer.mouse_x = self.mouse_x
+        self.renderer.mouse_y = self.mouse_y
+        return self.renderer.render(self)
+
+    def on_click(self, x: int, y: int):
+        """逻辑坐标点击分发"""
+        bid = self.renderer.hit_test(x, y)
+        # 下拉框开合优先处理
+        if bid == "dd_open:serial":
+            self.dd_serial_open = not self.dd_serial_open
+            self.dd_z_open = False
+            self.dd_step_open = False
+            return
+        if bid == "dd_open:z":
+            self.dd_z_open = not self.dd_z_open and self.robot.is_connected()
+            self.dd_serial_open = False
+            self.dd_step_open = False
+            return
+        if bid == "dd_open:step":
+            self.dd_step_open = not self.dd_step_open
+            self.dd_serial_open = False
+            self.dd_z_open = False
+            return
+        # 任一浮层展开时: 点击浮层项执行动作, 点击其他区域仅收起
+        any_open = self.dd_serial_open or self.dd_z_open or self.dd_step_open
+        if any_open:
+            if self.dd_serial_open and bid.startswith("dd_serial:"):
                 try:
                     self._on_button(bid)
                 except Exception as exc:
-                    log.exception("按钮动作异常: %s", exc)
+                    log.exception("下拉框动作异常: %s", exc)
                     self.add_log(f"[ERR] 动作异常: {exc}")
+            elif self.dd_z_open and bid.startswith("dd_z:"):
+                self.do_z(float(bid.split(":", 1)[1]))
+            elif self.dd_step_open and bid.startswith("dd_step:"):
+                self.do_step(bid.split(":", 1)[1])
+            self.dd_serial_open = False
+            self.dd_z_open = False
+            self.dd_step_open = False
+            return
+        if bid:
+            try:
+                self._on_button(bid)
+            except Exception as exc:
+                log.exception("按钮动作异常: %s", exc)
+                self.add_log(f"[ERR] 动作异常: {exc}")
+
+    def on_key(self, raw_key: int) -> bool:
+        """按键事件响应"""
+        fb_changed, _fb_toast = self.win_mgr.handle_keyboard_fallback(raw_key)
+        if fb_changed:
+            return True
+        self._handle_key(raw_key)
+        return True
 
     def _handle_key(self, raw_key: int) -> None:
         key = raw_key & 0xFF
@@ -484,64 +502,14 @@ class ScaraDebugApp:
         elif raw_key == 32:  # 空格刷新坐标
             self.refresh_pos()
 
-    # ------------------------------------------------------------------
-    # 主循环
-    # ------------------------------------------------------------------
-    def run(self) -> None:
-        self.win_mgr.setup_window(self.window_name, self._on_mouse)
-        self.win_mgr.set_unicode_title(self.window_title)
-        try:
-            cv2.resizeWindow(self.window_name, self.win_mgr.canvas_w, self.win_mgr.canvas_h)
-        except Exception:
-            pass
-
-        while self._running:
-            poll_res = self.win_mgr.poll_events()
-            if poll_res.should_quit:
-                break
-            if poll_res.toast_msg:
-                self.add_log(f"[窗口] {poll_res.toast_msg}")
-
-            # 自动刷新坐标 (checkbox 开启后每 0.3s 静默 M114, 不写日志)
-            if self.auto_refresh and self.robot.is_connected() \
-                    and time.time() - self._last_auto_refresh >= 0.3:
-                self._last_auto_refresh = time.time()
-                try:
-                    self.robot.refresh_state()
-                except Exception:
-                    pass
-
-            canvas = self.renderer.render(self)
-            if self.win_mgr.canvas_w == LOGIC_W and self.win_mgr.canvas_h == LOGIC_H:
-                present = canvas
-            else:
-                present = np.full((self.win_mgr.canvas_h, self.win_mgr.canvas_w, 3), (18, 20, 24), dtype=np.uint8)
-                scale = min(self.win_mgr.canvas_w / LOGIC_W, self.win_mgr.canvas_h / LOGIC_H)
-                tw, th = int(round(LOGIC_W * scale)), int(round(LOGIC_H * scale))
-                interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LANCZOS4
-                scaled = cv2.resize(canvas, (tw, th), interpolation=interp)
-                px = (self.win_mgr.canvas_w - tw) // 2
-                py = (self.win_mgr.canvas_h - th) // 2
-                present[py:py + th, px:px + tw] = scaled
-            cv2.imshow(self.window_name, present)
-
-            raw_key = cv2.waitKeyEx(20)
-            if raw_key == -1:
-                continue
-            fb_changed, _fb_toast = self.win_mgr.handle_keyboard_fallback(raw_key)
-            if not fb_changed:
-                self._handle_key(raw_key)
-
-        self._safe_exit()
-
-    def _safe_exit(self) -> None:
+    def cleanup(self) -> None:
+        """应用退出前清理"""
         self.add_log("[退出] 正在安全退出...")
         try:
             if self.robot.is_connected():
                 self.robot.disconnect()
         except Exception:
             pass
-        cv2.destroyAllWindows()
 
 
 def main():

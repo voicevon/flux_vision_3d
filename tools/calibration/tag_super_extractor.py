@@ -310,8 +310,6 @@ class TagSuperExtractor:
 
         cv2.imwrite(out_path, disp)
 
-    # 别名兼容
-    extract_super_detections = extract_from_image
 
     def merge_observations_with_history(self, detections: dict, hist_obs_map: dict, is_frame_enabled: bool = True):
         """将当前帧超精提取结果与历史审核记录智能合并，100% 保留用户的人工剔除 keep 状态与说明"""

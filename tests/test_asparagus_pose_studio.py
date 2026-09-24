@@ -110,7 +110,8 @@ class TestRenderer(unittest.TestCase):
             cfg_file = os.path.join(tmpdir, "settings.json")
             app = AsparagusPoseStudioApp(sample_dir=tmpdir, settings_file=cfg_file)
             canvas = np.zeros((800, 1280, 3), dtype=np.uint8)
-            buttons, _, _, _ = AsparagusPoseStudioRenderer.render_scene(canvas, app)
+            res = AsparagusPoseStudioRenderer.render_scene(canvas, app)
+            buttons = res[0]
 
             ws_dd_buttons = [b for b in buttons if b[1] == ("toggle_dd", "WORKSPACE_DROPDOWN")]
             pipe_dd_buttons = [b for b in buttons if b[1] == ("toggle_dd", "PIPELINE_DROPDOWN")]
@@ -156,7 +157,7 @@ class TestApp(unittest.TestCase):
             self.assertEqual(app.pipeline_key, "ridge_tracing")
 
             # 快捷键退出测试
-            app._handle_key(ord("x"))
+            app.on_key(ord("x"))
             self.assertFalse(app._running)
 
     def test_pipeline_and_sample_persistence(self):

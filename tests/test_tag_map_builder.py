@@ -258,20 +258,20 @@ def test_tag_manifest_reviewer_logic():
     assert reviewer.raw_manifest["images"]["test_img_01.png"]["observations"][0]["keep"] is True
 
     # 1. 模拟鼠标点击外部区域 (0, 0) -> 无命中，状态不改变
-    reviewer.on_mouse_click(cv2.EVENT_LBUTTONDOWN, 0, 0, 0, None)
+    reviewer.on_mouse_event(cv2.EVENT_LBUTTONDOWN, 0, 0, 0, None)
     assert reviewer.raw_manifest["images"]["test_img_01.png"]["observations"][0]["keep"] is True
 
     # 2. 模拟鼠标点击 Tag 1 内部 (150, 150) -> 命中，keep 翻转为 False
-    reviewer.on_mouse_click(cv2.EVENT_LBUTTONDOWN, 150, 150, 0, None)
+    reviewer.on_mouse_event(cv2.EVENT_LBUTTONDOWN, 150, 150, 0, None)
     assert reviewer.raw_manifest["images"]["test_img_01.png"]["observations"][0]["keep"] is False
     assert reviewer.has_modified_manifest is True
 
     # 3. 模拟再次点击 Tag 1 内部 (150, 150) -> 命中，keep 翻转回 True
-    reviewer.on_mouse_click(cv2.EVENT_LBUTTONDOWN, 150, 150, 0, None)
+    reviewer.on_mouse_event(cv2.EVENT_LBUTTONDOWN, 150, 150, 0, None)
     assert reviewer.raw_manifest["images"]["test_img_01.png"]["observations"][0]["keep"] is True
 
     # 4. 点击 Tag 2 内部 (350, 150) -> 翻转为 False 并保存
-    reviewer.on_mouse_click(cv2.EVENT_LBUTTONDOWN, 350, 150, 0, None)
+    reviewer.on_mouse_event(cv2.EVENT_LBUTTONDOWN, 350, 150, 0, None)
     assert reviewer.raw_manifest["images"]["test_img_01.png"]["observations"][1]["keep"] is False
     reviewer.save_changes()
 

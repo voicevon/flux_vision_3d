@@ -23,7 +23,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.calibration.workspace_manager import WorkspaceManager
-from src.utils.gui_window_manager import GuiWindowManager
+from src.utils.base_cv_app import BaseCvApp
 from tools.workspace_hub.hub_state import HubState
 from tools.workspace_hub.hub_renderer import (
     HubRenderer, grid_hit_test, HELP_MODAL_W, HELP_MODAL_H,
@@ -41,71 +41,35 @@ log = get_logger(__name__)
 from src.utils.dialog_utils import prompt_confirm, prompt_input_text
 
 
-class WorkspaceHubApp:
-    """Workspace Hub 主应用"""
+class WorkspaceHubApp(BaseCvApp):
+    """Workspace Hub 主应用 (基于 BaseCvApp 轻量基类)"""
 
     def __init__(self, force_mock: bool = False, settings_file: str = None, workspace_mgr: WorkspaceManager = None):
-        self.force_mock = force_mock
-        self.win_mgr = GuiWindowManager(
+        super().__init__(
             app_id="workspace_hub",
             base_w=960,
             base_h=720,
+            window_name="flux_vision_3d | workspace",
+            window_title="flux_vision_3d | Workspace",
             settings_file=settings_file,
-            enable_keyboard_zoom=False  # 全鼠标化: 不启用 Ctrl/+/- 键盘缩放热键
+            enable_keyboard_zoom=False,
         )
+        self.force_mock = force_mock
         self.workspace_mgr = workspace_mgr or WorkspaceManager()
         self.state = HubState(self.workspace_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
-        # 窗口内部 key 必须纯 ASCII (namedWindow ANSI API), 中文标题走 set_unicode_title
-        self.window_name = "flux_vision_3d | workspace"
-        self.window_title = "flux_vision_3d | Workspace"
-        self._running = True
 
         if self.win_mgr.scale_pct != 100 or self.win_mgr.canvas_w != 960 or self.win_mgr.canvas_h != 720:
             self.state.set_toast(f"已恢复偏好设置：放大镜 {self.win_mgr.scale_pct}%，视窗 {self.win_mgr.canvas_w}×{self.win_mgr.canvas_h}")
 
-    def run(self):
-        """主事件循环"""
-        # 使用 GuiWindowManager 挂载原生窗口、记忆尺寸与 Unicode 标题
-        self.win_mgr.setup_window(self.window_name, self._on_mouse_event)
-        self.win_mgr.set_unicode_title(self.window_title)
+    # ==================== BaseCvApp 钩子实现 ====================
+    def set_toast(self, msg: str, duration: float = 4.0):
+        super().set_toast(msg, duration)
+        self.state.set_toast(msg)
 
-        try:
-            cv2.resizeWindow(self.window_name, self.win_mgr.canvas_w, self.win_mgr.canvas_h)
-        except Exception:
-            pass  # GUI 可选功能：初始窗口尺寸设置失败不影响主循环
-
-        while self._running:
-            # 1. 视窗管理器综合轮询 (红叉检测、硬件按键缩放、拖拽防抖持久化)
-            poll_res = self.win_mgr.poll_events()
-            if poll_res.should_quit:
-                break
-            if poll_res.toast_msg:
-                self.state.set_toast(poll_res.toast_msg)
-
-            # 2. 渲染画面并在当前窗口分辨率下严格上对齐呈现 (无多余顶部黑边)
-            raw_canvas = self.renderer.render(self.state)
-            if self.win_mgr.canvas_w == self.renderer.canvas_w and self.win_mgr.canvas_h == self.renderer.canvas_h:
-                present_canvas = raw_canvas
-            else:
-                present_canvas = np.full((self.win_mgr.canvas_h, self.win_mgr.canvas_w, 3), (18, 20, 24), dtype=np.uint8)
-                scale = min(self.win_mgr.canvas_w / float(self.renderer.canvas_w),
-                            self.win_mgr.canvas_h / float(self.renderer.canvas_h))
-                target_w = int(round(self.renderer.canvas_w * scale))
-                target_h = int(round(self.renderer.canvas_h * scale))
-                interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-                scaled = cv2.resize(raw_canvas, (target_w, target_h), interpolation=interp)
-                pad_x = (self.win_mgr.canvas_w - target_w) // 2
-                pad_y = 0  # 严格上对齐！
-                present_canvas[0:target_h, pad_x:pad_x + target_w] = scaled
-
-            cv2.imshow(self.window_name, present_canvas)
-
-            # 3. waitKeyEx 仅用于驱动窗口消息泵刷新画面 (项目已全面鼠标化, 不响应任何键盘快捷键)
-            cv2.waitKeyEx(15)
-
-        # 退出清理
-        cv2.destroyAllWindows()
+    def render(self) -> np.ndarray:
+        """核心渲染: 委托 HubRenderer 进行渲染"""
+        return self.renderer.render(self.state)
 
     def _launch_capture_wizard(self):
         """启动多视角交互式采图向导 (tools/capture/capture_wizard.py)"""
@@ -115,49 +79,26 @@ class WorkspaceHubApp:
             cmd.extend(["--workspace", ws.workspace_id])
         self._run_subtool(cmd, "多视角交互采图向导")
 
-    def _on_mouse_event(self, event, x, y, flags, param):
-        """处理鼠标点击、悬浮 Hover 与滚轮切片交互 (支持 Ctrl+滚轮缩放与逻辑坐标映射)"""
-        # 0. 优先拦截 Ctrl + 滚轮缩放 (委托通用视窗管理器)
-        if event == 10:  # cv2.EVENT_MOUSEWHEEL
-            handled, toast = self.win_mgr.handle_mouse_wheel(event, flags)
-            if handled and toast:
-                self.state.set_toast(toast)
-                return
+    def on_mouse_move(self, x: int, y: int):
+        """实时跟踪鼠标坐标，支持全部按钮平滑 Hover 高亮"""
+        self.state.mouse_x = x
+        self.state.mouse_y = y
 
-        # 0.1 物理坐标转换回 960x720 逻辑坐标 (严格上对齐)
-        if self.win_mgr.canvas_w != self.renderer.canvas_w or self.win_mgr.canvas_h != self.renderer.canvas_h:
-            scale = min(self.win_mgr.canvas_w / float(self.renderer.canvas_w),
-                        self.win_mgr.canvas_h / float(self.renderer.canvas_h))
-            pad_x = (self.win_mgr.canvas_w - int(round(self.renderer.canvas_w * scale))) // 2
-            pad_y = 0  # 严格上对齐！
-            logic_x = int((x - pad_x) / max(1e-6, scale))
-            logic_y = int(y / max(1e-6, scale))
-            x = max(0, min(self.renderer.canvas_w - 1, logic_x))
-            y = max(0, min(self.renderer.canvas_h - 1, logic_y))
+    def on_mouse_wheel(self, delta: int, flags: int):
+        """普通滚轮极速翻页/切换 Workspace"""
+        wheel_dir = -1 if delta > 0 else 1
+        x, y = self.mouse_x, self.mouse_y
+        if x <= 340 and 58 <= y <= 520:
+            self.state.select_workspace_by_offset(wheel_dir)
+        elif self.state.view_mode == HubState.VIEW_EXPANDED:
+            # 全宽大图沉浸模式下滚轮切换大图
+            self.state.select_image_by_offset(wheel_dir)
+        else:
+            # 卡片网格墙模式下滚轮翻页
+            self._scroll_grid_for_active_tab(wheel_dir)
 
-        # 1. 实时跟踪鼠标坐标，支持全部按钮平滑 Hover 高亮
-        if event == cv2.EVENT_MOUSEMOVE:
-            self.state.mouse_x = x
-            self.state.mouse_y = y
-            return
-
-        # 2. 普通滚轮极速翻页/切换 Workspace (未按 Ctrl 时)
-        if event == cv2.EVENT_MOUSEWHEEL:
-            delta = -1 if flags > 0 else 1
-            if x <= 340 and 58 <= y <= 520:
-                self.state.select_workspace_by_offset(delta)
-            elif self.state.view_mode == HubState.VIEW_EXPANDED:
-                # 全宽大图沉浸模式下滚轮切换大图
-                self.state.select_image_by_offset(delta)
-            else:
-                # 卡片网格墙模式下滚轮翻页
-                self._scroll_grid_for_active_tab(delta)
-            return
-
-        # 后续仅处理鼠标左键点击 (单击选中 / 双击放大)
-        if event not in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_LBUTTONDBLCLK):
-            return
-
+    def on_click(self, x: int, y: int):
+        """处理鼠标左键单击与双击交互"""
         # =================== 2.5 坐标系与 3D ROI 结构化弹窗交互 ===================
         if self.state.frame_modal_open:
             self._handle_frame_modal_click(x, y)
@@ -189,13 +130,12 @@ class WorkspaceHubApp:
             return
 
         # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
-        # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
         # 统一使用 renderer.hit_test 进行像素级高精度命中测试
         hit = self.renderer.hit_test(x, y, self.state)
 
         # 4.0 顶部标题栏交互 (退出按钮与自适应 Tab 胶囊)
         if hit == "btn_exit":
-            self._running = False
+            self.stop()
             return
         if isinstance(hit, tuple) and hit[0] == "hdr_tab_key":
             self.state.set_tab(hit[1])
@@ -392,9 +332,7 @@ class WorkspaceHubApp:
             log.warning(f"执行工具异常: {e}")
 
         # 重新创建主窗体并重新绑定鼠标事件
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, self.renderer.canvas_w, self.renderer.canvas_h)
-        cv2.setMouseCallback(self.window_name, self._on_mouse_event)
+        self.create_window()
 
         ws = self.state.get_selected_workspace()
         if ws:

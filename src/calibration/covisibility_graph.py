@@ -156,6 +156,6 @@ class CovisibilityGraphAnalyzer:
 
 
 def print_topology_report(covis_report: Dict[str, Any], stats: Dict[str, Any], valid_frames: List[str]):
-    """打印详细共视拓扑分析诊断报告（模块级兼容导出）"""
+    """打印详细共视拓扑分析诊断报告"""
     CovisibilityGraphAnalyzer.print_topology_report(covis_report, stats, valid_frames)
 

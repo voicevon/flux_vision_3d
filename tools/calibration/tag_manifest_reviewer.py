@@ -789,9 +789,6 @@ class TagManifestReviewer:
                     self.render_current_frame()
                 self.render_current_frame()
 
-    def on_mouse_click(self, event, x, y, flags, param):
-        """兼容别名回调"""
-        self.on_mouse_event(event, x, y, flags, param)
 
     def render_current_frame(self):
         """绘制当前帧画面，融合标靶双态、顶部状态栏与底部 GUI 按钮栏"""
