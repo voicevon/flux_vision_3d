@@ -380,8 +380,8 @@ class HubState:
         item_type = self.selected_tree_item[0]
         if item_type == "frame":
             return [
-                (self.TAB_FRAME_POSE_TAGS, "机构参数与Tag"),
-                (self.TAB_FRAME_ROIS, "3D ROI 空间物件")
+                (self.TAB_FRAME_POSE_TAGS, "Tag"),
+                (self.TAB_FRAME_ROIS, "ROI物件")
             ]
         else:
             return [

@@ -115,7 +115,7 @@ def roi_row_del_rect(idx: int) -> tuple[int, int, int, int]:
     return (874, ry + 6, 50, 24)
 
 # ==================== 坐标系专属视图几何常量 ====================
-FRAME_EDIT_POSE_BTN = (800, 58, 140, 30)
+FRAME_EDIT_POSE_BTN = (866, 58, 74, 30)
 FRAME_ADD_ROI_BTN = (780, 58, 160, 30)
 
 FT_GRID_X0 = 356
@@ -203,16 +203,7 @@ class HubRenderer:
     GRID_GAP_Y = GRID_GAP_Y
     GRID_THUMB_H = GRID_THUMB_H
 
-    # 页签显示文案 (自适应工位宏观视图与坐标系微观视图)
-    TAB_LABELS = {
-        HubState.TAB_REPORT: "Dashboard",
-        HubState.TAB_FRAMES_ROIS: "坐标系&ROI",
-        HubState.TAB_WHITELIST: "Tag白名单",
-        HubState.TAB_CALIB_IMAGES: "标定相册",
-        HubState.TAB_PROD_IMAGES: "★ 生产相册",
-        HubState.TAB_FRAME_POSE_TAGS: "机构参数与Tag",
-        HubState.TAB_FRAME_ROIS: "3D ROI 空间物件",
-    }
+    # 页签显示文案单源位于 HubState.get_current_tabs()
 
     def __init__(self):
         self.canvas_w = 960
@@ -439,7 +430,7 @@ class HubRenderer:
     def _render_left_panel(self, canvas: np.ndarray, state: HubState):
         """渲染左侧两层树结构导航 (x: 0~340, y: 50~670)
         - 一级节点: Workspace (工位)，带 ▼ / ▶ 展开折叠指示器与统计
-        - 二级节点: Coordinate Frame (坐标系)，带缩进与 Tag 专属范围徽章
+        - 二级节点: Coordinate Frame (坐标系)，带缩进
         - 底部保留: + 新建 Workspace
         """
         cv2.rectangle(canvas, (0, 50), (340, 670), self.COLOR_PANEL, -1)
@@ -504,13 +495,6 @@ class HubRenderer:
                 f_col = (0, 255, 220) if is_sel else (200, 215, 230)
                 draw_text(canvas, f_label, (fx + 20, fy + 7), font_size=12, color=f_col, bold=is_sel)
 
-                tag_range = state.get_frame_tag_range(f.frame_id)
-                tag_badge = f"Tag {tag_range[0]}~{tag_range[-1]}"
-                badge_x = fx + fw - 76
-                cv2.rectangle(canvas, (badge_x, fy + 5), (badge_x + 70, fy + fh - 5), (28, 38, 48), -1)
-                cv2.rectangle(canvas, (badge_x, fy + 5), (badge_x + 70, fy + fh - 5), (45, 65, 75), 1)
-                put_text(canvas, tag_badge, (badge_x + 5, fy + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.31, (0, 220, 220), 1, cv2.LINE_AA)
-
         # ==== 2. Workspace 通用全局操作区 ====
         div_y1 = 604
         cv2.line(canvas, (10, div_y1), (330, div_y1), self.COLOR_BORDER, 1)
@@ -552,10 +536,8 @@ class HubRenderer:
             draw_text(canvas, "未选择任何机构坐标系", (box_x + 180, box_y + 280), font_size=18, color=self.COLOR_GRAY)
             return
 
-        # 1. 顶部标题栏与编辑位姿按钮
-        header_text = f"机构参数与 Tag 分段 (Frame: {cur_frame.frame_id})"
-        draw_text(canvas, header_text, (box_x + 16, box_y + 14), font_size=15, color=self.COLOR_WHITE, bold=True)
-        self._draw_button(canvas, FRAME_EDIT_POSE_BTN, "编辑机构参数", mpos)
+        # 1. 顶部编辑按钮
+        self._draw_button(canvas, FRAME_EDIT_POSE_BTN, "编辑", mpos)
 
         card_x = box_x + 16
         card_w = box_w - 32
@@ -566,9 +548,6 @@ class HubRenderer:
         cv2.rectangle(canvas, (card_x, c1_y), (card_x + card_w, c1_y + c1_h), (24, 28, 38), -1)
         cv2.rectangle(canvas, (card_x, c1_y), (card_x + card_w, c1_y + c1_h), (42, 52, 70), 1)
 
-        draw_text(canvas, f"机构位姿与拓扑关系 · {cur_frame.name}", (card_x + 14, c1_y + 10), font_size=14, color=(0, 240, 220), bold=True)
-        cv2.line(canvas, (card_x + 10, c1_y + 32), (card_x + card_w - 10, c1_y + 32), (36, 45, 60), 1)
-
         if cur_frame.type == "world":
             type_desc = "工位绝对世界基准 (world)"
         elif cur_frame.type == "fixed_transform":
@@ -576,12 +555,12 @@ class HubRenderer:
         else:
             type_desc = "AprilTag 动标绑定 (tag_bound)"
 
-        draw_text(canvas, f"坐标系标识: {cur_frame.frame_id}", (card_x + 16, c1_y + 42), font_size=13, color=(210, 225, 240))
-        draw_text(canvas, f"父坐标系: {cur_frame.parent_frame_id}", (card_x + 220, c1_y + 42), font_size=13, color=(210, 225, 240))
-        draw_text(canvas, f"类型: {type_desc}", (card_x + 16, c1_y + 68), font_size=13, color=(0, 220, 200))
+        draw_text(canvas, f"坐标系标识: {cur_frame.frame_id}", (card_x + 16, c1_y + 14), font_size=13, color=(210, 225, 240))
+        draw_text(canvas, f"父坐标系: {cur_frame.parent_frame_id}", (card_x + 220, c1_y + 14), font_size=13, color=(210, 225, 240))
+        draw_text(canvas, f"类型: {type_desc}", (card_x + 16, c1_y + 40), font_size=13, color=(0, 220, 200))
 
         # 动标定义与说明悬停帮助徽章
-        help_btn_x, help_btn_y, help_btn_w, help_btn_h = card_x + 310, c1_y + 65, 126, 22
+        help_btn_x, help_btn_y, help_btn_w, help_btn_h = card_x + 310, c1_y + 37, 126, 22
         is_hover_help = (help_btn_x <= mpos[0] <= help_btn_x + help_btn_w and help_btn_y <= mpos[1] <= help_btn_y + help_btn_h)
         help_bg = (30, 48, 48) if is_hover_help else (20, 28, 36)
         help_border = (0, 255, 200) if is_hover_help else (40, 75, 75)
@@ -591,7 +570,7 @@ class HubRenderer:
                   color=(0, 255, 220) if is_hover_help else (140, 185, 195), bold=is_hover_help)
 
         if cur_frame.type == "world":
-            w_box_y = c1_y + 98
+            w_box_y = c1_y + 70
             cv2.rectangle(canvas, (card_x + 16, w_box_y), (card_x + card_w - 16, w_box_y + 84), (18, 22, 32), -1)
             cv2.rectangle(canvas, (card_x + 16, w_box_y), (card_x + card_w - 16, w_box_y + 84), (38, 48, 65), 1)
             draw_text(canvas, "● 工位全局绝对空间基准 (World Datum / Origin)", (card_x + 24, w_box_y + 11), font_size=13, color=(0, 255, 200), bold=True)
@@ -602,7 +581,7 @@ class HubRenderer:
             tx, ty, tz = cur_frame.translation_xyz_mm
             rx, ry, rz = getattr(cur_frame, "rotation_rpy_deg", [0.0, 0.0, 0.0])
 
-            t_box_y = c1_y + 98
+            t_box_y = c1_y + 70
             cv2.rectangle(canvas, (card_x + 16, t_box_y), (card_x + card_w - 16, t_box_y + 38), (18, 22, 32), -1)
             cv2.rectangle(canvas, (card_x + 16, t_box_y), (card_x + card_w - 16, t_box_y + 38), (38, 48, 65), 1)
             draw_text(canvas, "平移向量 T [mm]:", (card_x + 24, t_box_y + 11), font_size=12, color=(160, 180, 200))
@@ -610,7 +589,7 @@ class HubRenderer:
             draw_text(canvas, f"Y: {ty:+.1f}", (card_x + 290, t_box_y + 11), font_size=13, color=(0, 255, 220), bold=True)
             draw_text(canvas, f"Z: {tz:+.1f}", (card_x + 420, t_box_y + 11), font_size=13, color=(0, 255, 220), bold=True)
 
-            r_box_y = c1_y + 144
+            r_box_y = c1_y + 116
             cv2.rectangle(canvas, (card_x + 16, r_box_y), (card_x + card_w - 16, r_box_y + 38), (18, 22, 32), -1)
             cv2.rectangle(canvas, (card_x + 16, r_box_y), (card_x + card_w - 16, r_box_y + 38), (38, 48, 65), 1)
             draw_text(canvas, "欧拉旋转 R [deg]:", (card_x + 24, r_box_y + 11), font_size=12, color=(160, 180, 200))
@@ -619,28 +598,12 @@ class HubRenderer:
             draw_text(canvas, f"Rz: {rz:+.1f}°", (card_x + 420, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
 
         else:
-            tag_box_y = c1_y + 98
-            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 84), (18, 22, 32), -1)
-            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 84), (38, 48, 65), 1)
-
-            bound_tags = cur_frame.get_tag_ids() if hasattr(cur_frame, "get_tag_ids") else ([cur_frame.tag_id] if cur_frame.tag_id is not None else [])
-            if not bound_tags:
-                bound_tags = [getattr(cur_frame, "tag_id", 0) or 0]
-
-            draw_text(canvas, "绑定动标 Tag 列表:", (card_x + 24, tag_box_y + 12), font_size=13, color=(0, 240, 220), bold=True)
-            chip_start_x = card_x + 175
-            for tid in bound_tags:
-                cw, ch = 48, 22
-                cv2.rectangle(canvas, (chip_start_x, tag_box_y + 10), (chip_start_x + cw, tag_box_y + 10 + ch), (24, 44, 40), -1)
-                cv2.rectangle(canvas, (chip_start_x, tag_box_y + 10), (chip_start_x + cw, tag_box_y + 10 + ch), (0, 255, 180), 1)
-                draw_text(canvas, f"#{tid:02d}", (chip_start_x + 8, tag_box_y + 13), font_size=12, color=(0, 255, 200), bold=True)
-                chip_start_x += cw + 8
-
-            draw_text(canvas, f"(共 {len(bound_tags)} 个动标 · 多标冗余跟踪组)", (chip_start_x + 6, tag_box_y + 14), font_size=11, color=(140, 160, 180))
+            tag_box_y = c1_y + 70
+            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 44), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 44), (38, 48, 65), 1)
 
             off = getattr(cur_frame, "offset_xyz_mm", [0.0, 0.0, 0.0])
-            draw_text(canvas, f"标称安装偏移 offset: [{off[0]:.1f}, {off[1]:.1f}, {off[2]:.1f}] mm", (card_x + 24, tag_box_y + 38), font_size=12, color=(200, 215, 230))
-            draw_text(canvas, "工作原理: 运动机构实时识别动标，通过标称偏移解算机构实际受控点位姿", (card_x + 24, tag_box_y + 58), font_size=11, color=(120, 140, 160))
+            draw_text(canvas, f"标称安装偏移 offset: [{off[0]:.1f}, {off[1]:.1f}, {off[2]:.1f}] mm", (card_x + 24, tag_box_y + 14), font_size=12, color=(200, 215, 230))
 
         # 3. 下部卡片: 10-Slot Tag 专属分配矩阵
         c2_y = box_y + 248
@@ -652,8 +615,6 @@ class HubRenderer:
         start_id, end_id = tag_range[0], tag_range[-1]
         draw_text(canvas, f"Tag 专属分段放行矩阵 [分配区间 ID: {start_id:02d} ~ {end_id:02d}]",
                   (card_x + 14, c2_y + 10), font_size=14, color=(0, 240, 220), bold=True)
-        draw_text(canvas, "提示: 点击卡片勾选放行 (保存生效至工位白名单)；点击下半部 [✎ 坐标] 标注已知物理坐标真值",
-                  (card_x + 14, c2_y + 32), font_size=11, color=(140, 160, 180))
         cv2.line(canvas, (card_x + 10, c2_y + 50), (card_x + card_w - 10, c2_y + 50), (36, 45, 60), 1)
 
         allowed_set = set(state.get_frame_tags_status(cur_frame.frame_id))
@@ -1345,14 +1306,14 @@ class HubRenderer:
         card_x = box_x + 16
         c1_y = box_y + 42
         # 1. 动标定义说明徽章
-        help_btn_x, help_btn_y, help_btn_w, help_btn_h = card_x + 310, c1_y + 65, 126, 22
+        help_btn_x, help_btn_y, help_btn_w, help_btn_h = card_x + 310, c1_y + 37, 126, 22
         if help_btn_x <= mx <= help_btn_x + help_btn_w and help_btn_y <= my <= help_btn_y + help_btn_h:
             return True
         # 2. 如果是动标类型坐标系，悬停在动标参数卡片上亦弹出完整解释
         cur_frame = state.get_selected_frame()
         if cur_frame and cur_frame.type == "tag_bound":
-            tag_box_y = c1_y + 98
-            if card_x + 16 <= mx <= card_x + (box_w - 32) - 16 and tag_box_y <= my <= tag_box_y + 84:
+            tag_box_y = c1_y + 70
+            if card_x + 16 <= mx <= card_x + (box_w - 32) - 16 and tag_box_y <= my <= tag_box_y + 44:
                 return True
         return False
 
