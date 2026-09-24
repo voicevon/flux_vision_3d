@@ -25,7 +25,7 @@ class TestGuiLauncher(unittest.TestCase):
     def test_tools_catalog_integrity(self):
         """测试工具目录数据结构完整性与快捷键不重复"""
         catalog = build_tools_catalog()
-        self.assertEqual(len(catalog), 10)
+        self.assertEqual(len(catalog), 12)
 
         seen_keys = set()
         seen_shortcuts = set()
@@ -248,7 +248,7 @@ class TestGuiLauncher(unittest.TestCase):
         self.assertEqual(catalog[4].key_id, "robot_online_tracker")
         self.assertEqual(catalog[5].key_id, "d435_live")
         self.assertEqual(catalog[6].key_id, "scara_debug")
-        self.assertEqual(catalog[7].key_id, "tag_paper_gen")
+        self.assertEqual(catalog[7].key_id, "isolate_wheels_debug")
 
     def test_grid_layout_two_plus_two_plus_one(self):
         """测试 B/D 两组网格布局几何正确 (共 10 张卡片: A 1张全宽, B 2x2, D 2+2+1)"""

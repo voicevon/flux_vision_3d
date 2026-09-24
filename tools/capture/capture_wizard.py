@@ -40,7 +40,7 @@ from src.calibration.workspace_manager import WorkspaceManager, Workspace
 from src.calibration.camera_service import CameraService
 from src.utils.text_rendering import draw_text
 from src.utils.logger import get_logger
-from src.utils.gui_window_manager import GuiWindowManager
+from src.utils.base_cv_app import BaseCvApp
 from tools.capture.renderer import (
     CaptureRenderer, COLOR_ACCENT, COLOR_TEXT_SUB, COL_YELLOW)
 
@@ -60,8 +60,15 @@ except ImportError:
 log = get_logger(__name__)
 
 
-class CaptureWizard:
+class CaptureWizard(BaseCvApp):
     def __init__(self, output_dir: str = None, workspace_id: str = None, purpose: str = "calibration"):
+        super().__init__(
+            app_id=APP_ID,
+            base_w=1280,
+            base_h=720,
+            window_name="capture_wizard",
+            window_title="图像采集 (工作空间与双用途) | flux_vision_3d",
+        )
         self.ws_mgr = WorkspaceManager()
         self.workspaces = self.ws_mgr.list_workspaces()
 
@@ -93,9 +100,9 @@ class CaptureWizard:
         self.flash_timer = 0.0
         self.actual_stream_desc = "相机未开启"
         self._cam_srv = CameraService()
+        self._frame_idx = 0
 
         # GUI 状态
-        self.win_mgr = GuiWindowManager(app_id=APP_ID)
         self.renderer = CaptureRenderer(self)
         self.active_dropdown = None        # None / WS_DROPDOWN / PURPOSE_DROPDOWN / CAMERA_TYPE_DROPDOWN / RES_DROPDOWN
         self.pipeline_running = False
@@ -339,21 +346,23 @@ class CaptureWizard:
         except Exception as e:
             self.set_toast(f"切换自动曝光失败: {e}")
 
-    # ------------------------------ 鼠标交互 ------------------------------
-    def _on_mouse(self, event, x, y, flags, param):
-        if event == cv2.EVENT_MOUSEMOVE:
-            self.renderer.on_mouse_move(x, y)
-        elif event == cv2.EVENT_LBUTTONDOWN:
-            hit = self.renderer.hit_test(x, y)
-            if hit is not None:
-                self._handle_action(*hit)
-                return
-            if self.active_dropdown is not None:
-                self.active_dropdown = None
+    # ==================== BaseCvApp 钩子实现 ====================
+    def set_toast(self, msg: str, duration: float = 3.5):
+        """同步设置 BaseCvApp 与 CaptureRenderer 的 Toast"""
+        super().set_toast(msg, duration)
+        self.status_toast = msg
+        self.status_toast_time = time.time()
+
+    def setup(self):
+        log.info(f"图像采集已启动，工作空间: {self.current_workspace_name}，用途: {self.purpose}，存储目录: {self.output_dir}")
+
+    def on_mouse_move(self, x: int, y: int):
+        self.renderer.on_mouse_move(x, y)
 
     def _handle_action(self, btn_id, payload):
         if btn_id == "TOGGLE_WS_DD":
-            self.active_dropdown = None if self.active_dropdown == "WS_DROPDOWN" else "WS_DROPDOWN"
+            self.refresh_workspace_options()
+            self.active_dropdown = None if self.active_dropdown == "WORKSPACE_DROPDOWN" else "WORKSPACE_DROPDOWN"
         elif btn_id.startswith("DD_WS_"):
             self.active_dropdown = None
             self.switch_workspace(payload)
@@ -384,83 +393,73 @@ class CaptureWizard:
             else:
                 self.set_toast("正在等待有效画面帧...")
         elif btn_id == "QUIT":
-            self.is_running = False
+            self.stop()
 
-    def run(self):
-        self.is_running = True
-        win_key = "capture_wizard"
-        self.win_mgr.setup_window(win_key, mouse_callback=self._on_mouse)
-        self.win_mgr.set_unicode_title("图像采集 (工作空间与双用途) | flux_vision_3d")
+    def on_click(self, x: int, y: int):
+        hit = self.renderer.hit_test(x, y)
+        if hit is not None:
+            self._handle_action(*hit)
+            return
+        if self.active_dropdown is not None:
+            self.active_dropdown = None
 
-        log.info(f"图像采集已启动，工作空间: {self.current_workspace_name}，用途: {self.purpose}，存储目录: {self.output_dir}")
+    def on_key(self, key: int) -> bool:
+        k = chr(key & 0xFF).lower() if (key & 0xFF) < 128 else ""
+        if k in ("q", "x"):
+            self._running = False
+            return True
+        elif k == " ":
+            if self.last_raw_frame is not None:
+                self.save_image(self.last_raw_frame)
+            return True
+        elif k == "[":
+            self.adjust_hardware_exposure(-50.0)
+            return True
+        elif k == "]":
+            self.adjust_hardware_exposure(50.0)
+            return True
+        elif k == "e":
+            self.toggle_auto_exposure()
+            return True
+        return False
 
-        frame_idx = 0
-        frames_shown = 0
+    def render(self) -> np.ndarray:
+        raw_frame = None
+        if self.pipeline_running:
+            raw_frame = self.get_frame(self._frame_idx)
+            self._frame_idx += 1
+            if raw_frame is not None:
+                self.last_raw_frame = raw_frame
+        else:
+            self.last_raw_frame = None
 
-        try:
-            while self.is_running:
-                raw_frame = None
-                if self.pipeline_running:
-                    raw_frame = self.get_frame(frame_idx)
-                    frame_idx += 1
-                    if raw_frame is not None:
-                        self.last_raw_frame = raw_frame
-                else:
-                    self.last_raw_frame = None
+        if raw_frame is not None:
+            if time.time() - self.flash_timer < 0.12:
+                disp = cv2.addWeighted(raw_frame, 0.4, np.full_like(raw_frame, 255), 0.6, 0)
+            else:
+                disp = raw_frame
+            canvas = self.renderer.compose_canvas(disp)
+        elif self.pipeline_running:
+            canvas = self.renderer.make_canvas()
+            cw, ch = self.base_w, self.base_h
+            draw_text(canvas, "取流中...", (cw // 2 - 60, ch // 2), 22, COL_YELLOW, True)
+        else:
+            canvas = self.renderer.make_canvas()
+            cw, ch = self.base_w, self.base_h
+            draw_text(canvas, "相机未开启",
+                      (cw // 2 - 120, ch // 2 - 50), 32, COLOR_ACCENT, True)
+            draw_text(canvas, f"归档: 【{self.current_workspace_name}】/【{self.current_purpose_label}】",
+                      (cw // 2 - 150, ch // 2 + 10), 20, COL_YELLOW)
+            draw_text(canvas, "点击 [开启] 预览画面，按 [空格] 或点击 [拍照] 保存无标注原始帧",
+                      (cw // 2 - 270, ch // 2 + 50), 16, COLOR_TEXT_SUB)
 
-                if raw_frame is not None:
-                    if time.time() - self.flash_timer < 0.12:
-                        disp = cv2.addWeighted(raw_frame, 0.4, np.full_like(raw_frame, 255), 0.6, 0)
-                    else:
-                        disp = raw_frame
-                    canvas = self.renderer.compose_canvas(disp)
-                elif self.pipeline_running:
-                    canvas = self.renderer.make_canvas()
-                    cw, ch = self.win_mgr.canvas_w, self.win_mgr.canvas_h
-                    draw_text(canvas, "取流中...", (cw // 2 - 60, ch // 2), 22, COL_YELLOW, True)
-                else:
-                    canvas = self.renderer.make_canvas()
-                    cw, ch = self.win_mgr.canvas_w, self.win_mgr.canvas_h
-                    draw_text(canvas, "相机未开启",
-                              (cw // 2 - 120, ch // 2 - 50), 32, COLOR_ACCENT, True)
-                    draw_text(canvas, f"归档: 【{self.current_workspace_name}】/【{self.current_purpose_label}】",
-                              (cw // 2 - 150, ch // 2 + 10), 20, COL_YELLOW)
-                    draw_text(canvas, "点击 [开启] 预览画面，按 [空格] 或点击 [拍照] 保存无标注原始帧",
-                              (cw // 2 - 270, ch // 2 + 50), 16, COLOR_TEXT_SUB)
+        self.renderer.draw_toolbar(canvas)
+        self.renderer.draw_toast(canvas)
+        return canvas
 
-                self.renderer.draw_toolbar(canvas)
-                self.renderer.draw_toast(canvas)
-                cv2.imshow(win_key, canvas)
-                frames_shown += 1
-                if frames_shown <= 3 and force_window_focus:
-                    force_window_focus(win_key)
-
-                key = cv2.waitKeyEx(30)
-                poll = self.win_mgr.poll_events(key)
-                if poll.should_quit:
-                    log.info(f"\n采图向导结束。当前数据集共计 {self.image_count} 帧。")
-                    break
-                if key == -1:
-                    continue
-                k = chr(key & 0xFF).lower() if (key & 0xFF) < 128 else ""
-
-                if k in ("q", "x"):
-                    log.info(f"\n采图向导结束。当前数据集共计 {self.image_count} 帧。")
-                    break
-                elif k == " ":
-                    if raw_frame is not None:
-                        self.save_image(raw_frame)
-                elif k == "[":
-                    self.adjust_hardware_exposure(-50.0)
-                elif k == "]":
-                    self.adjust_hardware_exposure(50.0)
-                elif k == "e":
-                    self.toggle_auto_exposure()
-
-        finally:
-            self._stop_camera()
-            cv2.destroyAllWindows()
-            log.info(f"[OK] 采图向导已退出 (当前工位【{self.purpose}】共计 {self.image_count} 帧)")
+    def cleanup(self):
+        self._stop_camera()
+        log.info(f"[OK] 采图向导已退出 (当前工位【{self.purpose}】共计 {self.image_count} 帧)")
 
 
 def main():

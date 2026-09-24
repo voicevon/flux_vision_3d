@@ -22,6 +22,7 @@ from src.calibration.workspace_manager import WorkspaceManager
 from src.vision.asparagus_analyzer import AsparagusAnalyzer
 from src.vision.pipelines import PipelineRegistry, BaseAsparagusPipeline, PipelineResult
 
+from src.utils.base_cv_app import BaseCvApp
 from tools.spatial_mapping_studio.mapping_viewport_interactor import MappingViewportInteractor
 from tools.asparagus_pose_studio.data_io import (
     APP_ID, BASE_H, BASE_W, DEFAULT_DIR, REPORT_DIR, WINDOW_KEY,
@@ -33,16 +34,24 @@ from tools.asparagus_pose_studio.renderer import AsparagusPoseStudioRenderer
 log = get_logger(__name__)
 
 
-class AsparagusPoseStudioApp:
-    """芦笋位姿工作室 GUI 主应用"""
+class AsparagusPoseStudioApp(BaseCvApp):
+    """芦笋位姿工作室 GUI 主应用 (基于 BaseCvApp 轻量基类)"""
 
     def __init__(self, sample_dir: Optional[str] = None, settings_file: Optional[str] = None):
+        super().__init__(
+            app_id=APP_ID,
+            base_w=BASE_W,
+            base_h=BASE_H,
+            window_name=WINDOW_KEY,
+            window_title="芦笋位姿工作室 - Asparagus Pose Studio",
+            settings_file=settings_file,
+            min_w=900,
+            min_h=600,
+            enable_keyboard_zoom=True,
+            responsive=True,
+        )
         self.settings_file = settings_file
         self.sys_cfg = load_system_config()
-        self.win_mgr = GuiWindowManager(
-            app_id=APP_ID, base_w=BASE_W, base_h=BASE_H, min_w=900, min_h=600,
-            settings_file=settings_file
-        )
 
         # 工位管理器感知
         self.workspace_mgr = WorkspaceManager()
@@ -103,9 +112,6 @@ class AsparagusPoseStudioApp:
         self._params_dirty = False  # 滑条参数是否被修改 (离开调参步骤时触发重解算)
         self._sample_rows = []
         self._result_rows = []
-        self._toast_msg = None
-        self._toast_until = 0.0
-        self._running = True
 
         self.rescan(auto_load=True)
 
@@ -261,7 +267,7 @@ class AsparagusPoseStudioApp:
             self.run_analyze()
 
     def _build_analyzer(self, img_w: int, img_h: int) -> AsparagusAnalyzer:
-        """构建向下兼容的 AsparagusAnalyzer 实例"""
+        """构建 AsparagusAnalyzer 实例"""
         fx, fy, cx, cy = self._get_scaled_intrinsics(img_w, img_h)
         analyzer = AsparagusAnalyzer(fx=fx, fy=fy, cx=cx, cy=cy)
         analyzer.set_tag_localizer(self.tag_localizer)
@@ -514,9 +520,17 @@ class AsparagusPoseStudioApp:
             self.set_toast(f"G-code 导出失败: {res}", True)
 
     # ------------------------------ 交互与事件 ------------------------------
+    # ------------------------------ 交互与事件 ------------------------------
     def set_toast(self, msg: str, sticky: bool = False, duration: float = 2.2):
-        self._toast_msg = msg
-        self._toast_until = time.time() + (3600 if sticky else duration)
+        super().set_toast(msg, duration=(3600.0 if sticky else duration))
+
+    @property
+    def _toast_msg(self) -> str:
+        return self._toast
+
+    @_toast_msg.setter
+    def _toast_msg(self, msg: Optional[str]):
+        self._toast = msg or ""
 
     def hit_test(self, x: int, y: int) -> Optional[Tuple[str, Any]]:
         for rect, action in reversed(self._buttons):
@@ -531,120 +545,128 @@ class AsparagusPoseStudioApp:
         elif label.startswith("导出"):
             self.export_gcode()
         elif label.startswith("退出"):
-            self._running = False
+            self.stop()
 
-    def _on_mouse(self, event, x, y, flags, param):
-        self.mouse_pos = (x, y)
+    def on_mouse_wheel(self, delta: int, flags: int):
+        x, y = self.mouse_x, self.mouse_y
         m = AsparagusPoseStudioRenderer.compute_metrics(self.win_mgr.canvas_w)
         list_p, img_p, _ = AsparagusPoseStudioRenderer.compute_panels(
             self.win_mgr.canvas_w, self.win_mgr.canvas_h, m
         )
+        wheel_up = (flags > 0)
+        if list_p[0] <= x <= list_p[2]:
+            if wheel_up:
+                self.scroll_off = max(0, self.scroll_off - 2)
+            else:
+                self.scroll_off += 2
+        elif img_p[0] <= x <= img_p[2] and img_p[1] <= y <= img_p[3]:
+            vx, vy, vw, vh = img_p[0] + 2, img_p[1] + 2, img_p[2] - img_p[0] - 4, img_p[3] - img_p[1] - 4
+            self.viewport.zoom_at(x, y, wheel_up, (vx, vy, vw, vh))
 
-        # 1. 鼠标滚轮事件
-        if event == cv2.EVENT_MOUSEWHEEL:
-            wheel_up = (flags > 0)
-            if list_p[0] <= x <= list_p[2]:
-                if wheel_up:
-                    self.scroll_off = max(0, self.scroll_off - 2)
-                else:
-                    self.scroll_off += 2
-                return
-            elif img_p[0] <= x <= img_p[2] and img_p[1] <= y <= img_p[3]:
-                vx, vy, vw, vh = img_p[0] + 2, img_p[1] + 2, img_p[2] - img_p[0] - 4, img_p[3] - img_p[1] - 4
-                self.viewport.zoom_at(x, y, wheel_up, (vx, vy, vw, vh))
-                return
-            handled, toast = self.win_mgr.handle_mouse_wheel(event, flags)
-            if handled and toast:
-                self.set_toast(toast)
-            return
-
-        # 2. 拖拽平移事件 (右键或中键)
-        if event in (cv2.EVENT_RBUTTONDOWN, cv2.EVENT_MBUTTONDOWN):
+    def on_mouse_down(self, x: int, y: int, button: str):
+        m = AsparagusPoseStudioRenderer.compute_metrics(self.win_mgr.canvas_w)
+        _, img_p, _ = AsparagusPoseStudioRenderer.compute_panels(
+            self.win_mgr.canvas_w, self.win_mgr.canvas_h, m
+        )
+        if button in ("right", "middle"):
             if img_p[0] <= x <= img_p[2] and img_p[1] <= y <= img_p[3]:
                 self.viewport.start_pan(x, y)
                 return
-        elif event == cv2.EVENT_MOUSEMOVE:
-            # 步骤滑条拖拽中: 实时更新滑块值并刷新预览
-            if self._drag_slider is not None and (flags & cv2.EVENT_FLAG_LBUTTON):
-                self._move_slider(x)
-                return
-            if self.viewport.update_pan(x, y):
-                return
-        elif event in (cv2.EVENT_RBUTTONUP, cv2.EVENT_MBUTTONUP):
+        elif button == "left":
+            self.on_click(x, y)
+
+    def on_mouse_up(self, x: int, y: int, button: str):
+        if button in ("right", "middle"):
             if self.viewport.is_panning:
                 self.viewport.end_pan()
-                return
-        if event == cv2.EVENT_LBUTTONUP and self._drag_slider is not None:
-            self._drag_slider = None      # 结束拖拽 (参数已实时写入, 离开调参步骤时重解算)
-            self._save_persisted_state()  # 滑条参数即时持久化, 重启后自动回放
+        elif button == "left":
+            if self._drag_slider is not None:
+                self._drag_slider = None      # 结束拖拽 (参数已实时写入, 离开调参步骤时重解算)
+                self._save_persisted_state()  # 滑条参数即时持久化, 重启后自动回放
+
+    def on_mouse_move(self, x: int, y: int):
+        self.mouse_pos = (x, y)
+        # 步骤滑条拖拽中: 实时更新滑块值并刷新预览
+        if self._drag_slider is not None:
+            self._move_slider(x)
+            return
+        if self.viewport.update_pan(x, y):
             return
 
-        # 3. 双击复位事件
-        if event in (cv2.EVENT_LBUTTONDBLCLK, cv2.EVENT_RBUTTONDBLCLK):
-            if img_p[0] <= x <= img_p[2] and img_p[1] <= y <= img_p[3]:
-                self.viewport.reset()
-                self.set_toast("视口已重置为适应窗口 (1.0x)")
-                return
+    def on_double_click(self, x: int, y: int):
+        m = AsparagusPoseStudioRenderer.compute_metrics(self.win_mgr.canvas_w)
+        _, img_p, _ = AsparagusPoseStudioRenderer.compute_panels(
+            self.win_mgr.canvas_w, self.win_mgr.canvas_h, m
+        )
+        if img_p[0] <= x <= img_p[2] and img_p[1] <= y <= img_p[3]:
+            self.viewport.reset()
+            self.set_toast("视口已重置为适应窗口 (1.0x)")
 
-        # 4. 常规左键点击
-        if event == cv2.EVENT_LBUTTONDOWN:
-            # 步骤滑条: 命中即开始拖拽最近滑块
-            if self._hit_slider(x, y):
-                return
-            if self.active_dropdown and self._dd_items:
-                for rect, key in self._dd_items:
-                    if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
-                        dd_type = self.active_dropdown
-                        self.active_dropdown = None
-                        if dd_type == "WORKSPACE_DROPDOWN":
-                            self.switch_workspace(key)
-                        elif dd_type == "PIPELINE_DROPDOWN":
-                            self.switch_pipeline(key)
-                        return
-                self.active_dropdown = None
-
-            hit = self.hit_test(x, y)
-            if hit:
-                act_type, act_val = hit
-                if act_type == "toggle_dd":
-                    self.active_dropdown = None if self.active_dropdown == act_val else act_val
-                elif act_type == "btn":
-                    self._on_button(act_val)
-                elif act_type == "set_step":
-                    self._select_step(act_val)
-                return
-
-            for rect, idx in self._sample_rows:
-                if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
-                    self._select_sample(idx, analyze_now=True)
-                    return
-
-            for rect, t_idx in self._result_rows:
-                if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
-                    self._select_target(t_idx)
-                    return
-
-    def _handle_key(self, raw_key: int):
-        handled, toast = self.win_mgr.handle_keyboard_fallback(raw_key)
-        if toast:
-            self.set_toast(toast)
-        if handled:
+    def on_click(self, x: int, y: int):
+        # 步骤滑条: 命中即开始拖拽最近滑块
+        if self._hit_slider(x, y):
             return
+        if self.active_dropdown and self._dd_items:
+            for rect, key in self._dd_items:
+                if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
+                    dd_type = self.active_dropdown
+                    self.active_dropdown = None
+                    if dd_type == "WORKSPACE_DROPDOWN":
+                        self.switch_workspace(key)
+                    elif dd_type == "PIPELINE_DROPDOWN":
+                        self.switch_pipeline(key)
+                    return
+            self.active_dropdown = None
+
+        hit = self.hit_test(x, y)
+        if hit:
+            act_type, act_val = hit
+            if act_type == "toggle_dd":
+                self.active_dropdown = None if self.active_dropdown == act_val else act_val
+            elif act_type == "btn":
+                self._on_button(act_val)
+            elif act_type == "set_step":
+                self._select_step(act_val)
+            return
+
+        for rect, idx in self._sample_rows:
+            if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
+                self._select_sample(idx, analyze_now=True)
+                return
+
+        for rect, t_idx in self._result_rows:
+            if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
+                self._select_target(t_idx)
+                return
+
+    def on_key(self, raw_key: int) -> bool:
         key = chr(raw_key & 0xFF).lower() if (raw_key & 0xFF) < 128 else ""
         if key in ("x", "\x1b"):
-            self._running = False
+            self.stop()
+            return True
         elif key == " " or raw_key == 32 or raw_key in (10, 13):
             self.run_analyze()
+            return True
         elif key == "e":
             self.export_gcode()
+            return True
         elif raw_key in (2490368, 65362, 38):      # 上方向键
             if self.sel_idx > 0:
                 self._select_sample(self.sel_idx - 1, analyze_now=True)
+            return True
         elif raw_key in (2621440, 65364, 40):      # 下方向键
             if self.sel_idx < len(self.samples) - 1:
                 self._select_sample(self.sel_idx + 1, analyze_now=True)
+            return True
+        return False
 
-    # ------------------------------ 渲染与主循环 ------------------------------
+    def setup(self):
+        log.info("芦笋位姿工作室 GUI 已启动: %s (%d 个样本)", self.sample_dir, len(self.samples))
+
+    def cleanup(self):
+        log.info("芦笋位姿工作室 GUI 已安全退出")
+
+    # ------------------------------ 渲染接口 ------------------------------
     def render(self) -> np.ndarray:
         """重绘整个画布并更新交互命中区域"""
         W, H = self.win_mgr.canvas_w, self.win_mgr.canvas_h
@@ -653,30 +675,6 @@ class AsparagusPoseStudioApp:
             AsparagusPoseStudioRenderer.render_scene(canvas, self)
         )
         return canvas
-
-    def run(self):
-        """GUI 主循环"""
-        self.win_mgr.setup_window(WINDOW_KEY, self._on_mouse)
-        self.win_mgr.set_unicode_title("芦笋位姿工作室 - Asparagus Pose Studio")
-        log.info("芦笋位姿工作室 GUI 已启动: %s (%d 个样本)", self.sample_dir, len(self.samples))
-
-        while self._running:
-            key = cv2.waitKey(30)
-            poll = self.win_mgr.poll_events(key & 0xFFFF if key > 0 else -1)
-            if poll.should_quit:
-                break
-            if key > 0:
-                self._handle_key(key)
-            if poll.toast_msg:
-                self.set_toast(poll.toast_msg)
-
-            cv2.imshow(WINDOW_KEY, self.render())
-
-        try:
-            cv2.destroyWindow(WINDOW_KEY)
-        except Exception:
-            pass
-        log.info("芦笋位姿工作室 GUI 已安全退出")
 
 
 def main():

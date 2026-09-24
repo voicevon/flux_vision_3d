@@ -18,9 +18,9 @@ if PROJECT_ROOT not in sys.path:
 from tools.isolate_wheels_debug.app import (
     IsolateWheelsDebuggerApp, LOGIC_W, LOGIC_H,
     DEV_CHIP_X0, DEV_CHIP_Y, DEV_CHIP_W, DEV_CHIP_H, DEV_CHIP_STEP,
-    BTN_CLEAR, BTN_SEND,
-    MOTOR_BTN_FWD, MOTOR_BTN_REV, MOTOR_BTN_AMINUS, MOTOR_BTN_APLUS,
-    MOTOR_TAB_SINGLE, MOTOR_TAB_MULTI, MULTI_SEND_BTN, MULTI_ANGLE_OPTS, MULTI_POPUP_ROW_H,
+    BTN_CLEAR_COUNTS, BTN_SEND_LOAD, BTN_QUIT,
+    BTN_DIR_FWD, BTN_DIR_REV,
+    TAB_SINGLE, TAB_MULTI, BTN_SEND_MOTOR, MULTI_ANGLE_OPTS, POPUP_ROW_H,
 )
 
 
@@ -132,29 +132,27 @@ class TestIsolateWheelsDebug(unittest.TestCase):
         self.assertEqual(self.app.last_cmd_json, payload)
 
     def test_motor_panel_clicks(self):
-        """电机芯片/方向/角度步进与预设点击交互"""
-        # 电机号选择
-        chip = self.app._motor_chip_rect(4)
-        self.app._handle_click(chip[0] + chip[2] // 2, chip[1] + chip[3] // 2)
+        """通道 Header/方向/角度步进与下拉交互"""
+        # 点击 5 号电机 (idx=4, col=7-4=3) Header
+        col = 3
+        hdr = self.app._col_header_rect(col)
+        self.app.on_click(hdr[0] + hdr[2] // 2, hdr[1] + hdr[3] // 2)
         self.assertEqual(self.app.motor_sel, 5)
         # 方向切换
-        fwd, rev = self.app._motor_abs(MOTOR_BTN_FWD), self.app._motor_abs(MOTOR_BTN_REV)
-        self.app._handle_click(rev[0] + 2, rev[1] + 2)
+        self.app.motor_mode = "single"
+        self.app.on_click(BTN_DIR_REV[0] + 2, BTN_DIR_REV[1] + 2)
         self.assertEqual(self.app.motor_dir, 0)
-        self.app._handle_click(fwd[0] + 2, fwd[1] + 2)
+        self.app.on_click(BTN_DIR_FWD[0] + 2, BTN_DIR_FWD[1] + 2)
         self.assertEqual(self.app.motor_dir, 1)
-        # 角度步进与边界钳制: 90 -> 112.5 -> ... -> 360 后再加不变
-        aminus, aplus = self.app._motor_abs(MOTOR_BTN_AMINUS), self.app._motor_abs(MOTOR_BTN_APLUS)
+        # 角度步进微调
+        aminus = self.app._col_angle_minus(col)
+        aplus = self.app._col_angle_plus(col)
         self.app.motor_angle = 90.0
-        self.app._handle_click(aminus[0] + 2, aminus[1] + 2)
+        self.app.on_click(aminus[0] + 2, aminus[1] + 2)
         self.assertEqual(self.app.motor_angle, 67.5)
         self.app.motor_angle = 360.0
-        self.app._handle_click(aplus[0] + 2, aplus[1] + 2)
+        self.app.on_click(aplus[0] + 2, aplus[1] + 2)
         self.assertEqual(self.app.motor_angle, 360.0)
-        # 预设角度
-        preset = self.app._motor_preset_rect(2)  # 180°
-        self.app._handle_click(preset[0] + 2, preset[1] + 2)
-        self.assertEqual(self.app.motor_angle, 180.0)
 
     # ---------- v1.2 multi 多电机调试 ----------
     def test_send_multi_requires_connection_and_idle(self):
@@ -179,32 +177,30 @@ class TestIsolateWheelsDebug(unittest.TestCase):
 
     def test_multi_mode_tabs(self):
         """电机面板模式页签切换"""
-        tab_multi = self.app._motor_abs(MOTOR_TAB_MULTI)
-        self.app._handle_click(tab_multi[0] + 2, tab_multi[1] + 2)
+        self.app.on_click(TAB_MULTI[0] + 2, TAB_MULTI[1] + 2)
         self.assertEqual(self.app.motor_mode, "multi")
-        tab_single = self.app._motor_abs(MOTOR_TAB_SINGLE)
-        self.app._handle_click(tab_single[0] + 2, tab_single[1] + 2)
+        self.app.on_click(TAB_SINGLE[0] + 2, TAB_SINGLE[1] + 2)
         self.assertEqual(self.app.motor_mode, "single")
 
     def test_multi_dropdown_interaction(self):
         """多电机下拉框: 展开/选择角度/点击外部收起"""
         self.app.motor_mode = "multi"
-        box = self.app._multi_box_rect(2)  # 3 号电机
-        self.app._handle_click(box[0] + 2, box[1] + 2)
-        self.assertEqual(self.app.multi_open, 2)
+        col = 7 - 2  # 3 号电机 (idx=2)
+        box = self.app._col_angle_box(col)
+        self.app.on_click(box[0] + 2, box[1] + 2)
+        self.assertEqual(self.app.popup_col, col)
         # 选择 90° (选项第 4 行)
-        px, py, pw, ph = self.app._multi_popup_rect()
-        self.app._handle_click(px + 2, py + 4 + 3 * MULTI_POPUP_ROW_H + 2)
+        px, py, pw, ph = self.app._popup_rect()
+        self.app.on_click(px + 2, py + 4 + 3 * POPUP_ROW_H + 2)
         self.assertEqual(self.app.multi_angles[2], 90.0)
-        self.assertEqual(self.app.multi_open, -1)
+        self.assertEqual(self.app.popup_col, -1)
         # 再展开后点击弹层外仅收起
-        self.app._handle_click(box[0] + 2, box[1] + 2)
-        self.app._handle_click(20, 20)
-        self.assertEqual(self.app.multi_open, -1)
+        self.app.on_click(box[0] + 2, box[1] + 2)
+        self.app.on_click(20, 20)
+        self.assertEqual(self.app.popup_col, -1)
         self.assertEqual(self.app.multi_angles[2], 90.0)
         # 发送按钮点击 (未连接, 无副作用)
-        send_btn = self.app._motor_abs(MULTI_SEND_BTN)
-        self.app._handle_click(send_btn[0] + 5, send_btn[1] + 5)
+        self.app.on_click(BTN_SEND_MOTOR[0] + 5, BTN_SEND_MOTOR[1] + 5)
         self.assertEqual(self.app.last_cmd_json, "")
 
     def test_multi_options_in_range(self):
@@ -216,23 +212,25 @@ class TestIsolateWheelsDebug(unittest.TestCase):
     # ---------- 托架步进器交互 ----------
     def test_stepper_click_and_clamp(self):
         """[+]/[-] 点击改变托架数量且 0~9 边界钳制"""
-        minus, plus = self.app._stepper_btn_rects(2)
-        self.app._handle_click(plus[0] + plus[2] // 2, plus[1] + plus[3] // 2)
+        col = 7 - 2
+        minus = self.app._col_count_minus(col)
+        plus = self.app._col_count_plus(col)
+        self.app.on_click(plus[0] + plus[2] // 2, plus[1] + plus[3] // 2)
         self.assertEqual(self.app.counts[2], 1)
-        self.app._handle_click(minus[0] + minus[2] // 2, minus[1] + minus[3] // 2)
+        self.app.on_click(minus[0] + minus[2] // 2, minus[1] + minus[3] // 2)
         self.assertEqual(self.app.counts[2], 0)
-        self.app._handle_click(minus[0] + minus[2] // 2, minus[1] + minus[3] // 2)  # 已为 0 再减
+        self.app.on_click(minus[0] + minus[2] // 2, minus[1] + minus[3] // 2)
         self.assertEqual(self.app.counts[2], 0)
 
     def test_clear_button_zeroes_all(self):
         """全部清零按钮重置 8 托架"""
         self.app.counts = [3] * 8
-        self.app._handle_click(BTN_CLEAR[0] + BTN_CLEAR[2] // 2, BTN_CLEAR[1] + BTN_CLEAR[3] // 2)
+        self.app.on_click(BTN_CLEAR_COUNTS[0] + BTN_CLEAR_COUNTS[2] // 2, BTN_CLEAR_COUNTS[1] + BTN_CLEAR_COUNTS[3] // 2)
         self.assertEqual(self.app.counts, [0] * 8)
 
     def test_send_button_blocked_when_disconnected(self):
         """点击发送按钮在未连接时无副作用"""
-        self.app._handle_click(BTN_SEND[0] + BTN_SEND[2] // 2, BTN_SEND[1] + BTN_SEND[3] // 2)
+        self.app.on_click(BTN_SEND_LOAD[0] + BTN_SEND_LOAD[2] // 2, BTN_SEND_LOAD[1] + BTN_SEND_LOAD[3] // 2)
         self.assertEqual(self.app.last_cmd_json, "")
 
     # ---------- 设备芯片选择 ----------
@@ -241,17 +239,17 @@ class TestIsolateWheelsDebug(unittest.TestCase):
         self.app.devices = {"AAA1": "idle", "BBB2": "running"}
         cx = DEV_CHIP_X0 + DEV_CHIP_STEP + DEV_CHIP_W // 2   # 第 2 枚芯片中心
         cy = DEV_CHIP_Y + DEV_CHIP_H // 2
-        self.app._handle_click(cx, cy)
+        self.app.on_click(cx, cy)
         self.assertEqual(self.app.selected_devid, "BBB2")
 
     def test_quit_button(self):
         """顶栏退出按钮终止主循环"""
-        self.app._handle_click(1032 + 24, 18 + 17)  # BTN_QUIT 中心
+        self.app.on_click(BTN_QUIT[0] + BTN_QUIT[2] // 2, BTN_QUIT[1] + BTN_QUIT[3] // 2)
         self.assertFalse(self.app._running)
 
     # ---------- 渲染冒烟 ----------
     def test_render_canvas_shape(self):
-        """渲染输出 1100x720 三通道逻辑画布"""
+        """渲染输出 1280x760 三通道逻辑画布"""
         canvas = self.app.render()
         self.assertEqual(canvas.shape, (LOGIC_H, LOGIC_W, 3))
 

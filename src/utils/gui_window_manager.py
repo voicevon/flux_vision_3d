@@ -108,9 +108,6 @@ class GuiWindowManager:
             # 如果存在专属 app_id 节点，直接读取
             if self.app_id in root_data and isinstance(root_data[self.app_id], dict):
                 data = root_data[self.app_id]
-            elif self.app_id == "gui_launcher" and "scale_pct" in root_data:
-                # 仅对旧版本单层根节点向后兼容
-                data = root_data
             else:
                 # 该应用尚未有独立配置，严格保持默认基准
                 return

@@ -23,7 +23,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.calibration.workspace_manager import WorkspaceManager
-from src.utils.gui_window_manager import GuiWindowManager
+from src.utils.base_cv_app import BaseCvApp
 from tools.workspace_hub.hub_state import HubState
 from tools.workspace_hub.hub_renderer import (
     HubRenderer, grid_hit_test, HELP_MODAL_W, HELP_MODAL_H,
@@ -41,71 +41,35 @@ log = get_logger(__name__)
 from src.utils.dialog_utils import prompt_confirm, prompt_input_text
 
 
-class WorkspaceHubApp:
-    """Workspace Hub 主应用"""
+class WorkspaceHubApp(BaseCvApp):
+    """Workspace Hub 主应用 (基于 BaseCvApp 轻量基类)"""
 
-    def __init__(self, force_mock: bool = False, settings_file: str = None):
-        self.force_mock = force_mock
-        self.win_mgr = GuiWindowManager(
+    def __init__(self, force_mock: bool = False, settings_file: str = None, workspace_mgr: WorkspaceManager = None):
+        super().__init__(
             app_id="workspace_hub",
             base_w=960,
             base_h=720,
+            window_name="flux_vision_3d | workspace",
+            window_title="flux_vision_3d | Workspace",
             settings_file=settings_file,
-            enable_keyboard_zoom=False  # 全鼠标化: 不启用 Ctrl/+/- 键盘缩放热键
+            enable_keyboard_zoom=False,
         )
-        self.workspace_mgr = WorkspaceManager()
+        self.force_mock = force_mock
+        self.workspace_mgr = workspace_mgr or WorkspaceManager()
         self.state = HubState(self.workspace_mgr, force_mock=force_mock)
         self.renderer = HubRenderer()
-        # 窗口内部 key 必须纯 ASCII (namedWindow ANSI API), 中文标题走 set_unicode_title
-        self.window_name = "flux_vision_3d | workspace"
-        self.window_title = "flux_vision_3d | Workspace"
-        self._running = True
 
         if self.win_mgr.scale_pct != 100 or self.win_mgr.canvas_w != 960 or self.win_mgr.canvas_h != 720:
             self.state.set_toast(f"已恢复偏好设置：放大镜 {self.win_mgr.scale_pct}%，视窗 {self.win_mgr.canvas_w}×{self.win_mgr.canvas_h}")
 
-    def run(self):
-        """主事件循环"""
-        # 使用 GuiWindowManager 挂载原生窗口、记忆尺寸与 Unicode 标题
-        self.win_mgr.setup_window(self.window_name, self._on_mouse_event)
-        self.win_mgr.set_unicode_title(self.window_title)
+    # ==================== BaseCvApp 钩子实现 ====================
+    def set_toast(self, msg: str, duration: float = 4.0):
+        super().set_toast(msg, duration)
+        self.state.set_toast(msg)
 
-        try:
-            cv2.resizeWindow(self.window_name, self.win_mgr.canvas_w, self.win_mgr.canvas_h)
-        except Exception:
-            pass  # GUI 可选功能：初始窗口尺寸设置失败不影响主循环
-
-        while self._running:
-            # 1. 视窗管理器综合轮询 (红叉检测、硬件按键缩放、拖拽防抖持久化)
-            poll_res = self.win_mgr.poll_events()
-            if poll_res.should_quit:
-                break
-            if poll_res.toast_msg:
-                self.state.set_toast(poll_res.toast_msg)
-
-            # 2. 渲染画面并在当前窗口分辨率下严格上对齐呈现 (无多余顶部黑边)
-            raw_canvas = self.renderer.render(self.state)
-            if self.win_mgr.canvas_w == self.renderer.canvas_w and self.win_mgr.canvas_h == self.renderer.canvas_h:
-                present_canvas = raw_canvas
-            else:
-                present_canvas = np.full((self.win_mgr.canvas_h, self.win_mgr.canvas_w, 3), (18, 20, 24), dtype=np.uint8)
-                scale = min(self.win_mgr.canvas_w / float(self.renderer.canvas_w),
-                            self.win_mgr.canvas_h / float(self.renderer.canvas_h))
-                target_w = int(round(self.renderer.canvas_w * scale))
-                target_h = int(round(self.renderer.canvas_h * scale))
-                interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-                scaled = cv2.resize(raw_canvas, (target_w, target_h), interpolation=interp)
-                pad_x = (self.win_mgr.canvas_w - target_w) // 2
-                pad_y = 0  # 严格上对齐！
-                present_canvas[0:target_h, pad_x:pad_x + target_w] = scaled
-
-            cv2.imshow(self.window_name, present_canvas)
-
-            # 3. waitKeyEx 仅用于驱动窗口消息泵刷新画面 (项目已全面鼠标化, 不响应任何键盘快捷键)
-            cv2.waitKeyEx(15)
-
-        # 退出清理
-        cv2.destroyAllWindows()
+    def render(self) -> np.ndarray:
+        """核心渲染: 委托 HubRenderer 进行渲染"""
+        return self.renderer.render(self.state)
 
     def _launch_capture_wizard(self):
         """启动多视角交互式采图向导 (tools/capture/capture_wizard.py)"""
@@ -115,49 +79,26 @@ class WorkspaceHubApp:
             cmd.extend(["--workspace", ws.workspace_id])
         self._run_subtool(cmd, "多视角交互采图向导")
 
-    def _on_mouse_event(self, event, x, y, flags, param):
-        """处理鼠标点击、悬浮 Hover 与滚轮切片交互 (支持 Ctrl+滚轮缩放与逻辑坐标映射)"""
-        # 0. 优先拦截 Ctrl + 滚轮缩放 (委托通用视窗管理器)
-        if event == 10:  # cv2.EVENT_MOUSEWHEEL
-            handled, toast = self.win_mgr.handle_mouse_wheel(event, flags)
-            if handled and toast:
-                self.state.set_toast(toast)
-                return
+    def on_mouse_move(self, x: int, y: int):
+        """实时跟踪鼠标坐标，支持全部按钮平滑 Hover 高亮"""
+        self.state.mouse_x = x
+        self.state.mouse_y = y
 
-        # 0.1 物理坐标转换回 960x720 逻辑坐标 (严格上对齐)
-        if self.win_mgr.canvas_w != self.renderer.canvas_w or self.win_mgr.canvas_h != self.renderer.canvas_h:
-            scale = min(self.win_mgr.canvas_w / float(self.renderer.canvas_w),
-                        self.win_mgr.canvas_h / float(self.renderer.canvas_h))
-            pad_x = (self.win_mgr.canvas_w - int(round(self.renderer.canvas_w * scale))) // 2
-            pad_y = 0  # 严格上对齐！
-            logic_x = int((x - pad_x) / max(1e-6, scale))
-            logic_y = int(y / max(1e-6, scale))
-            x = max(0, min(self.renderer.canvas_w - 1, logic_x))
-            y = max(0, min(self.renderer.canvas_h - 1, logic_y))
+    def on_mouse_wheel(self, delta: int, flags: int):
+        """普通滚轮极速翻页/切换 Workspace"""
+        wheel_dir = -1 if delta > 0 else 1
+        x, y = self.mouse_x, self.mouse_y
+        if x <= 340 and 58 <= y <= 520:
+            self.state.select_workspace_by_offset(wheel_dir)
+        elif self.state.view_mode == HubState.VIEW_EXPANDED:
+            # 全宽大图沉浸模式下滚轮切换大图
+            self.state.select_image_by_offset(wheel_dir)
+        else:
+            # 卡片网格墙模式下滚轮翻页
+            self._scroll_grid_for_active_tab(wheel_dir)
 
-        # 1. 实时跟踪鼠标坐标，支持全部按钮平滑 Hover 高亮
-        if event == cv2.EVENT_MOUSEMOVE:
-            self.state.mouse_x = x
-            self.state.mouse_y = y
-            return
-
-        # 2. 普通滚轮极速翻页/切换 Workspace (未按 Ctrl 时)
-        if event == cv2.EVENT_MOUSEWHEEL:
-            delta = -1 if flags > 0 else 1
-            if x <= 340 and 58 <= y <= 520:
-                self.state.select_workspace_by_offset(delta)
-            elif self.state.view_mode == HubState.VIEW_EXPANDED:
-                # 全宽大图沉浸模式下滚轮切换大图
-                self.state.select_image_by_offset(delta)
-            else:
-                # 卡片网格墙模式下滚轮翻页
-                self._scroll_grid_for_active_tab(delta)
-            return
-
-        # 后续仅处理鼠标左键点击 (单击选中 / 双击放大)
-        if event not in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_LBUTTONDBLCLK):
-            return
-
+    def on_click(self, x: int, y: int):
+        """处理鼠标左键单击与双击交互"""
         # =================== 2.5 坐标系与 3D ROI 结构化弹窗交互 ===================
         if self.state.frame_modal_open:
             self._handle_frame_modal_click(x, y)
@@ -189,35 +130,67 @@ class WorkspaceHubApp:
             return
 
         # =================== 4. 正常看板与采图模式下的鼠标点击 ===================
-        # 4.0 顶部标题栏交互 (右侧动态区四页签 Tab + 紧邻生产相册的 [退出] 按钮)
-        # 4.0.0 四页签 Tab 胶囊 (单源常量驱动)
-        tab_total_w = len(HubState.TAB_ORDER) * HEADER_TAB_STEP
-        if HEADER_TAB_Y0 <= y <= HEADER_TAB_Y0 + HEADER_TAB_H and HEADER_TAB_X0 <= x <= HEADER_TAB_X0 + tab_total_w:
-            tab_idx = (x - HEADER_TAB_X0) // HEADER_TAB_STEP
-            if 0 <= tab_idx < len(HubState.TAB_ORDER):
-                self.state.set_tab(HubState.TAB_ORDER[tab_idx])
+        # 统一使用 renderer.hit_test 进行像素级高精度命中测试
+        hit = self.renderer.hit_test(x, y, self.state)
+
+        # 4.0 顶部标题栏交互 (退出按钮与自适应 Tab 胶囊)
+        if hit == "btn_exit":
+            self.stop()
+            return
+        if isinstance(hit, tuple) and hit[0] == "hdr_tab_key":
+            self.state.set_tab(hit[1])
             return
 
-        # 4.0.2 [退出] 按钮紧贴生产相册右侧
-        if BTN_EXIT_X0 <= x <= BTN_EXIT_X0 + BTN_EXIT_W and BTN_EXIT_Y0 <= y <= BTN_EXIT_Y0 + BTN_EXIT_H:
-            self._running = False
-            return
-
-        # 5.1 点击左侧 Workspace 列表卡片 (x: 10~330, y: 58~520, 支持 6 张卡片)
-        if 10 <= x <= 330 and 58 <= y <= 520:
-            card_h = 70
-            gap = 8
-            idx_in_view = (y - 58) // (card_h + gap)
-            max_cards = 6
-            scroll_start = max(0, self.state.selected_workspace_idx - max_cards + 1)
-            target_idx = scroll_start + idx_in_view
-            if 0 <= target_idx < len(self.state.workspaces):
-                self.state.select_workspace_at_index(target_idx)
-            return
-
-        # 5.2 点击左侧通用全局 Workspace 管理按钮 (y: 614~654)
-        if 10 <= x <= 330 and 614 <= y <= 654:
+        # 4.1 左侧面板两层树结构交互
+        if hit == "btn_new_workspace":
             self._handle_create_workspace()
+            return
+        if isinstance(hit, tuple) and hit[0] == "tree_ws_toggle":
+            ws_id = hit[2]
+            self.state.toggle_workspace_expanded(ws_id)
+            return
+        if isinstance(hit, tuple) and hit[0] == "tree_ws_select":
+            ws_idx = hit[1]
+            self.state.select_tree_workspace(ws_idx)
+            return
+        if isinstance(hit, tuple) and hit[0] == "tree_frame_select":
+            ws_idx, frame_id = hit[1], hit[2]
+            self.state.select_tree_frame(ws_idx, frame_id)
+            return
+
+        # 4.2 坐标系专属视图交互
+        if hit == "btn_edit_frame_pose":
+            cur_frame = self.state.get_selected_frame()
+            if cur_frame:
+                self.state.open_frame_modal(cur_frame.frame_id)
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_tag_toggle":
+            tag_id = hit[1]
+            cur_frame = self.state.get_selected_frame()
+            if cur_frame:
+                is_now_allowed = self.state.toggle_frame_tag_allowed(cur_frame.frame_id, tag_id)
+                status_txt = "已放行 (已加入工位白名单)" if is_now_allowed else "已取消放行 (已移出工位白名单)"
+                self.state.set_toast(f"标靶 Tag #{tag_id:02d} {status_txt}")
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_tag_edit_xyz":
+            tag_id = hit[1]
+            self._handle_frame_tag_edit_xyz(tag_id)
+            return
+        if hit == "btn_add_frame_roi":
+            cur_frame = self.state.get_selected_frame()
+            self.state.open_roi_modal()
+            if cur_frame:
+                self.state.roi_modal_data["frame_id"] = cur_frame.frame_id
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_roi_edit":
+            roi_id = hit[1]
+            self.state.open_roi_modal(roi_id)
+            return
+        if isinstance(hit, tuple) and hit[0] == "frame_roi_delete":
+            roi_id = hit[1]
+            if prompt_confirm("确认删除 3D ROI", f"确定要删除 3D ROI 空间物件 [{roi_id}] 吗？"):
+                self.state.delete_roi(roi_id)
+                self.state.set_toast(f"已删除 ROI: {roi_id}")
             return
 
         # 5.4 全宽大图预览模式下的右上角按钮交互 (x: 340~960)
@@ -242,11 +215,11 @@ class WorkspaceHubApp:
                 self.state.toggle_expanded_preview()
                 return
 
-        # 5.5 右侧动态区四页签内容交互 (x: 340~960, y: 50~670)
+        # 5.5 右侧动态区各页签内容交互
         if not self.state.expanded_preview_mode:
             tab = self.state.active_tab
 
-            # 5.5.0 坐标系与 3D ROI 页签交互
+            # 5.5.0 坐标系与 3D ROI 页签交互 (旧版备用)
             if tab == HubState.TAB_FRAMES_ROIS:
                 self._handle_frames_rois_click(x, y)
                 return
@@ -266,7 +239,6 @@ class WorkspaceHubApp:
                             self._handle_tag_whitelist()
                         return
 
-                # 编辑态: 锚点弹窗优先, 其后芯片/批量/锚点切换点击分发 (视图态芯片不可点, 防误触)
                 if self.state.whitelist_edit_mode:
                     if self.state.anchor_modal_open:
                         self._handle_anchor_modal_click(x, y)
@@ -274,29 +246,23 @@ class WorkspaceHubApp:
                         self._handle_whitelist_edit_click(x, y)
                     return
 
-            # 5.5.1.5 体检报告页签：工位信息卡片内嵌按钮点击处理 (x: 864~938, 776~854)
+            # 5.5.1.5 体检报告页签：工位信息卡片内嵌按钮点击处理
             if tab == HubState.TAB_REPORT:
-                # [重命名]
                 if 864 <= x <= 938 and 68 <= y <= 94:
                     self._handle_rename_workspace()
                     return
-                # [打开]
                 if 864 <= x <= 938 and 96 <= y <= 122:
                     self._handle_open_directory()
                     return
-                # [修改]
                 if 864 <= x <= 938 and 152 <= y <= 178:
                     self._handle_edit_description()
                     return
-                # [更新元数据] (移至卡片1底栏左侧, x: 372~504, y: 190~220)
                 if 372 <= x <= 504 and 190 <= y <= 220:
                     self._handle_sync_data_consistency()
                     return
-                # [克隆工位] (紧随其后 x: 512~592, y: 190~220)
                 if (512 <= x <= 592 or 776 <= x <= 854) and 190 <= y <= 220:
                     self._handle_clone_workspace()
                     return
-                # [删除] (x: 600~678, y: 190~220)
                 if (600 <= x <= 678 or 864 <= x <= 938) and 190 <= y <= 220:
                     self._handle_delete_workspace()
                     return
@@ -366,9 +332,7 @@ class WorkspaceHubApp:
             log.warning(f"执行工具异常: {e}")
 
         # 重新创建主窗体并重新绑定鼠标事件
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, self.renderer.canvas_w, self.renderer.canvas_h)
-        cv2.setMouseCallback(self.window_name, self._on_mouse_event)
+        self.create_window()
 
         ws = self.state.get_selected_workspace()
         if ws:
@@ -632,6 +596,68 @@ class WorkspaceHubApp:
             self.state.set_toast(f"一致性核验完成: 物理与元数据已是最新 (标定 {ws.image_count} 帧, 生产 {ws.prod_image_count} 帧)")
         else:
             self.state.set_toast(f"已同步数据一致性: 标定 {old_calib}→{ws.image_count} 帧, 生产 {old_prod}→{ws.prod_image_count} 帧")
+
+    def _handle_frame_tag_edit_xyz(self, tag_id: int):
+        """编辑某个 Tag 在当前坐标系下的已知物理局部真值坐标 [x, y, z]"""
+        cur_frame = self.state.get_selected_frame()
+        if not cur_frame:
+            return
+        wl_data = self.state.get_whitelist_data()
+        anchors = wl_data.get("tag_anchors", {}) if isinstance(wl_data, dict) else {}
+        curr_pos = anchors.get(tag_id) or anchors.get(str(tag_id))
+        init_str = f"{curr_pos[0]:.1f}, {curr_pos[1]:.1f}, {curr_pos[2]:.1f}" if curr_pos else "0.0, 0.0, 0.0"
+
+        val_str = prompt_input_text(
+            f"标注 Tag #{tag_id:02d} 局部坐标",
+            f"请输入 Tag #{tag_id:02d} 在坐标系 [{cur_frame.frame_id}] 下的已知物理坐标 (x, y, z，单位 mm，以逗号分隔，留空或输入 clear 清除):",
+            initial=init_str
+        )
+        if val_str is not None:
+            clean_str = val_str.strip()
+            ws = self.state.get_selected_workspace()
+            if not ws:
+                return
+            import yaml
+            wl_path = os.path.join(ws.workspace_dir, "tag_whitelist.yaml")
+            curr_cfg = {}
+            if os.path.isfile(wl_path):
+                try:
+                    with open(wl_path, "r", encoding="utf-8") as f:
+                        curr_cfg = yaml.safe_load(f) or {}
+                except Exception:
+                    curr_cfg = {}
+            if "tag_anchors" not in curr_cfg:
+                curr_cfg["tag_anchors"] = {}
+
+            if not clean_str or clean_str.lower() == "clear":
+                if tag_id in curr_cfg["tag_anchors"]:
+                    del curr_cfg["tag_anchors"][tag_id]
+                if str(tag_id) in curr_cfg["tag_anchors"]:
+                    del curr_cfg["tag_anchors"][str(tag_id)]
+                with open(wl_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(curr_cfg, f, allow_unicode=True)
+                self.state.refresh_whitelist_cache()
+                self.state.set_toast(f"已清除 Tag #{tag_id:02d} 的物理坐标标注。")
+                return
+
+            parts = [p.strip() for p in clean_str.replace("，", ",").split(",")]
+            if len(parts) == 3:
+                try:
+                    xyz = [float(parts[0]), float(parts[1]), float(parts[2])]
+                    curr_cfg["tag_anchors"][tag_id] = xyz
+                    # 自动将其并入放行集合
+                    allowed_set = set(curr_cfg.get("allowed_ids", []))
+                    allowed_set.add(tag_id)
+                    curr_cfg["allowed_ids"] = sorted(list(allowed_set))
+
+                    with open(wl_path, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(curr_cfg, f, allow_unicode=True)
+                    self.state.refresh_whitelist_cache()
+                    self.state.set_toast(f"已成功标注 Tag #{tag_id:02d} 坐标: ({xyz[0]:.1f}, {xyz[1]:.1f}, {xyz[2]:.1f}) mm 并自动放行")
+                except ValueError:
+                    self.state.set_toast("坐标格式无效，请输入 3 个以逗号分隔的浮点数！")
+            else:
+                self.state.set_toast("坐标格式无效，需包含 x, y, z 三轴坐标！")
 
     def _handle_frames_rois_click(self, x: int, y: int):
         """处理【坐标系&ROI】列表页签的按钮交互"""

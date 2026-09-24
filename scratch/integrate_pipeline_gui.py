@@ -77,7 +77,7 @@ new_analyzer_builder = """    def _get_scaled_intrinsics(self, img_w: int, img_h
             self.run_analyze()
 
     def _build_analyzer(self, img_w: int, img_h: int) -> AsparagusAnalyzer:
-        \"\"\"向后兼容的分析器构造\"\"\"
+        \"\"\"分析器构造\"\"\"
         fx, fy, cx, cy = self._get_scaled_intrinsics(img_w, img_h)
         analyzer = AsparagusAnalyzer(fx=fx, fy=fy, cx=cx, cy=cy)
         analyzer.set_tag_localizer(self.tag_localizer)

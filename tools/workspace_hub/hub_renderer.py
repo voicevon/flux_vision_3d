@@ -96,6 +96,33 @@ def roi_row_del_rect(idx: int) -> tuple[int, int, int, int]:
     ry = 406 + idx * 76
     return (874, ry + 6, 50, 24)
 
+# ==================== 坐标系专属视图几何常量 ====================
+FRAME_EDIT_POSE_BTN = (800, 58, 140, 30)
+FRAME_ADD_ROI_BTN = (780, 58, 160, 30)
+
+FT_GRID_X0 = 356
+FT_GRID_Y0 = 340
+FT_CHIP_W = 110
+FT_CHIP_H = 68
+FT_GAP_X = 8
+FT_GAP_Y = 12
+
+def frame_tag_chip_rect(idx: int) -> tuple[int, int, int, int]:
+    """计算 10-Slot Tag 芯片矩阵中第 idx (0~9) 个芯片的矩形 (2行x5列)"""
+    row, col = divmod(idx, 5)
+    return (FT_GRID_X0 + col * (FT_CHIP_W + FT_GAP_X),
+            FT_GRID_Y0 + row * (FT_CHIP_H + FT_GAP_Y),
+            FT_CHIP_W, FT_CHIP_H)
+
+def frame_roi_row_rect(idx: int) -> tuple[int, int, int, int]:
+    return (356, 100 + idx * 80, 588, 72)
+
+def frame_roi_edit_btn(idx: int) -> tuple[int, int, int, int]:
+    return (818, 100 + idx * 80 + 22, 54, 26)
+
+def frame_roi_del_btn(idx: int) -> tuple[int, int, int, int]:
+    return (878, 100 + idx * 80 + 22, 54, 26)
+
 
 def whitelist_cell_rect(t_id: int) -> tuple[int, int, int, int]:
     """白名单芯片格位矩形 (0~29 基础网格与超出范围的追加芯片共用同一公式)"""
@@ -158,13 +185,15 @@ class HubRenderer:
     GRID_GAP_Y = GRID_GAP_Y
     GRID_THUMB_H = GRID_THUMB_H
 
-    # 页签显示文案 (顺序: Dashboard / 坐标系&ROI / Tag白名单 / 标定相册 / ★ 生产相册)
+    # 页签显示文案 (自适应工位宏观视图与坐标系微观视图)
     TAB_LABELS = {
         HubState.TAB_REPORT: "Dashboard",
         HubState.TAB_FRAMES_ROIS: "坐标系&ROI",
         HubState.TAB_WHITELIST: "Tag白名单",
         HubState.TAB_CALIB_IMAGES: "标定相册",
         HubState.TAB_PROD_IMAGES: "★ 生产相册",
+        HubState.TAB_FRAME_POSE_TAGS: "机构参数与Tag",
+        HubState.TAB_FRAME_ROIS: "3D ROI 空间物件",
     }
 
     def __init__(self):
@@ -186,6 +215,81 @@ class HubRenderer:
         # 帧级极速缓存 (毫秒级响应 Hover 交互)
         self._cached_canvas: np.ndarray | None = None
         self._last_cache_key: Any = None
+
+    def _get_tabs_layout(self, state: HubState):
+        """计算顶部 Tab 胶囊的动态布局矩形 (自适应工位 3 页签与坐标系 2 页签)"""
+        tabs = state.get_current_tabs()
+        n = len(tabs)
+        tab_w = 148 if n == 2 else 115
+        tab_step = tab_w + 12
+        start_x = 348
+        res = []
+        for idx, (tab_key, tab_label) in enumerate(tabs):
+            tx = start_x + idx * tab_step
+            rect = (tx, HEADER_TAB_Y0, tab_w, HEADER_TAB_H)
+            res.append((tab_key, tab_label, rect))
+        return res
+
+    def _get_tree_layout(self, state: HubState):
+        """计算左侧两层树结构各项的几何矩形与数据标识，供渲染与点击测试统一使用"""
+        items = []
+        cur_y = 58
+        max_y = 604
+        for ws_idx, ws in enumerate(state.workspaces):
+            if cur_y + 44 > max_y:
+                break
+            ws_id = ws.workspace_id
+            is_expanded = (ws_id in state.expanded_workspaces)
+            is_ws_selected = (
+                state.selected_tree_item[0] == "workspace"
+                and state.selected_workspace_idx == ws_idx
+            )
+
+            ws_rect = (10, cur_y, 320, 44)
+            arrow_rect = (10, cur_y, 30, 44)
+            body_rect = (40, cur_y, 290, 44)
+
+            items.append({
+                "type": "workspace",
+                "ws_idx": ws_idx,
+                "workspace": ws,
+                "is_expanded": is_expanded,
+                "is_selected": is_ws_selected,
+                "ws_rect": ws_rect,
+                "arrow_rect": arrow_rect,
+                "body_rect": body_rect,
+            })
+            cur_y += 48
+
+            # 若工位展开，渲染其坐标系子节点
+            if is_expanded:
+                if ws_idx == state.selected_workspace_idx and state.coord_mgr:
+                    frames = state.coord_mgr.list_frames()
+                else:
+                    from src.calibration.workspace_manager import load_workspace_coordinate_manager
+                    mgr = load_workspace_coordinate_manager(ws)
+                    frames = mgr.list_frames() if mgr else []
+
+                for f in frames:
+                    if cur_y + 30 > max_y:
+                        break
+                    is_frame_selected = (
+                        state.selected_tree_item[0] == "frame"
+                        and state.selected_workspace_idx == ws_idx
+                        and state.selected_tree_item[2] == f.frame_id
+                    )
+                    frame_rect = (34, cur_y, 296, 30)
+                    items.append({
+                        "type": "frame",
+                        "ws_idx": ws_idx,
+                        "workspace": ws,
+                        "frame": f,
+                        "frame_id": f.frame_id,
+                        "is_selected": is_frame_selected,
+                        "rect": frame_rect,
+                    })
+                    cur_y += 34
+        return items
 
     def hit_test(self, mx: int, my: int, state: HubState) -> Any:
         """根据逻辑坐标探测当前命中交互元素"""
@@ -354,35 +458,33 @@ class HubRenderer:
             return "help_modal_body"
 
         # 1. 常规看板模式
-        # 顶部 Header 交互 (右侧动态区五页签 Tab + [退出] 按钮)
+        # 顶部 Header 交互 (右侧动态区页签 Tab + [退出] 按钮)
         if 0 <= my <= 50:
-            tab_total_w = len(HubState.TAB_ORDER) * HEADER_TAB_STEP
-            if HEADER_TAB_Y0 <= my <= HEADER_TAB_Y0 + HEADER_TAB_H and HEADER_TAB_X0 <= mx <= HEADER_TAB_X0 + tab_total_w:
-                tab_idx = (mx - HEADER_TAB_X0) // HEADER_TAB_STEP
-                if 0 <= tab_idx < len(HubState.TAB_ORDER):
-                    return ("hdr_tab", tab_idx)
+            for tab_key, tab_label, rect in self._get_tabs_layout(state):
+                if point_in_rect(mx, my, rect):
+                    return ("hdr_tab_key", tab_key)
             # [退出] 按钮
             if BTN_EXIT_X0 <= mx <= BTN_EXIT_X0 + BTN_EXIT_W and BTN_EXIT_Y0 <= my <= BTN_EXIT_Y0 + BTN_EXIT_H:
                 return "btn_exit"
 
-        # 左侧面板按钮与卡片
+        # 左侧面板按钮与两层树交互
         if 0 <= mx <= 340:
             div_y1 = 604
             btn1_y = div_y1 + 10
             if 10 <= mx <= 330 and btn1_y <= my <= btn1_y + 40:
                 return "btn_new_workspace"
 
-            # 工位卡片 (支持 6 张卡片)
-            card_h = 70
-            start_y = 58
-            max_cards = 6
-            scroll_start = max(0, state.selected_workspace_idx - max_cards + 1)
-            visible_workspaces = state.workspaces[scroll_start: scroll_start + max_cards]
-            for i, ws in enumerate(visible_workspaces):
-                cy = start_y + i * (card_h + 8)
-                real_idx = scroll_start + i
-                if 10 <= mx <= 330 and cy <= my <= cy + card_h:
-                    return ("card_select", real_idx)
+            # 遍历两层树节点
+            tree_items = self._get_tree_layout(state)
+            for item in tree_items:
+                if item["type"] == "workspace":
+                    if point_in_rect(mx, my, item["arrow_rect"]):
+                        return ("tree_ws_toggle", item["ws_idx"], item["workspace"].workspace_id)
+                    if point_in_rect(mx, my, item["body_rect"]):
+                        return ("tree_ws_select", item["ws_idx"])
+                elif item["type"] == "frame":
+                    if point_in_rect(mx, my, item["rect"]):
+                        return ("tree_frame_select", item["ws_idx"], item["frame_id"])
 
         # 右侧动态区页签内容按钮 (x: 340~960)
         if state.view_mode == HubState.VIEW_EXPANDED:
@@ -408,6 +510,35 @@ class HubRenderer:
                     return "wl_refresh"
                 if 854 <= mx <= 944:
                     return "wl_edit"
+
+        # 坐标系专属页签 1: 机构参数与 Tag 分段 (TAB_FRAME_POSE_TAGS)
+        if state.active_tab == HubState.TAB_FRAME_POSE_TAGS and state.view_mode == HubState.VIEW_STANDARD:
+            if point_in_rect(mx, my, FRAME_EDIT_POSE_BTN):
+                return "btn_edit_frame_pose"
+            cur_frame = state.get_selected_frame()
+            if cur_frame:
+                tag_range = state.get_frame_tag_range(cur_frame.frame_id)
+                for slot_idx in range(10):
+                    chip_rect = frame_tag_chip_rect(slot_idx)
+                    if point_in_rect(mx, my, chip_rect):
+                        tag_id = tag_range[slot_idx]
+                        cx, cy, cw, ch = chip_rect
+                        if my >= cy + ch - 24:
+                            return ("frame_tag_edit_xyz", tag_id)
+                        return ("frame_tag_toggle", tag_id)
+
+        # 坐标系专属页签 2: 3D ROI 空间物件 (TAB_FRAME_ROIS)
+        if state.active_tab == HubState.TAB_FRAME_ROIS and state.view_mode == HubState.VIEW_STANDARD:
+            if point_in_rect(mx, my, FRAME_ADD_ROI_BTN):
+                return "btn_add_frame_roi"
+            cur_frame = state.get_selected_frame()
+            if cur_frame:
+                rois = state.get_frame_rois(cur_frame.frame_id)
+                for i, r in enumerate(rois[:6]):
+                    if point_in_rect(mx, my, frame_roi_edit_btn(i)):
+                        return ("frame_roi_edit", r.roi_id)
+                    if point_in_rect(mx, my, frame_roi_del_btn(i)):
+                        return ("frame_roi_delete", r.roi_id)
 
         # 坐标系与 3D ROI 页签内的列表操作与新增按钮
         if state.active_tab == HubState.TAB_FRAMES_ROIS and state.view_mode == HubState.VIEW_STANDARD:
@@ -468,6 +599,8 @@ class HubRenderer:
             state.prod_grid_offset,
             state.view_mode,
             state.active_tab,
+            state.selected_tree_item,
+            tuple(sorted(state.expanded_workspaces)),
             state._whitelist_cache_ws,
             state._whitelist_cache_mtime,
             state.toast_msg,
@@ -499,12 +632,16 @@ class HubRenderer:
             self._render_expanded_photo_preview(canvas, state, ws)
         elif state.active_tab == HubState.TAB_REPORT:
             self._render_pure_dashboard_panel(canvas, state, ws)
+        elif state.active_tab == HubState.TAB_FRAME_POSE_TAGS:
+            self._render_page_frame_pose_tags(canvas, state, ws)
+        elif state.active_tab == HubState.TAB_FRAME_ROIS:
+            self._render_page_frame_rois(canvas, state, ws)
+        elif state.active_tab == HubState.TAB_PROD_IMAGES:
+            self._render_page_prod_images(canvas, state, ws)
         elif state.active_tab == HubState.TAB_FRAMES_ROIS:
             self._render_page_frames_rois(canvas, state, ws)
         elif state.active_tab == HubState.TAB_WHITELIST:
             self._render_page_whitelist(canvas, state, ws)
-        elif state.active_tab == HubState.TAB_PROD_IMAGES:
-            self._render_page_prod_images(canvas, state, ws)
         else:
             self._render_page_calib_images(canvas, state, ws)
 
@@ -541,26 +678,21 @@ class HubRenderer:
         self._draw_button(canvas, (BTN_EXIT_X0, BTN_EXIT_Y0, BTN_EXIT_W, BTN_EXIT_H), "退出", mpos, theme_color=(180, 60, 60))
 
     def _render_header_tabs(self, canvas: np.ndarray, state: HubState):
-        """渲染顶部四页签 Tab 胶囊: 1 Dashboard / 2 Tag白名单 / 3 标定相册 / 4 ★ 生产相册
-        (页签顺序与 HubState.TAB_ORDER 保持一致，基于单源几何常量排布)
-        """
+        """渲染顶部自适应 Tab 胶囊 (工位视图 3 页签，坐标系专属视图 2 页签)"""
         mpos = (state.mouse_x, state.mouse_y)
-        tabs = [(key, self.TAB_LABELS[key]) for key in HubState.TAB_ORDER]
+        tabs_layout = self._get_tabs_layout(state)
 
-        for idx, (tab_key, tab_text) in enumerate(tabs):
-            tx = HEADER_TAB_X0 + idx * HEADER_TAB_STEP
-            ty, tw, th = HEADER_TAB_Y0, HEADER_TAB_W, HEADER_TAB_H
+        for tab_key, tab_text, rect in tabs_layout:
+            tx, ty, tw, th = rect
             is_active_tab = (state.active_tab == tab_key)
             is_hover_tab = (tx <= mpos[0] <= tx + tw and ty <= mpos[1] <= ty + th)
 
-            # 精确估算文本宽度以实现胶囊内水平居中 (CJK/符号宽约13.5px, ASCII宽约7.5px)
             approx_w = sum(13 if ord(c) > 127 else 8 for c in tab_text)
             text_x = tx + max(4, (tw - approx_w) // 2)
 
             if is_active_tab:
                 cv2.rectangle(canvas, (tx, ty), (tx + tw, ty + th), (28, 44, 40), -1)
                 cv2.rectangle(canvas, (tx, ty), (tx + tw, ty + th), (0, 255, 180), 2)
-                # 激活页签底部高亮指示条
                 cv2.rectangle(canvas, (tx + 8, ty + th - 3), (tx + tw - 8, ty + th - 1), (0, 255, 180), -1)
                 draw_text(canvas, tab_text, (text_x, ty + 8), font_size=13, color=(0, 255, 200), bold=True)
             elif is_hover_tab:
@@ -751,55 +883,79 @@ class HubRenderer:
                 cv2.line(canvas, (drop_x + 8, iy + item_h), (drop_x + tw - 8, iy + item_h), (35, 45, 60), 1)
 
     def _render_left_panel(self, canvas: np.ndarray, state: HubState):
-        """渲染左侧综合导航栏 (x: 0~340, y: 50~670)
-        - 扩展展示多达 5 张场景卡片，视觉开阔无压迫
-        - 场景卡片全面支持自由一键 [生效生产]
-        - 保持工业界面整洁精炼
+        """渲染左侧两层树结构导航 (x: 0~340, y: 50~670)
+        - 一级节点: Workspace (工位)，带 ▼ / ▶ 展开折叠指示器与统计
+        - 二级节点: Coordinate Frame (坐标系)，带缩进与 Tag 专属范围徽章
+        - 底部保留: + 新建 Workspace
         """
         cv2.rectangle(canvas, (0, 50), (340, 670), self.COLOR_PANEL, -1)
         mpos = (state.mouse_x, state.mouse_y)
 
-        # ==== 1. Workspace 卡片列表 (标题行已移除, 卡片直接顶到面板顶部) ====
-        card_h = 70
-        start_y = 58
-        max_cards = 6  # 扩展至 6 张卡片，充分利用垂直空间
+        tree_items = self._get_tree_layout(state)
+        for item in tree_items:
+            if item["type"] == "workspace":
+                ws_idx = item["ws_idx"]
+                ws = item["workspace"]
+                is_sel = item["is_selected"]
+                is_exp = item["is_expanded"]
+                wx, wy, ww, wh = item["ws_rect"]
 
-        scroll_start = max(0, state.selected_workspace_idx - max_cards + 1)
-        visible_workspaces = state.workspaces[scroll_start: scroll_start + max_cards]
+                card_bg = self.COLOR_CARD_ACTIVE if is_sel else (26, 30, 40)
+                card_border = self.COLOR_ACTIVE_BORDER if is_sel else self.COLOR_BORDER
+                cv2.rectangle(canvas, (wx, wy), (wx + ww, wy + wh), card_bg, -1)
+                cv2.rectangle(canvas, (wx, wy), (wx + ww, wy + wh), card_border, 2 if is_sel else 1)
+                if is_sel:
+                    cv2.rectangle(canvas, (wx, wy), (wx + 4, wy + wh), (0, 255, 160), -1)
 
-        for i, ws in enumerate(visible_workspaces):
-            real_idx = scroll_start + i
-            is_selected = (real_idx == state.selected_workspace_idx)
-            cy = start_y + i * (card_h + 8)
+                arrow_char = "▼" if is_exp else "▶"
+                arrow_col = (0, 255, 200) if is_sel else (140, 160, 180)
+                draw_text(canvas, arrow_char, (wx + 8, wy + 14), font_size=13, color=arrow_col, bold=True)
 
-            card_col = self.COLOR_CARD_ACTIVE if is_selected else (28, 32, 42)
-            border_col = self.COLOR_ACTIVE_BORDER if is_selected else self.COLOR_BORDER
+                disp_title = f"{ws_idx + 1:02d}. {ws.name}"
+                title_col = (0, 255, 200) if is_sel else self.COLOR_WHITE
+                draw_text(canvas, disp_title, (wx + 28, wy + 6), font_size=13, color=title_col, bold=is_sel)
 
-            cv2.rectangle(canvas, (10, cy), (330, cy + card_h), card_col, -1)
-            cv2.rectangle(canvas, (10, cy), (330, cy + card_h), border_col, 2 if is_selected else 1)
+                if ws.ba_solved and ws.global_rmse_px > 1e-6:
+                    ba_badge = f"RMSE: {ws.global_rmse_px:.2f}px"
+                    ba_col = (0, 220, 100) if ws.global_rmse_px < 0.8 else self.COLOR_GOLD
+                else:
+                    ba_badge = "未平差"
+                    ba_col = self.COLOR_DARK_GRAY
+                put_text(canvas, ba_badge, (wx + 28, wy + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.35, ba_col, 1, cv2.LINE_AA)
 
-            if is_selected:
-                cv2.rectangle(canvas, (10, cy), (14, cy + card_h), (0, 255, 160), -1)
+                cnt_text = f"{ws.image_count}帧/{ws.prod_image_count}帧"
+                put_text(canvas, cnt_text, (wx + 200, wy + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (140, 160, 180), 1, cv2.LINE_AA)
 
-            # 主标题突出显示友好中文名称
-            prefix = f"{real_idx + 1:02d}."
-            display_title = f"{prefix} {ws.name}"
-            title_col = (0, 255, 200) if is_selected else self.COLOR_WHITE
-            draw_text(canvas, display_title, (20, cy + 8), font_size=15, color=title_col, bold=is_selected)
+            elif item["type"] == "frame":
+                fx, fy, fw, fh = item["rect"]
+                f = item["frame"]
+                is_sel = item["is_selected"]
 
-            # 左下角：平差精度指标 (原第三行上移，原第二行冗余物理ID已删除)
-            if ws.ba_solved and ws.global_rmse_px > 1e-6:
-                ba_badge = f"RMSE: {ws.global_rmse_px:.2f}px"
-                ba_col = (0, 220, 100) if ws.global_rmse_px < 0.8 else self.COLOR_GOLD
-            else:
-                ba_badge = "未平差"
-                ba_col = self.COLOR_DARK_GRAY
-            put_text(canvas, ba_badge, (20, cy + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.40, ba_col, 1, cv2.LINE_AA)
+                if is_sel:
+                    cv2.rectangle(canvas, (fx, fy), (fx + fw, fy + fh), (22, 42, 46), -1)
+                    cv2.rectangle(canvas, (fx, fy), (fx + fw, fy + fh), (0, 255, 200), 1)
+                    cv2.rectangle(canvas, (fx, fy), (fx + 3, fy + fh), (0, 255, 200), -1)
+                else:
+                    cv2.rectangle(canvas, (fx, fy), (fx + fw, fy + fh), (20, 24, 32), -1)
+                    cv2.rectangle(canvas, (fx, fy), (fx + fw, fy + fh), (35, 42, 54), 1)
 
-            # 右侧：标定与生产采图帧数 (分2行布局)
-            frame_col = (0, 220, 180) if is_selected else (150, 165, 185)
-            put_text(canvas, f"标定 {ws.image_count} 帧", (232, cy + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.38, frame_col, 1, cv2.LINE_AA)
-            put_text(canvas, f"生产 {ws.prod_image_count} 帧", (232, cy + 56), cv2.FONT_HERSHEY_SIMPLEX, 0.38, frame_col, 1, cv2.LINE_AA)
+                tree_branch = "└" if f.frame_id != "world" else "•"
+                draw_text(canvas, tree_branch, (fx + 6, fy + 7), font_size=12, color=(0, 200, 240))
+
+                f_label = f"{f.frame_id}"
+                if f.name and f.name != f.frame_id:
+                    f_label += f" ({f.name})"
+                if len(f_label) > 22:
+                    f_label = f_label[:20] + ".."
+                f_col = (0, 255, 220) if is_sel else (200, 215, 230)
+                draw_text(canvas, f_label, (fx + 20, fy + 7), font_size=12, color=f_col, bold=is_sel)
+
+                tag_range = state.get_frame_tag_range(f.frame_id)
+                tag_badge = f"Tag {tag_range[0]}~{tag_range[-1]}"
+                badge_x = fx + fw - 76
+                cv2.rectangle(canvas, (badge_x, fy + 5), (badge_x + 70, fy + fh - 5), (28, 38, 48), -1)
+                cv2.rectangle(canvas, (badge_x, fy + 5), (badge_x + 70, fy + fh - 5), (45, 65, 75), 1)
+                put_text(canvas, tag_badge, (badge_x + 5, fy + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.31, (0, 220, 220), 1, cv2.LINE_AA)
 
         # ==== 2. Workspace 通用全局操作区 ====
         div_y1 = 604
@@ -830,6 +986,182 @@ class HubRenderer:
             empty_hint="生产基准工位尚未采集任何照片！",
             is_calib=False,
         )
+
+    def _render_page_frame_pose_tags(self, canvas: np.ndarray, state: HubState, ws):
+        """坐标系专属页签 1: 机构参数与 Tag 分段管理 (x: 340~960, y: 50~670)"""
+        box_x, box_y, box_w, box_h = 340, 50, self.canvas_w - 340, 620
+        cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), (18, 22, 28), -1)
+        mpos = (state.mouse_x, state.mouse_y)
+
+        cur_frame = state.get_selected_frame()
+        if not cur_frame:
+            draw_text(canvas, "未选择任何机构坐标系", (box_x + 180, box_y + 280), font_size=18, color=self.COLOR_GRAY)
+            return
+
+        # 1. 顶部标题栏与编辑位姿按钮
+        header_text = f"机构参数与 Tag 分段 (Frame: {cur_frame.frame_id})"
+        draw_text(canvas, header_text, (box_x + 16, box_y + 14), font_size=15, color=self.COLOR_WHITE, bold=True)
+        self._draw_button(canvas, FRAME_EDIT_POSE_BTN, "编辑机构参数", mpos)
+
+        card_x = box_x + 16
+        card_w = box_w - 32
+
+        # 2. 上部卡片: 机构位姿与空间拓扑
+        c1_y = box_y + 42
+        c1_h = 196
+        cv2.rectangle(canvas, (card_x, c1_y), (card_x + card_w, c1_y + c1_h), (24, 28, 38), -1)
+        cv2.rectangle(canvas, (card_x, c1_y), (card_x + card_w, c1_y + c1_h), (42, 52, 70), 1)
+
+        draw_text(canvas, f"机构位姿与拓扑关系 · {cur_frame.name}", (card_x + 14, c1_y + 10), font_size=14, color=(0, 240, 220), bold=True)
+        cv2.line(canvas, (card_x + 10, c1_y + 32), (card_x + card_w - 10, c1_y + 32), (36, 45, 60), 1)
+
+        type_desc = "固定刚体外参 (fixed_transform)" if cur_frame.type == "fixed_transform" else "AprilTag 动标绑定 (tag_bound)"
+        draw_text(canvas, f"坐标系标识: {cur_frame.frame_id}", (card_x + 16, c1_y + 42), font_size=13, color=(210, 225, 240))
+        draw_text(canvas, f"父坐标系: {cur_frame.parent_frame_id}", (card_x + 220, c1_y + 42), font_size=13, color=(210, 225, 240))
+        draw_text(canvas, f"类型: {type_desc}", (card_x + 16, c1_y + 68), font_size=13, color=(0, 220, 200))
+
+        if cur_frame.type == "fixed_transform":
+            tx, ty, tz = cur_frame.translation_xyz_mm
+            rx, ry, rz = getattr(cur_frame, "rotation_rpy_deg", [0.0, 0.0, 0.0])
+
+            t_box_y = c1_y + 98
+            cv2.rectangle(canvas, (card_x + 16, t_box_y), (card_x + card_w - 16, t_box_y + 38), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, t_box_y), (card_x + card_w - 16, t_box_y + 38), (38, 48, 65), 1)
+            draw_text(canvas, "平移向量 T [mm]:", (card_x + 24, t_box_y + 11), font_size=12, color=(160, 180, 200))
+            draw_text(canvas, f"X: {tx:+.1f}", (card_x + 160, t_box_y + 11), font_size=13, color=(0, 255, 220), bold=True)
+            draw_text(canvas, f"Y: {ty:+.1f}", (card_x + 290, t_box_y + 11), font_size=13, color=(0, 255, 220), bold=True)
+            draw_text(canvas, f"Z: {tz:+.1f}", (card_x + 420, t_box_y + 11), font_size=13, color=(0, 255, 220), bold=True)
+
+            r_box_y = c1_y + 144
+            cv2.rectangle(canvas, (card_x + 16, r_box_y), (card_x + card_w - 16, r_box_y + 38), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, r_box_y), (card_x + card_w - 16, r_box_y + 38), (38, 48, 65), 1)
+            draw_text(canvas, "欧拉旋转 R [deg]:", (card_x + 24, r_box_y + 11), font_size=12, color=(160, 180, 200))
+            draw_text(canvas, f"Rx: {rx:+.1f}°", (card_x + 160, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
+            draw_text(canvas, f"Ry: {ry:+.1f}°", (card_x + 290, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
+            draw_text(canvas, f"Rz: {rz:+.1f}°", (card_x + 420, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
+        else:
+            tag_box_y = c1_y + 104
+            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 60), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 60), (38, 48, 65), 1)
+            tid_val = getattr(cur_frame, "tag_id", getattr(cur_frame, "bound_tag_id", 0))
+            if tid_val is None:
+                tid_val = 0
+            draw_text(canvas, f"绑定动标 Tag ID: #{tid_val}", (card_x + 24, tag_box_y + 18), font_size=14, color=(0, 255, 220), bold=True)
+            off = getattr(cur_frame, "offset_xyz_mm", getattr(cur_frame, "bound_offset_xyz_mm", [0.0, 0.0, 0.0]))
+            draw_text(canvas, f"标称偏移 offset: [{off[0]:.1f}, {off[1]:.1f}, {off[2]:.1f}] mm", (card_x + 240, tag_box_y + 18), font_size=13, color=(200, 215, 230))
+
+        # 3. 下部卡片: 10-Slot Tag 专属分配矩阵
+        c2_y = box_y + 248
+        c2_h = 360
+        cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (24, 28, 38), -1)
+        cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (42, 52, 70), 1)
+
+        tag_range = state.get_frame_tag_range(cur_frame.frame_id)
+        start_id, end_id = tag_range[0], tag_range[-1]
+        draw_text(canvas, f"Tag 专属分段放行矩阵 [分配区间 ID: {start_id:02d} ~ {end_id:02d}]",
+                  (card_x + 14, c2_y + 10), font_size=14, color=(0, 240, 220), bold=True)
+        draw_text(canvas, "提示: 点击卡片勾选放行 (保存生效至工位白名单)；点击下半部 [✎ 坐标] 标注已知物理坐标真值",
+                  (card_x + 14, c2_y + 32), font_size=11, color=(140, 160, 180))
+        cv2.line(canvas, (card_x + 10, c2_y + 50), (card_x + card_w - 10, c2_y + 50), (36, 45, 60), 1)
+
+        allowed_set = set(state.get_frame_tags_status(cur_frame.frame_id))
+        wl_data = state.get_whitelist_data()
+        anchors = wl_data.get("tag_anchors", {}) if isinstance(wl_data, dict) else {}
+
+        for slot_idx in range(10):
+            tag_id = tag_range[slot_idx]
+            cx, cy, cw, ch = frame_tag_chip_rect(slot_idx)
+            is_allowed = (tag_id in allowed_set)
+            is_hover = (cx <= mpos[0] <= cx + cw and cy <= mpos[1] <= cy + ch)
+
+            if is_allowed:
+                chip_bg = (24, 40, 36) if is_hover else (18, 32, 28)
+                chip_border = (0, 255, 180) if is_hover else (0, 200, 140)
+            else:
+                chip_bg = (30, 34, 42) if is_hover else (20, 24, 32)
+                chip_border = (0, 200, 240) if is_hover else (45, 55, 70)
+
+            cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), chip_bg, -1)
+            cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), chip_border, 2 if (is_hover or is_allowed) else 1)
+
+            tag_label = f"#{tag_id:02d}"
+            draw_text(canvas, tag_label, (cx + 8, cy + 6), font_size=13,
+                      color=(0, 255, 200) if is_allowed else (160, 175, 195), bold=True)
+
+            status_str = "已放行 √" if is_allowed else "未放行"
+            status_col = (0, 255, 160) if is_allowed else (120, 135, 150)
+            draw_text(canvas, status_str, (cx + cw - 52, cy + 6), font_size=11, color=status_col, bold=is_allowed)
+
+            cv2.line(canvas, (cx + 6, cy + 30), (cx + cw - 6, cy + 30), (35, 45, 58), 1)
+
+            anchor_pos = anchors.get(tag_id) or anchors.get(str(tag_id))
+            if anchor_pos and len(anchor_pos) == 3:
+                pos_str = f"P:({anchor_pos[0]:.0f},{anchor_pos[1]:.0f},{anchor_pos[2]:.0f})"
+                pos_col = (255, 210, 80)
+            else:
+                pos_str = "P: 未标注"
+                pos_col = (110, 125, 140)
+            draw_text(canvas, pos_str, (cx + 6, cy + 40), font_size=10, color=pos_col)
+
+            px, py = cx + cw - 14, cy + 48
+            pen_col = (0, 255, 180) if is_hover else (70, 95, 110)
+            cv2.line(canvas, (px - 3, py + 2), (px + 3, py - 4), pen_col, 1, cv2.LINE_AA)
+
+    def _render_page_frame_rois(self, canvas: np.ndarray, state: HubState, ws):
+        """坐标系专属页签 2: 3D ROI 空间物件 (x: 340~960, y: 50~670)"""
+        box_x, box_y, box_w, box_h = 340, 50, self.canvas_w - 340, 620
+        cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), (18, 22, 28), -1)
+        mpos = (state.mouse_x, state.mouse_y)
+
+        cur_frame = state.get_selected_frame()
+        if not cur_frame:
+            draw_text(canvas, "未选择任何机构坐标系", (box_x + 180, box_y + 280), font_size=18, color=self.COLOR_GRAY)
+            return
+
+        rois = state.get_frame_rois(cur_frame.frame_id)
+
+        # 1. 顶部标题栏与新建 ROI 按钮
+        header_text = f"3D ROI 空间物件 (坐标系: {cur_frame.frame_id} · 共 {len(rois)} 个)"
+        draw_text(canvas, header_text, (box_x + 16, box_y + 14), font_size=15, color=self.COLOR_WHITE, bold=True)
+        self._draw_button(canvas, FRAME_ADD_ROI_BTN, "+ 新建本坐标系 ROI", mpos)
+
+        # 2. ROI 列表卡片
+        if not rois:
+            empty_y = box_y + 180
+            cv2.rectangle(canvas, (box_x + 40, empty_y), (box_x + box_w - 40, empty_y + 120), (24, 28, 38), -1)
+            cv2.rectangle(canvas, (box_x + 40, empty_y), (box_x + box_w - 40, empty_y + 120), (42, 52, 70), 1)
+            draw_text(canvas, f"当前坐标系 [{cur_frame.frame_id}] 下暂无 3D ROI 空间物件",
+                      (box_x + 110, empty_y + 36), font_size=16, color=(0, 220, 255), bold=True)
+            draw_text(canvas, "点击右上角 [+ 新建本坐标系 ROI] 即可为该机构添加检测工作面包围盒",
+                      (box_x + 85, empty_y + 70), font_size=13, color=(140, 160, 180))
+            return
+
+        for i, r in enumerate(rois[:6]):
+            rx, ry, rw, rh = frame_roi_row_rect(i)
+            is_hover = (rx <= mpos[0] <= rx + rw and ry <= mpos[1] <= ry + rh)
+            card_bg = (26, 32, 44) if is_hover else (22, 26, 36)
+            card_border = (0, 220, 240) if is_hover else (38, 48, 64)
+
+            cv2.rectangle(canvas, (rx, ry), (rx + rw, ry + rh), card_bg, -1)
+            cv2.rectangle(canvas, (rx, ry), (rx + rw, ry + rh), card_border, 2 if is_hover else 1)
+
+            cat_map = {"belt": "同步带", "wheel": "驱动轮", "tray": "料盘", "general": "通用"}
+            cat_badge = cat_map.get(r.category, r.category)
+            cv2.rectangle(canvas, (rx + 10, ry + 10), (rx + 78, ry + 34), (32, 45, 58), -1)
+            cv2.rectangle(canvas, (rx + 10, ry + 10), (rx + 78, ry + 34), (0, 200, 240), 1)
+            draw_text(canvas, cat_badge, (rx + 18, ry + 14), font_size=11, color=(0, 240, 220), bold=True)
+
+            title = f"{r.name} ({r.roi_id})"
+            draw_text(canvas, title, (rx + 86, ry + 13), font_size=14, color=self.COLOR_WHITE, bold=True)
+
+            cx, cy, cz = r.center_xyz_mm
+            sx, sy, sz = r.size_xyz_mm
+            rx_d, ry_d, rz_d = getattr(r, "rotation_rpy_deg", [0.0, 0.0, 0.0])
+            geom_str = f"中心: ({cx:.0f},{cy:.0f},{cz:.0f})  尺寸: ({sx:.0f}×{sy:.0f}×{sz:.0f})  旋转: ({rx_d:.0f}°,{ry_d:.0f}°,{rz_d:.0f}°)"
+            put_text(canvas, geom_str, (rx + 14, ry + 56), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 180, 200), 1, cv2.LINE_AA)
+
+            self._draw_button(canvas, frame_roi_edit_btn(i), "编辑", mpos)
+            self._draw_button(canvas, frame_roi_del_btn(i), "删除", mpos, theme_color=(180, 60, 60))
 
     def _render_gallery_page(self, canvas: np.ndarray, state: HubState, title: str,
                              images: list[str], sel_idx: int, grid_offset: int,
