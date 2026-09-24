@@ -30,6 +30,7 @@ from src.utils.gui_components import (
     draw_dashboard_button,
     draw_dropdown_button,
     render_dropdown_popup as common_render_dropdown_popup,
+    render_floating_tooltip,
 )
 from tools.spatial_mapping_studio.mapping_ui_common import (
     VIEW_MODE_OPTIONS,
@@ -362,53 +363,24 @@ class MappingRenderer(MappingFrameListMixin, MappingCenterViewMixin, MappingInsp
 
     def _render_hover_tooltip(self, canvas: np.ndarray, app: Any, mx: int, my: int,
                                cw: int, ch: int):
-        """检测鼠标是否悬停在有帮助文字的按钮上, 若有则画气泡面板"""
+        """检测鼠标是否悬停在有帮助文字的按钮上, 若有则渲染统一悬浮气泡面板"""
         if mx < 0 or my < 0:
             return
         for btn_id, (bx1, by1, bx2, by2), _ in getattr(app, "gui_buttons", []):
             if btn_id not in HOVER_TOOLTIPS:
                 continue
             if bx1 <= mx <= bx2 and by1 <= my <= by2:
-                lines = HOVER_TOOLTIPS[btn_id]
-                # 测量尺寸
-                font = get_cached_font(11, bold=False)
-                bold_font = get_cached_font(14, bold=True)
-                lh = 18
-                pad_x, pad_y = 14, 12
-                inner_w = max((len(l) + 4) * 11 for l in lines)
-                tip_w = min(inner_w + pad_x * 2, 520)
-                tip_h = len(lines) * lh + pad_y * 2
-
-                # 定位: 优先在按钮正上方, 不够空间则在下方
-                gap = 8
-                if by1 - tip_h - gap >= 0:
-                    ty2 = by1 - gap
-                    ty1 = ty2 - tip_h
+                raw_lines = HOVER_TOOLTIPS[btn_id]
+                # 解析标题与正文
+                if raw_lines and raw_lines[0].startswith("【") and raw_lines[0].endswith("】"):
+                    title = raw_lines[0].strip("【】")
+                    lines = raw_lines[1:]
                 else:
-                    ty1 = by2 + gap
-                    ty2 = ty1 + tip_h
-                tx1 = max(8, min(bx1, cw - tip_w - 8))
-                tx2 = tx1 + tip_w
-
-                # 半透明暗色底
-                overlay = canvas.copy()
-                cv2.rectangle(overlay, (tx1, ty1), (tx2, ty2), (22, 24, 32), -1)
-                cv2.addWeighted(overlay, 0.92, canvas, 0.08, 0, dst=canvas)
-                cv2.rectangle(canvas, (tx1, ty1), (tx2, ty2), (0, 210, 180), 2)
-
-                # 画文字
-                ly = ty1 + pad_y + 6
-                for i, line in enumerate(lines):
-                    if line.startswith("【") and line.endswith("】"):
-                        draw_text(canvas, line, (tx1 + pad_x, ly), font_size=13,
-                                  color=(0, 230, 200), bold=True)
-                    elif line == "":
-                        pass
-                    else:
-                        draw_text(canvas, line, (tx1 + pad_x, ly), font_size=11,
-                                  color=(220, 225, 235), bold=False)
-                    ly += lh
+                    title = "帮助说明"
+                    lines = raw_lines
+                render_floating_tooltip(canvas, title, lines, (bx1, by1))
                 return
+
 
     def render_ba_loading_card(self, app: Any, canvas: np.ndarray, w: int, h: int):
         """居中展示异步 BA 全局平差双轨进度卡片 (大阶段主进度条 + 求解器子进度条与实时收敛指标)"""

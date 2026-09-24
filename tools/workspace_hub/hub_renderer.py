@@ -13,6 +13,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from src.utils.gui_components import render_floating_tooltip
 from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text, put_text
 from tools.workspace_hub.hub_state import HubState
@@ -101,7 +102,7 @@ FRAME_EDIT_POSE_BTN = (800, 58, 140, 30)
 FRAME_ADD_ROI_BTN = (780, 58, 160, 30)
 
 FT_GRID_X0 = 356
-FT_GRID_Y0 = 340
+FT_GRID_Y0 = 366
 FT_CHIP_W = 110
 FT_CHIP_H = 68
 FT_GAP_X = 8
@@ -263,12 +264,8 @@ class HubRenderer:
 
             # 若工位展开，渲染其坐标系子节点
             if is_expanded:
-                if ws_idx == state.selected_workspace_idx and state.coord_mgr:
-                    frames = state.coord_mgr.list_frames()
-                else:
-                    from src.calibration.workspace_manager import load_workspace_coordinate_manager
-                    mgr = load_workspace_coordinate_manager(ws)
-                    frames = mgr.list_frames() if mgr else []
+                mgr = state.get_workspace_coord_mgr(ws)
+                frames = mgr.list_frames() if mgr else []
 
                 for f in frames:
                     if cur_y + 30 > max_y:
@@ -515,6 +512,8 @@ class HubRenderer:
         if state.active_tab == HubState.TAB_FRAME_POSE_TAGS and state.view_mode == HubState.VIEW_STANDARD:
             if point_in_rect(mx, my, FRAME_EDIT_POSE_BTN):
                 return "btn_edit_frame_pose"
+            if self._should_show_tag_bound_tooltip(state, (mx, my)):
+                return "tag_bound_help"
             cur_frame = state.get_selected_frame()
             if cur_frame:
                 tag_range = state.get_frame_tag_range(cur_frame.frame_id)
@@ -573,6 +572,8 @@ class HubRenderer:
                 return "ws_clone"
             if (600 <= mx <= 678 or 864 <= mx <= 938) and 190 <= my <= 220:
                 return "ws_delete"
+            if 682 <= mx <= 812 and 190 <= my <= 220:
+                return "ws_add_frame_roi"
 
         # 图片卡片网格墙卡片 Hover (标定相册与生产相册通用)
         if state.active_tab in (HubState.TAB_CALIB_IMAGES, HubState.TAB_PROD_IMAGES):
@@ -655,6 +656,13 @@ class HubRenderer:
             self._render_roi_modal(canvas, state)
         elif state.is_help_modal_open:
             self._render_help_modal(canvas, state)
+
+        # 7. 悬浮 Tooltip 气泡提示 (置于最顶层，无遮挡呈现)
+        if not (state.frame_modal_open or state.roi_modal_open or state.is_help_modal_open):
+            if state.active_tab == HubState.TAB_FRAME_POSE_TAGS and state.view_mode == HubState.VIEW_STANDARD:
+                mpos = (state.mouse_x, state.mouse_y)
+                if self._should_show_tag_bound_tooltip(state, mpos):
+                    self._draw_tag_bound_tooltip(canvas, mpos)
 
         self._cached_canvas = canvas
         self._last_cache_key = cache_key
@@ -1015,12 +1023,36 @@ class HubRenderer:
         draw_text(canvas, f"机构位姿与拓扑关系 · {cur_frame.name}", (card_x + 14, c1_y + 10), font_size=14, color=(0, 240, 220), bold=True)
         cv2.line(canvas, (card_x + 10, c1_y + 32), (card_x + card_w - 10, c1_y + 32), (36, 45, 60), 1)
 
-        type_desc = "固定刚体外参 (fixed_transform)" if cur_frame.type == "fixed_transform" else "AprilTag 动标绑定 (tag_bound)"
+        if cur_frame.type == "world":
+            type_desc = "工位绝对世界基准 (world)"
+        elif cur_frame.type == "fixed_transform":
+            type_desc = "固定刚体外参 (fixed_transform)"
+        else:
+            type_desc = "AprilTag 动标绑定 (tag_bound)"
+
         draw_text(canvas, f"坐标系标识: {cur_frame.frame_id}", (card_x + 16, c1_y + 42), font_size=13, color=(210, 225, 240))
         draw_text(canvas, f"父坐标系: {cur_frame.parent_frame_id}", (card_x + 220, c1_y + 42), font_size=13, color=(210, 225, 240))
         draw_text(canvas, f"类型: {type_desc}", (card_x + 16, c1_y + 68), font_size=13, color=(0, 220, 200))
 
-        if cur_frame.type == "fixed_transform":
+        # 动标定义与说明悬停帮助徽章
+        help_btn_x, help_btn_y, help_btn_w, help_btn_h = card_x + 310, c1_y + 65, 126, 22
+        is_hover_help = (help_btn_x <= mpos[0] <= help_btn_x + help_btn_w and help_btn_y <= mpos[1] <= help_btn_y + help_btn_h)
+        help_bg = (30, 48, 48) if is_hover_help else (20, 28, 36)
+        help_border = (0, 255, 200) if is_hover_help else (40, 75, 75)
+        cv2.rectangle(canvas, (help_btn_x, help_btn_y), (help_btn_x + help_btn_w, help_btn_y + help_btn_h), help_bg, -1)
+        cv2.rectangle(canvas, (help_btn_x, help_btn_y), (help_btn_x + help_btn_w, help_btn_y + help_btn_h), help_border, 1)
+        draw_text(canvas, "(?) 动标定义说明", (help_btn_x + 8, help_btn_y + 4), font_size=11,
+                  color=(0, 255, 220) if is_hover_help else (140, 185, 195), bold=is_hover_help)
+
+        if cur_frame.type == "world":
+            w_box_y = c1_y + 98
+            cv2.rectangle(canvas, (card_x + 16, w_box_y), (card_x + card_w - 16, w_box_y + 84), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, w_box_y), (card_x + card_w - 16, w_box_y + 84), (38, 48, 65), 1)
+            draw_text(canvas, "● 工位全局绝对空间基准 (World Datum / Origin)", (card_x + 24, w_box_y + 11), font_size=13, color=(0, 255, 200), bold=True)
+            draw_text(canvas, "位姿特性: 恒为齐次单位阵 Identity 4x4 (空间测量全局绝对基准原点，无需外参)", (card_x + 24, w_box_y + 35), font_size=12, color=(160, 180, 200))
+            draw_text(canvas, "空间标靶: 由下方专属放行矩阵中的静态标靶阵列 (ID: 00~09) 建立全局基准网格", (card_x + 24, w_box_y + 58), font_size=12, color=(120, 140, 160))
+
+        elif cur_frame.type == "fixed_transform":
             tx, ty, tz = cur_frame.translation_xyz_mm
             rx, ry, rz = getattr(cur_frame, "rotation_rpy_deg", [0.0, 0.0, 0.0])
 
@@ -1039,16 +1071,30 @@ class HubRenderer:
             draw_text(canvas, f"Rx: {rx:+.1f}°", (card_x + 160, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
             draw_text(canvas, f"Ry: {ry:+.1f}°", (card_x + 290, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
             draw_text(canvas, f"Rz: {rz:+.1f}°", (card_x + 420, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
+
         else:
-            tag_box_y = c1_y + 104
-            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 60), (18, 22, 32), -1)
-            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 60), (38, 48, 65), 1)
-            tid_val = getattr(cur_frame, "tag_id", getattr(cur_frame, "bound_tag_id", 0))
-            if tid_val is None:
-                tid_val = 0
-            draw_text(canvas, f"绑定动标 Tag ID: #{tid_val}", (card_x + 24, tag_box_y + 18), font_size=14, color=(0, 255, 220), bold=True)
-            off = getattr(cur_frame, "offset_xyz_mm", getattr(cur_frame, "bound_offset_xyz_mm", [0.0, 0.0, 0.0]))
-            draw_text(canvas, f"标称偏移 offset: [{off[0]:.1f}, {off[1]:.1f}, {off[2]:.1f}] mm", (card_x + 240, tag_box_y + 18), font_size=13, color=(200, 215, 230))
+            tag_box_y = c1_y + 98
+            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 84), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 84), (38, 48, 65), 1)
+
+            bound_tags = cur_frame.get_tag_ids() if hasattr(cur_frame, "get_tag_ids") else ([cur_frame.tag_id] if cur_frame.tag_id is not None else [])
+            if not bound_tags:
+                bound_tags = [getattr(cur_frame, "tag_id", 0) or 0]
+
+            draw_text(canvas, "绑定动标 Tag 列表:", (card_x + 24, tag_box_y + 12), font_size=13, color=(0, 240, 220), bold=True)
+            chip_start_x = card_x + 175
+            for tid in bound_tags:
+                cw, ch = 48, 22
+                cv2.rectangle(canvas, (chip_start_x, tag_box_y + 10), (chip_start_x + cw, tag_box_y + 10 + ch), (24, 44, 40), -1)
+                cv2.rectangle(canvas, (chip_start_x, tag_box_y + 10), (chip_start_x + cw, tag_box_y + 10 + ch), (0, 255, 180), 1)
+                draw_text(canvas, f"#{tid:02d}", (chip_start_x + 8, tag_box_y + 13), font_size=12, color=(0, 255, 200), bold=True)
+                chip_start_x += cw + 8
+
+            draw_text(canvas, f"(共 {len(bound_tags)} 个动标 · 多标冗余跟踪组)", (chip_start_x + 6, tag_box_y + 14), font_size=11, color=(140, 160, 180))
+
+            off = getattr(cur_frame, "offset_xyz_mm", [0.0, 0.0, 0.0])
+            draw_text(canvas, f"标称安装偏移 offset: [{off[0]:.1f}, {off[1]:.1f}, {off[2]:.1f}] mm", (card_x + 24, tag_box_y + 38), font_size=12, color=(200, 215, 230))
+            draw_text(canvas, "工作原理: 运动机构实时识别动标，通过标称偏移解算机构实际受控点位姿", (card_x + 24, tag_box_y + 58), font_size=11, color=(120, 140, 160))
 
         # 3. 下部卡片: 10-Slot Tag 专属分配矩阵
         c2_y = box_y + 248
@@ -1879,6 +1925,7 @@ class HubRenderer:
         self._draw_button(canvas, (372, c1_y + 132, 132, 28), "更新元数据", mpos)
         self._draw_button(canvas, (512, c1_y + 132, 80, 28), "克隆工位", mpos)
         self._draw_button(canvas, (600, c1_y + 132, 74, 28), "删除", mpos, theme_color=(180, 60, 60))
+        self._draw_button(canvas, (682, c1_y + 132, 130, 28), "新建ROI坐标系", mpos, theme_color=(0, 200, 160))
 
         # ==== 2. 板块 #2: 质检放行仪表盘卡片 (通栏横幅) ====
         c2_y = c1_y + c1_h + 8
@@ -2043,6 +2090,44 @@ class HubRenderer:
         footer_y = my + modal_h - 36
         draw_text(canvas, "快捷提示: 鼠标点击右上角 [X]、点击遮罩或直接按键盘 [ESC / H] 即可秒级关闭！",
                   (mx + 32, footer_y), font_size=13, color=self.COLOR_GRAY)
+
+    def _should_show_tag_bound_tooltip(self, state: HubState, mpos: tuple[int, int]) -> bool:
+        """检测鼠标是否悬停在动标帮助提示胶囊或动标参数信息区域"""
+        mx, my = mpos
+        box_x, box_y = 340, 50
+        box_w = 620
+        card_x = box_x + 16
+        c1_y = box_y + 42
+        # 1. 动标定义说明徽章
+        help_btn_x, help_btn_y, help_btn_w, help_btn_h = card_x + 310, c1_y + 65, 126, 22
+        if help_btn_x <= mx <= help_btn_x + help_btn_w and help_btn_y <= my <= help_btn_y + help_btn_h:
+            return True
+        # 2. 如果是动标类型坐标系，悬停在动标参数卡片上亦弹出完整解释
+        cur_frame = state.get_selected_frame()
+        if cur_frame and cur_frame.type == "tag_bound":
+            tag_box_y = c1_y + 98
+            if card_x + 16 <= mx <= card_x + (box_w - 32) - 16 and tag_box_y <= my <= tag_box_y + 84:
+                return True
+        return False
+
+    def _draw_tag_bound_tooltip(self, canvas: np.ndarray, anchor_pos: tuple[int, int]):
+        title = "AprilTag 动标机制与多 Tag 绑定说明"
+        lines = [
+            "【动标 (Dynamic Tag) 的定义】",
+            "• 安装在【运动机构部件】(如活动滑块、推手、法兰夹爪) 上的视觉标靶；",
+            "• 随机构运动实时改变空间坐标，相机每一帧识别并动态解算该部件位姿。",
+            "",
+            "【为什么此处是一个列表 (可配置多个 Tag)？】",
+            "• 工业现场中单动标极易发生受光反光、物料遮挡或大倾角失锁；",
+            "• 部件绑定多动标列表 (如 #10, #11) 时，系统启用多标冗余追踪机制；",
+            "• 只要视野中能稳定观测到列表中的任意一个动标，即可持续求解位姿！",
+            "",
+            "【标称安装偏移 (offset)】",
+            "• 动标贴片几何中心到机构部件实际旋转轴或受控特征原点的物理装配偏差。",
+            "",
+            "★ 注意: world 世界坐标系是固定空间基准原点，依靠下方静态标靶阵列定位。"
+        ]
+        render_floating_tooltip(canvas, title, lines, anchor_pos)
 
 
 

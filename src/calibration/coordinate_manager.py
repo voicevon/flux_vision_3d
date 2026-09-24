@@ -59,10 +59,27 @@ class FrameDefinition:
     translation_xyz_mm: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     rotation_rpy_deg: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
 
-    # 针对 tag_bound 类型的参数
+    # 针对 tag_bound 类型的参数 (支持多动标列表)
     tag_id: Optional[int] = None
+    tag_ids: List[int] = field(default_factory=list)
     offset_xyz_mm: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     offset_rpy_deg: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+
+    def get_tag_ids(self) -> List[int]:
+        """获取动标绑定的 Tag ID 列表 (兼容单动标与多动标冗余组)"""
+        res: List[int] = []
+        if getattr(self, "tag_ids", None):
+            for t in self.tag_ids:
+                try:
+                    res.append(int(t))
+                except (ValueError, TypeError):
+                    pass
+        if not res and self.tag_id is not None:
+            try:
+                res.append(int(self.tag_id))
+            except (ValueError, TypeError):
+                pass
+        return res
 
     def to_dict(self) -> Dict[str, Any]:
         """序列化为字典供 YAML 存储"""
@@ -79,8 +96,10 @@ class FrameDefinition:
                 "rotation_rpy_deg": [float(x) for x in self.rotation_rpy_deg],
             }
         elif self.type == "tag_bound":
+            t_ids = self.get_tag_ids()
             d["tag_binding"] = {
-                "tag_id": int(self.tag_id) if self.tag_id is not None else 0,
+                "tag_ids": t_ids,
+                "tag_id": t_ids[0] if t_ids else 0,
                 "offset_xyz_mm": [float(x) for x in self.offset_xyz_mm],
                 "offset_rpy_deg": [float(x) for x in self.offset_rpy_deg],
             }
@@ -98,6 +117,7 @@ class FrameDefinition:
         t_xyz = [0.0, 0.0, 0.0]
         r_rpy = [0.0, 0.0, 0.0]
         tag_id = None
+        tag_ids: List[int] = []
         off_xyz = [0.0, 0.0, 0.0]
         off_rpy = [0.0, 0.0, 0.0]
 
@@ -108,6 +128,17 @@ class FrameDefinition:
         elif ftype == "tag_bound":
             bind_block = data.get("tag_binding", {})
             tag_id = bind_block.get("tag_id")
+            raw_ids = bind_block.get("tag_ids")
+            if isinstance(raw_ids, list):
+                for x in raw_ids:
+                    try:
+                        tag_ids.append(int(x))
+                    except (ValueError, TypeError):
+                        pass
+            elif tag_id is not None:
+                tag_ids = [int(tag_id)]
+            if tag_id is None and tag_ids:
+                tag_id = tag_ids[0]
             off_xyz = bind_block.get("offset_xyz_mm", [0.0, 0.0, 0.0])
             off_rpy = bind_block.get("offset_rpy_deg", [0.0, 0.0, 0.0])
 
@@ -120,6 +151,7 @@ class FrameDefinition:
             translation_xyz_mm=t_xyz,
             rotation_rpy_deg=r_rpy,
             tag_id=tag_id,
+            tag_ids=tag_ids,
             offset_xyz_mm=off_xyz,
             offset_rpy_deg=off_rpy,
         )
@@ -282,17 +314,18 @@ class CoordinateTreeManager:
             return T, True
 
         if frame.type == "tag_bound":
-            # 动标绑定类型
-            tag_id = frame.tag_id
+            # 动标绑定类型 (支持多动标冗余跟踪与回退)
+            cand_tags = frame.get_tag_ids()
+            resolved_tag = next((tid for tid in cand_tags if tid in self._tags_map), None)
             R_off = rpy_deg_to_rot_mat(frame.offset_rpy_deg)
             T_tag_from_frame = make_transform_matrix(R_off, frame.offset_xyz_mm)
 
-            if tag_id is None or tag_id not in self._tags_map:
-                # 动标丢失或未标定，降级输出局部偏移，并标记有效性为 False
+            if resolved_tag is None:
+                # 所有候选动标均丢失或未标定，降级输出局部偏移，并标记有效性为 False
                 return T_tag_from_frame, False
 
             # T_world_from_tag
-            T_world_from_tag = self._tags_map[tag_id]
+            T_world_from_tag = self._tags_map[resolved_tag]
             # 若 parent 是 world，则 T_parent_from_frame = T_world_from_tag * T_tag_from_frame
             # 若 parent 不是 world，需要按 T_parent_from_world * T_world_from_tag * T_tag_from_frame 计算
             if frame.parent_frame_id == "world":
@@ -318,12 +351,13 @@ class CoordinateTreeManager:
 
         frame = self._frames[frame_id]
         if frame.type == "tag_bound":
-            tag_id = frame.tag_id
+            cand_tags = frame.get_tag_ids()
+            resolved_tag = next((tid for tid in cand_tags if tid in self._tags_map), None)
             R_off = rpy_deg_to_rot_mat(frame.offset_rpy_deg)
             T_tag_from_frame = make_transform_matrix(R_off, frame.offset_xyz_mm)
 
-            if tag_id is not None and tag_id in self._tags_map:
-                T_world_from_tag = self._tags_map[tag_id]
+            if resolved_tag is not None:
+                T_world_from_tag = self._tags_map[resolved_tag]
                 return T_world_from_tag @ T_tag_from_frame, True
             else:
                 # Tag 丢失，未解算
@@ -407,7 +441,7 @@ class CoordinateTreeManager:
             if self.active_frame_id not in self._frames:
                 self.active_frame_id = "world"
 
-            log.info(f"[FrameTree] 成功加载 {len(self._frames)} 个坐标系: {path}")
+            log.debug(f"[FrameTree] 成功加载 {len(self._frames)} 个坐标系: {path}")
             return True
         except Exception as e:
             log.error(f"[FrameTree] 加载坐标系配置失败 ({path}): {e}")

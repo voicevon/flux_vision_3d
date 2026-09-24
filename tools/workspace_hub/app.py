@@ -266,6 +266,9 @@ class WorkspaceHubApp(BaseCvApp):
                 if (600 <= x <= 678 or 864 <= x <= 938) and 190 <= y <= 220:
                     self._handle_delete_workspace()
                     return
+                if 682 <= x <= 812 and 190 <= y <= 220:
+                    self.state.open_frame_modal()
+                    return
 
             # 5.5.2 图片卡片网格墙点击: 单击选中卡片, 双击放大查看
             cell_idx = grid_hit_test(x, y)
@@ -787,14 +790,19 @@ class WorkspaceHubApp(BaseCvApp):
                         self.state.set_toast("输入无效，请输入有效数字！")
             elif field_category == "tag_id":
                 curr_val = d.get("tag_id", 0)
-                val_str = prompt_input_text("动标绑定 AprilTag ID", "请输入绑定的标靶编号 (整数):", initial=str(curr_val))
+                val_str = prompt_input_text(
+                    "动标绑定 AprilTag ID 列表",
+                    "请输入绑定的动标标靶编号 (支持单个如 10，或逗号分隔多动标冗余组如 10,11):",
+                    initial=str(curr_val)
+                )
                 if val_str is not None and val_str.strip():
-                    try:
-                        tid = int(val_str.strip())
-                        d["tag_id"] = tid
-                        self.state.set_toast(f"已绑定 AprilTag #{tid}")
-                    except ValueError:
-                        self.state.set_toast("Tag ID 必须为整数！")
+                    raw = val_str.replace("，", ",").strip()
+                    parts = [p.strip() for p in raw.split(",") if p.strip().isdigit()]
+                    if parts:
+                        d["tag_id"] = ",".join(parts)
+                        self.state.set_toast(f"已设置绑定动标列表: 【{d['tag_id']}】")
+                    else:
+                        self.state.set_toast("输入无效，Tag ID 必须包含有效数字编号！")
             elif field_category == "offset":
                 axis_name = ["dx (前向)", "dy (横向)", "dz (垂向)"][axis_idx]
                 curr_val = d.get("offset_xyz_mm", [0, 0, 0])[axis_idx]

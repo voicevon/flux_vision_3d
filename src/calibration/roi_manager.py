@@ -280,7 +280,7 @@ class RoiSpaceManager:
                 loaded[roi.roi_id] = roi
 
             self._rois = loaded
-            log.info(f"[RoiSpace] 成功加载 {len(self._rois)} 个 ROI 物件: {path}")
+            log.debug(f"[RoiSpace] 成功加载 {len(self._rois)} 个 ROI 物件: {path}")
             return True
         except Exception as e:
             log.error(f"[RoiSpace] 加载 ROI 集合失败 ({path}): {e}")

@@ -9,6 +9,7 @@ import glob
 import json
 import time
 from collections import OrderedDict
+from typing import Any, Optional
 import cv2
 import numpy as np
 
@@ -112,6 +113,8 @@ class HubState:
         # 多坐标系与 3D ROI 空间管理器缓存
         self.coord_mgr = None
         self.roi_mgr = None
+        self._coord_mgr_cache: dict[str, Any] = {}
+        self._roi_mgr_cache: dict[str, Any] = {}
 
         # 结构化表单弹窗状态 (坐标系 / ROI)
         self.frame_modal_open: bool = False
@@ -232,6 +235,12 @@ class HubState:
     def refresh_workspaces(self):
         """刷新工位列表"""
         self.workspaces = self.workspace_mgr.list_workspaces()
+        # 清理已不存在工位的管理器缓存
+        valid_ws_ids = {w.workspace_id for w in self.workspaces}
+        for k in list(self._coord_mgr_cache.keys()):
+            if k not in valid_ws_ids:
+                self._coord_mgr_cache.pop(k, None)
+                self._roi_mgr_cache.pop(k, None)
 
         # 首次加载: 恢复上次激活的工位卡片 (按 workspace_id 定位, 索引排序变化无影响)
         if not self._selection_restored:
@@ -284,18 +293,37 @@ class HubState:
             self.workspace_mgr.set_current_workspace(ws.workspace_id)
 
     def load_geometry_managers(self):
-        """加载当前选中工位的多坐标系与 ROI 管理器"""
+        """加载当前选中工位的多坐标系与 ROI 管理器 (利用内存缓存杜绝重复磁盘 I/O)"""
         ws = self.get_selected_workspace()
         if ws:
-            from src.calibration.workspace_manager import (
-                load_workspace_coordinate_manager,
-                load_workspace_roi_manager
-            )
-            self.coord_mgr = load_workspace_coordinate_manager(ws)
-            self.roi_mgr = load_workspace_roi_manager(ws)
+            ws_id = ws.workspace_id
+            if ws_id in self._coord_mgr_cache and ws_id in self._roi_mgr_cache:
+                self.coord_mgr = self._coord_mgr_cache[ws_id]
+                self.roi_mgr = self._roi_mgr_cache[ws_id]
+            else:
+                from src.calibration.workspace_manager import (
+                    load_workspace_coordinate_manager,
+                    load_workspace_roi_manager
+                )
+                self.coord_mgr = load_workspace_coordinate_manager(ws)
+                self.roi_mgr = load_workspace_roi_manager(ws)
+                self._coord_mgr_cache[ws_id] = self.coord_mgr
+                self._roi_mgr_cache[ws_id] = self.roi_mgr
         else:
             self.coord_mgr = None
             self.roi_mgr = None
+
+    def get_workspace_coord_mgr(self, ws) -> Any:
+        """获取指定工位的坐标系管理器（带内存缓存，避免渲染树形结构每帧重复加载磁盘 YAML）"""
+        if not ws:
+            return None
+        ws_id = ws.workspace_id
+        if ws_id in self._coord_mgr_cache:
+            return self._coord_mgr_cache[ws_id]
+        from src.calibration.workspace_manager import load_workspace_coordinate_manager
+        mgr = load_workspace_coordinate_manager(ws)
+        self._coord_mgr_cache[ws_id] = mgr
+        return mgr
 
     def get_coordinate_frames(self):
         """获取当前工位的所有坐标系定义列表"""
@@ -991,6 +1019,8 @@ class HubState:
             f = self.coord_mgr.get_frame(frame_id)
             self.frame_modal_is_new = False
             self.frame_modal_orig_id = f.frame_id
+            b_tags = f.get_tag_ids() if hasattr(f, "get_tag_ids") else ([f.tag_id] if f.tag_id is not None else [])
+            tag_str = ",".join(str(x) for x in b_tags) if b_tags else str(f.tag_id or 0)
             self.frame_modal_data = {
                 "frame_id": f.frame_id,
                 "name": f.name,
@@ -998,7 +1028,7 @@ class HubState:
                 "type": f.type,
                 "translation_xyz_mm": [float(x) for x in f.translation_xyz_mm],
                 "rotation_rpy_deg": [float(x) for x in f.rotation_rpy_deg],
-                "tag_id": f.tag_id or 0,
+                "tag_id": tag_str,
                 "offset_xyz_mm": [float(x) for x in f.offset_xyz_mm],
                 "offset_rpy_deg": [float(x) for x in f.offset_rpy_deg],
             }
@@ -1054,6 +1084,14 @@ class HubState:
         
         ftype = d.get("type", "fixed_transform")
         parent = None if fid == "world" else d.get("parent_frame_id", "world")
+        raw_tid = str(d.get("tag_id", "0")).replace("，", ",").strip()
+        parsed_tag_ids = []
+        for part in raw_tid.split(","):
+            part_s = part.strip()
+            if part_s.isdigit():
+                parsed_tag_ids.append(int(part_s))
+        primary_tid = parsed_tag_ids[0] if parsed_tag_ids else 0
+
         frame = FrameDefinition(
             frame_id=fid,
             name=str(d.get("name", fid)).strip(),
@@ -1061,7 +1099,8 @@ class HubState:
             type=ftype,
             translation_xyz_mm=[float(x) for x in d.get("translation_xyz_mm", [0, 0, 0])],
             rotation_rpy_deg=[float(x) for x in d.get("rotation_rpy_deg", [0, 0, 0])],
-            tag_id=int(d.get("tag_id", 0)),
+            tag_id=primary_tid,
+            tag_ids=parsed_tag_ids,
             offset_xyz_mm=[float(x) for x in d.get("offset_xyz_mm", [0, 0, 0])],
             offset_rpy_deg=[float(x) for x in d.get("offset_rpy_deg", [0, 0, 0])],
         )
@@ -1069,6 +1108,9 @@ class HubState:
         if not ok:
             return False, "保存坐标系失败 (可能导致拓扑环路或父级不存在)"
         self.coord_mgr.save()
+        ws = self.get_selected_workspace()
+        if ws:
+            self.expanded_workspaces.add(ws.workspace_id)
         self.close_frame_modal()
         self.set_toast(f"已成功保存坐标系: 【{frame.name}】")
         return True, "保存成功"

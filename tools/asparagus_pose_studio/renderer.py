@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 from src.utils.gui_theme import GuiTheme
-from src.utils.gui_components import draw_dropdown_button, render_dropdown_popup
+from src.utils.gui_components import draw_dropdown_button, render_dropdown_popup, render_floating_tooltip
 from src.utils.text_rendering import draw_text, measure_text
 from src.vision.pipelines.base_pipeline import PipelineStep
 from tools.asparagus_pose_studio.data_io import BASE_W, CALIB_LABELS
@@ -174,11 +174,7 @@ class AsparagusPoseStudioRenderer:
         is_hovered: bool,
         img_panel_rect: Tuple[int, int, int, int]
     ):
-        """在步骤药丸正下方渲染多行专业知识卡片 (Tooltip: 简介、原理解析、核心参数、优缺点)"""
-        pad_x = int(14 * m["s"])
-        pad_y = int(10 * m["s"])
-        line_h = int(21 * m["s"])
-
+        """在步骤药丸附近渲染多行专业知识卡片 (统一调用公共 render_floating_tooltip)"""
         # 整理行内容: (标签, 颜色, 内容)
         content_rows = [
             ("功能定位", (240, 245, 250), step_obj.description)
@@ -190,61 +186,21 @@ class AsparagusPoseStudioRenderer:
         if getattr(step_obj, "pros_cons", ""):
             content_rows.append(("优缺边界", (180, 245, 160), step_obj.pros_cons))
 
-        # 动态测量最宽行以确定卡片宽度
-        max_line_w = 0
-        for tag, _, text in content_rows:
-            (tw, _), _ = measure_text(f"[{tag}]  {text}", font_size=m["fs_small"])
-            if tw > max_line_w:
-                max_line_w = tw
-
-        # 卡片宽度与高度约束
-        viewport_w = img_panel_rect[2] - img_panel_rect[0]
-        tip_w = min(max_line_w + pad_x * 2 + int(10 * m["s"]), viewport_w - int(16 * m["s"]))
-        tip_w = max(tip_w, int(360 * m["s"]))
-        tip_h = pad_y * 2 + int(24 * m["s"]) + len(content_rows) * line_h
-
-        # 水平居中对齐药丸，并紧贴限制在视口横向边界内
         pill_cx = (pill_rect[0] + pill_rect[2]) // 2
-        tip_x1 = pill_cx - tip_w // 2
-        tip_x1 = max(img_panel_rect[0] + int(8 * m["s"]), min(tip_x1, img_panel_rect[2] - tip_w - int(8 * m["s"])))
-        tip_x2 = tip_x1 + tip_w
+        anchor_pos = (pill_cx - 15, pill_rect[3])
+        theme_col = (0, 235, 140) if is_hovered else (70, 160, 230)
+        line_h = int(21 * m["s"])
 
-        tip_y1 = pill_rect[3] + int(6 * m["s"])
-        tip_y2 = tip_y1 + tip_h
+        render_floating_tooltip(
+            canvas=canvas,
+            title=f"步骤详解 · {step_obj.name}",
+            lines=content_rows,
+            anchor_pos=anchor_pos,
+            theme_color=theme_col,
+            font_size=m["fs_small"],
+            line_height=line_h,
+        )
 
-        # 半透深黑工业科技底框
-        overlay = canvas.copy()
-        cv2.rectangle(overlay, (tip_x1, tip_y1), (tip_x2, tip_y2), (14, 18, 24), -1)
-        cv2.addWeighted(overlay, 0.92, canvas, 0.08, 0, canvas)
-
-        # 高光外边框与小三角指示箭头
-        border_col = (0, 235, 140) if is_hovered else (70, 160, 230)
-        cv2.rectangle(canvas, (tip_x1, tip_y1), (tip_x2, tip_y2), border_col, 1)
-
-        tri_pts = np.array([
-            [pill_cx, pill_rect[3] + int(1 * m["s"])],
-            [pill_cx - int(6 * m["s"]), tip_y1],
-            [pill_cx + int(6 * m["s"]), tip_y1]
-        ], dtype=np.int32)
-        cv2.fillPoly(canvas, [tri_pts], (14, 18, 24))
-        cv2.polylines(canvas, [tri_pts], True, border_col, 1)
-
-        # 1. 顶部标题栏徽章
-        cur_y = tip_y1 + pad_y
-        draw_text(canvas, f"[*] 步骤详解 · {step_obj.name}",
-                  (tip_x1 + pad_x, cur_y), m["fs_body"], border_col, bold=True)
-        cur_y += int(24 * m["s"])
-        cv2.line(canvas, (tip_x1 + pad_x, cur_y - int(4 * m["s"])),
-                 (tip_x2 - pad_x, cur_y - int(4 * m["s"])), (40, 50, 65), 1)
-
-        # 2. 依次输出格式化的知识行
-        for tag, val_col, text in content_rows:
-            tag_label = f"[{tag}] "
-            (lw, _), _ = measure_text(tag_label, font_size=m["fs_small"])
-            draw_text(canvas, tag_label, (tip_x1 + pad_x, cur_y), m["fs_small"], val_col, bold=True)
-            draw_text(canvas, text, (tip_x1 + pad_x + lw + int(4 * m["s"]), cur_y),
-                      m["fs_small"], val_col, bold=False)
-            cur_y += line_h
 
     @classmethod
     def render_scene(
