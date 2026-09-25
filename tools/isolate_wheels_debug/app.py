@@ -62,8 +62,8 @@ RACK_PANEL = (24, 58, 1232, 342)
 TAB_MULTI = (988, 68, 126, 26)
 TAB_SINGLE = (1120, 68, 122, 26)
 
-# 8 个立式通道列 (物理实物排布: 屏幕从左到右显示 8号轮 -> 1号轮)
-# 对应 internal idx: idx = 7 - col (col=0 为 8号轮, col=7 为 1号轮)
+# 8 个立式通道列 (物理实物排布: 屏幕从左到右显示 1号轮 -> 8号轮)
+# 对应 internal idx: idx = col (col=0 为 1号轮, col=7 为 8号轮)
 COL_W = 140
 COL_GAP = 12
 COL_X0 = 38
@@ -134,6 +134,7 @@ class IsolateWheelsDebuggerApp(BaseCvApp):
         self.last_cmd_json = ""
         self.last_publish_msg = ""
         self.log_lines: deque = deque(maxlen=300)
+        self.log_scroll: Optional[int] = None   # None=跟随底部; int=可视起始行号
         self.counts: List[int] = [0] * 8        # 1~8 号托架数量 (idx: 0=1号, 7=8号)
 
         # 电机调试态
@@ -399,7 +400,7 @@ class IsolateWheelsDebuggerApp(BaseCvApp):
                 row = (y - py - 4) // POPUP_ROW_H
                 if 0 <= row < len(MULTI_ANGLE_OPTS):
                     chosen = float(MULTI_ANGLE_OPTS[row])
-                    idx = 7 - self.popup_col
+                    idx = self.popup_col
                     if self.motor_mode == "multi":
                         self.multi_angles[idx] = chosen
                     else:
@@ -436,9 +437,9 @@ class IsolateWheelsDebuggerApp(BaseCvApp):
             self.motor_mode = "single"
             return
 
-        # 4. 8 通道交互 (col: 0~7 -> idx = 7 - col)
+        # 4. 8 通道交互 (col: 0~7 -> idx = col)
         for col in range(8):
-            idx = 7 - col
+            idx = col
             # 4.1 点击通道 Header -> 在单电机模式下选中该轮
             if self.pt_in(x, y, self._col_header_rect(col)):
                 self.motor_sel = idx + 1
@@ -500,8 +501,31 @@ class IsolateWheelsDebuggerApp(BaseCvApp):
         if self.pt_in(x, y, BTN_CLEAR_LOG):
             with self._lock:
                 self.log_lines.clear()
+            self.log_scroll = None
             self.set_toast("设备实时日志已清空。")
             return
+
+    # ==================== 日志滚轮 (覆写基类 on_mouse_wheel) ====================
+    def on_mouse_wheel(self, delta: int, flags: int):
+        """鼠标在日志面板区域内滚动时, 滚动日志; 默认跟随底部, 上翻进入回看, 触底恢复跟随"""
+        lx, ly = self.mouse_x, self.mouse_y
+        x, y, w, h = LOG_CARD
+        if not (x <= lx <= x + w and y <= ly <= y + h):
+            return
+        with self._lock:
+            total = len(self.log_lines)
+        vx_, vy_, vw_, vh_ = (x + 16, y + 46, w - 32, h - 58)
+        max_lines = (vh_ - 12) // LOG_LINE_H
+        if total <= max_lines:
+            self.log_scroll = None
+            return
+        rows_delta = -3 if delta > 0 else 3  # 向上滚 = delta>0 = 往前看
+        base = (total - max_lines) if self.log_scroll is None else self.log_scroll
+        pos = max(0, min(total - max_lines, base + rows_delta))
+        if pos >= total - max_lines:
+            self.log_scroll = None   # 触底 → 恢复跟随
+        else:
+            self.log_scroll = pos
 
     # ==================== 渲染系统 (实现基类 render) ====================
     def render(self) -> np.ndarray:
@@ -586,7 +610,7 @@ class IsolateWheelsDebuggerApp(BaseCvApp):
 
         # 8 个立式通道
         for col in range(8):
-            idx = 7 - col  # 0=1号轮, 7=8号轮
+            idx = col  # 0=1号轮, 7=8号轮
             cx, cy, cw, ch = self._col_rect(col)
             is_single_sel = (self.motor_mode == "single" and self.motor_sel == idx + 1)
 
@@ -712,13 +736,18 @@ class IsolateWheelsDebuggerApp(BaseCvApp):
                   (x + 16, y + h - 22), font_size=11, color=self.COLOR_MUTED)
 
     def _draw_log_panel(self, canvas, mpos):
-        """下半区右侧: 实时日志流与清空功能"""
+        """下半区右侧: 实时日志流与清空功能 (支持滚轮回看)"""
         x, y, w, h = LOG_CARD
         cv2.rectangle(canvas, (x, y), (x + w, y + h), self.COLOR_PANEL, -1)
         cv2.rectangle(canvas, (x, y), (x + w, y + h), self.COLOR_BORDER, 1)
 
-        draw_text(canvas, f"设备实时日志 ({TOPIC_PREFIX}/+/log)",
-                  (x + 16, y + 14), font_size=13, color=self.COLOR_TEXT, bold=True)
+        # 标题 (跟随底部时显示普通标题, 回看时显示提示)
+        following = self.log_scroll is None
+        title = f"设备实时日志 ({TOPIC_PREFIX}/+/log)"
+        if not following:
+            title += "  ↑ 回看模式 (滚至底部恢复跟随)"
+        title_col = self.COLOR_TEXT if following else self.COLOR_AMBER
+        draw_text(canvas, title, (x + 16, y + 14), font_size=13, color=title_col, bold=True)
         self.draw_btn(canvas, BTN_CLEAR_LOG, "清空日志", mpos)
 
         # 日志内容视窗
@@ -730,7 +759,14 @@ class IsolateWheelsDebuggerApp(BaseCvApp):
         with self._lock:
             lines = list(self.log_lines)
 
-        for i, ln in enumerate(lines[-max_lines:]):
+        total = len(lines)
+        if following or total <= max_lines:
+            visible = lines[-max_lines:]
+        else:
+            start = max(0, min(self.log_scroll, total - max_lines))
+            visible = lines[start:start + max_lines]
+
+        for i, ln in enumerate(visible):
             ly = vy + 8 + i * LOG_LINE_H
             col = (195, 205, 218)
             if "SYS" in ln:
@@ -739,13 +775,30 @@ class IsolateWheelsDebuggerApp(BaseCvApp):
                 col = (100, 100, 255)
             draw_text(canvas, ln[:78], (vx + 10, ly), font_size=11, color=col)
 
+        # 迷你滚动条指示器 (总行数超出可视行时绘制)
+        if total > max_lines:
+            sb_x = vx + vw - 6
+            sb_h = vh - 8
+            thumb_h = max(16, int(sb_h * max_lines / total))
+            scroll_top = 0 if following else max(0, min(self.log_scroll, total - max_lines))
+            if following:
+                thumb_y = vy + 4 + sb_h - thumb_h
+            else:
+                ratio = scroll_top / max(1, total - max_lines)
+                thumb_y = vy + 4 + int(ratio * (sb_h - thumb_h))
+            # 滚动条轨道
+            cv2.rectangle(canvas, (sb_x, vy + 4), (sb_x + 4, vy + 4 + sb_h), (24, 28, 36), -1)
+            # 滚动条滑块
+            thumb_col = self.COLOR_ACCENT if not following else (60, 70, 85)
+            cv2.rectangle(canvas, (sb_x, thumb_y), (sb_x + 4, thumb_y + thumb_h), thumb_col, -1)
+
     def _draw_popup(self, canvas, mpos):
         """自点击列向上弹出的角度选择菜单"""
         px, py, pw, ph = self._popup_rect()
         cv2.rectangle(canvas, (px, py), (px + pw, py + ph), (28, 34, 44), -1)
         cv2.rectangle(canvas, (px, py), (px + pw, py + ph), COLOR_BORDER_HL, 2)
 
-        idx = 7 - self.popup_col
+        idx = self.popup_col
         cur = self.multi_angles[idx] if self.motor_mode == "multi" else self.motor_angle
 
         for i, opt in enumerate(MULTI_ANGLE_OPTS):
