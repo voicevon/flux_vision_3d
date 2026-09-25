@@ -38,7 +38,8 @@ class MappingBARunner:
         map_path: str,
         manifest_path: str,
         marker_size_mm: float,
-        on_status_change: Optional[Callable[[str], None]] = None
+        on_status_change: Optional[Callable[[str], None]] = None,
+        workspace: Optional[Any] = None
     ):
         self.data_mgr = data_mgr
         self.optimizer = optimizer
@@ -47,6 +48,7 @@ class MappingBARunner:
         self.manifest_path = manifest_path
         self.marker_size_mm = marker_size_mm
         self.on_status_change = on_status_change
+        self.workspace = workspace  # 当前工位对象引用 (用于锚点装载)
 
         # 运行状态与指标
         self.is_ba_running: bool = False
@@ -93,7 +95,7 @@ class MappingBARunner:
                 self.origin_tag_id = int(calib.get("origin_tag_id", 0))
                 self.x_align_tag_id = int(calib.get("x_axis_tag_id", 28))
 
-            ws = self.data_mgr.current_workspace if self.data_mgr else None
+            ws = self.workspace
             ws_dir = getattr(ws, "workspace_dir", None) if ws else None
 
             # ① 工位 anchor_tags.yaml

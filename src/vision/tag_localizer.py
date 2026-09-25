@@ -73,7 +73,7 @@ class TagLocalizer:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 self.tags_map = yaml.safe_load(f) or {}
-            self.marker_size_mm = float(self.tags_map.get("marker_size_mm", 50.0))
+            self.marker_size_mm = float(self.tags_map.get("marker_size_mm", 40.0))
             
             # 严格校验 schema 与 is_dynamic_yaw 标记 (安全守门)
             tags_dict = self.tags_map.get("tags", {})

@@ -209,15 +209,17 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
             map_path=self.map_path,
             manifest_path=self.manifest_path,
             marker_size_mm=self.marker_size_mm,
-            on_status_change=self.set_toast
+            on_status_change=self.set_toast,
+            workspace=self.current_workspace
         )
 
         # 6. 单帧深度病因切片诊断开关
         self.show_frame_diagnostics = False
 
-        # 7. 浮层通知 (Toast)
+        # 7. 浮层通知 (Toast): 持久显示直至用户手动点击 ❌ 关闭
         self.status_toast = "欢迎进入空间建图工作站 (Spatial Mapping Studio)"
         self.status_toast_time = time.time()
+        self.toast_sticky = True  # True = 持久显示, 仅用户点击 ❌ 才关闭
 
         # 8. GUI 交互按钮注册表
         self.gui_buttons: List[Tuple[str, Tuple[int, int, int, int], Any]] = []
@@ -285,9 +287,11 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
             manifest_path=self.manifest_path
         )
 
-        # 4. 更新 BA 调度器中的路径
+        # 4. 更新 BA 调度器中的路径与工位引用
         self.ba_runner.map_path = self.map_path
         self.ba_runner.manifest_path = self.manifest_path
+        self.ba_runner.workspace = self.current_workspace
+        self.ba_runner._load_alignment_config()  # 重新装载新工位的锚点配置
 
         # 5. 重新装载当前工位的多坐标系与 ROI 空间物件管理器
         self._load_workspace_geometry()
@@ -317,6 +321,25 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
     def set_toast(self, msg: str):
         self.status_toast = msg
         self.status_toast_time = time.time()
+        self.toast_sticky = True  # 每次弹出新消息均持久显示, 等待用户手动关闭
+
+    def dismiss_toast(self):
+        """用户手动点击 ❌ 关闭当前 Toast 消息"""
+        self.toast_sticky = False
+        self.status_toast = ""
+
+    def copy_toast(self):
+        """将当前 Toast 消息文本复制到系统剪贴板"""
+        text = self.status_toast
+        if not text:
+            return
+        try:
+            import subprocess
+            process = subprocess.Popen(['clip'], stdin=subprocess.PIPE, shell=True)
+            process.communicate(text.encode('utf-16-le'))
+            self.set_toast(f"已复制到剪贴板: {text}")
+        except Exception as e:
+            log.warning(f"[SPATIAL_MAPPING] 复制到剪贴板失败: {e}")
 
     @property
     def toast_msg(self) -> str:

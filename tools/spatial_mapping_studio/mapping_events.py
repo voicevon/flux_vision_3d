@@ -226,3 +226,7 @@ class MappingEventMixin:
             self.undo_prune_results()
         elif btn_id == "STOP_PRUNE":
             self.ba_runner.request_stop_pruning()
+        elif btn_id == "DISMISS_TOAST":
+            self.dismiss_toast()
+        elif btn_id == "COPY_TOAST":
+            self.copy_toast()

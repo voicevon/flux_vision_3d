@@ -154,8 +154,8 @@ class MappingRenderer(MappingFrameListMixin, MappingCenterViewMixin, MappingInsp
         elif getattr(app, "is_extracting_all", False):
             self.render_extract_loading_card(app, canvas, w, h)
 
-        # 5. Toast 浮层
-        if time.time() - app.status_toast_time < 3.0 and app.status_toast:
+        # 5. Toast 浮层 (持久显示, 用户点击 ❌ 才关闭)
+        if getattr(app, 'toast_sticky', False) and app.status_toast:
             self.render_toast(app, canvas, w, h, bot_h)
 
         # 6. 置顶悬浮下拉列表
@@ -392,16 +392,52 @@ class MappingRenderer(MappingFrameListMixin, MappingCenterViewMixin, MappingInsp
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 215, 240), 1, cv2.LINE_AA)
 
     def render_toast(self, app: Any, canvas: np.ndarray, w: int, h: int, bot_h: int):
+        close_label = "X"
+        copy_label = "COPY"
+        (cw, _), _ = measure_text(close_label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 2)
+        close_btn_w = cw + 20  # ❌ 按钮宽度 (左右内边距 10px)
+        (cpw, _), _ = measure_text(copy_label, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+        copy_btn_w = cpw + 20  # 复制按钮宽度
+
         (tw, _), _ = measure_text(app.status_toast, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
-        tx1 = (w - tw) // 2 - 16
+        total_w = tw + 32 + copy_btn_w + close_btn_w  # 文本 padding + 复制按钮 + 关闭按钮
+        tx1 = (w - total_w) // 2
         ty1 = h - bot_h - 46
-        tx2 = tx1 + tw + 32
+        tx2 = tx1 + total_w
         ty2 = ty1 + 32
 
+        # 背景板
         cv2.rectangle(canvas, (tx1, ty1), (tx2, ty2), (120, 30, 100), -1)
         cv2.rectangle(canvas, (tx1, ty1), (tx2, ty2), (220, 60, 180), 1)
+        # 消息文本
         put_text(canvas, app.status_toast, (tx1 + 16, ty1 + 21),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2, cv2.LINE_AA)
+
+        # 📋 复制按钮 (右侧, 紧邻关闭按钮左侧)
+        copy_x1 = tx2 - close_btn_w - copy_btn_w
+        copy_y1 = ty1
+        copy_x2 = copy_x1 + copy_btn_w
+        copy_y2 = ty2
+        # 分隔线
+        cv2.line(canvas, (copy_x1, copy_y1 + 4), (copy_x1, copy_y2 - 4), (180, 80, 150), 1)
+        # 复制文本居中
+        put_text(canvas, copy_label, (copy_x1 + 10, ty1 + 21),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 220, 255), 1, cv2.LINE_AA)
+        # 注册点击区域
+        app.gui_buttons.append(("COPY_TOAST", (copy_x1, copy_y1, copy_x2, copy_y2), None))
+
+        # ❌ 关闭按钮 (最右侧)
+        close_x1 = tx2 - close_btn_w
+        close_y1 = ty1
+        close_x2 = tx2
+        close_y2 = ty2
+        # 分隔线
+        cv2.line(canvas, (close_x1, close_y1 + 4), (close_x1, close_y2 - 4), (180, 80, 150), 1)
+        # ❌ 文本居中
+        put_text(canvas, close_label, (close_x1 + 10, ty1 + 21),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 2, cv2.LINE_AA)
+        # 注册点击区域
+        app.gui_buttons.append(("DISMISS_TOAST", (close_x1, close_y1, close_x2, close_y2), None))
 
     def render_dropdown_popup(
         self,
