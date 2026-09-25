@@ -47,33 +47,8 @@ vision:
   max_diam_mm: 65.0
   min_aspect_ratio: 1.8
 calibration:
-  valid_tag_ids:
-  - 0
-  - 18
-  - 19
-  - 20
-  - 21
-  - 22
-  - 23
-  - 24
-  - 25
-  - 26
-  - 27
-  - 28
-  - 29
-  origin_tag_id: 0
-  x_axis_tag_id: 28
-  # 每-Tag 世界坐标锚点表 (旧版全局源兜底): 工位未建 anchor_tags.yaml 时使用, 数据随工位隔离
-  # 新编辑写入 data/workspaces/<工位>/anchor_tags.yaml (Hub 锚点模式 / Tag 管理器)
-  # xyz_mm 为机械臂世界系下的已知坐标, known 为逐轴可信标记 (部分已知时只勾已知轴)
-  anchor_tags:
-    0:
-      xyz_mm: [0.0, 0.0, 405.0]
-      known: [true, true, true]
-    1:
-      xyz_mm: [0.0, 520.0, 196.0]
-      known: [true, true, true]
-  tags_map_path: config/tags_map.yaml
+  # Tag 全部状态已下沉至 data/workspaces/<id>/tag_whitelist.yaml (tag_anchors / allowed_ids)
+  # 与 tags_map.yaml (BA 输出), 全局 config.yaml 不再持有任何 Tag ID / 世界坐标
   tag_detection:
     contrast_boost: 1.6
     enable_auto_stretch: true

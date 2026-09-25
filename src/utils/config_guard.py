@@ -16,10 +16,13 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SYSTEM_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
+
 _WARNED_SCALES = set()
 
 
-def load_raw_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+def load_raw_config(config_path: str = SYSTEM_CONFIG_PATH) -> Dict[str, Any]:
     """安全读取 YAML 配置文件"""
     if not os.path.exists(config_path):
         return {}
@@ -70,7 +73,7 @@ def parse_anchor_mapping(raw: Any) -> Dict[int, Dict[str, Any]]:
     return anchors
 
 
-def load_anchor_tags(config_path: str = "config.yaml") -> Dict[int, Dict[str, Any]]:
+def load_anchor_tags(config_path: str = SYSTEM_CONFIG_PATH) -> Dict[int, Dict[str, Any]]:
     """
     读取全局 config.yaml 的世界坐标锚点表 (旧版数据源, 工位未建 anchor_tags.yaml 时的兜底)。
     当前推荐数据源为每工位独立文件 (load_workspace_anchor_tags)。
@@ -99,7 +102,7 @@ def load_anchor_tags(config_path: str = "config.yaml") -> Dict[int, Dict[str, An
 
 
 def resolve_camera_intrinsics(
-    config_path: str = "config.yaml",
+    config_path: str = SYSTEM_CONFIG_PATH,
     actual_image_shape: Optional[Tuple[int, int]] = None,
     stream_profile: Optional[Any] = None
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
@@ -195,7 +198,7 @@ def resolve_camera_intrinsics(
     return K, dist, metadata
 
 
-def validate_system_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+def validate_system_config(config_path: str = SYSTEM_CONFIG_PATH) -> Dict[str, Any]:
     """
     对 config.yaml 执行全方位的系统级健康诊断与安全隐患排查
     """

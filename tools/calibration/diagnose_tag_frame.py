@@ -43,7 +43,7 @@ try:
 except Exception:
     CALIB_IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "raw_images")
     DIAGNOSTICS_DIR = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "diagnostics")
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
 
 from src.utils.config_guard import load_raw_config
 from src.utils.text_rendering import measure_text, put_text

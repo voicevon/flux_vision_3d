@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Tuple
 import cv2
 import numpy as np
 
-from src.utils.text_rendering import draw_text, get_cached_font, measure_text, put_text
+from src.utils.text_rendering import measure_text, put_text
 
 # 共享常量与模块级绘制函数已迁移至 mapping_ui_common, 此处 re-import 保持
 # 既有外部导入路径 (from tools.spatial_mapping_studio.mapping_renderer import ...) 兼容可用。
@@ -127,10 +127,7 @@ class MappingRenderer(MappingFrameListMixin, MappingCenterViewMixin, MappingInsp
         # 1. 顶栏
         self.render_top_bar(app, canvas, w, top_h)
 
-        # 2. 底栏 (全局状态信息条)
-        self.render_bottom_status_bar(app, canvas, w, h, bot_h)
-
-        # 3. 工作区尺寸与左栏自适应宽度
+        # 2. 工作区尺寸与左栏自适应宽度
         app.left_bar_w = getattr(app, "dynamic_left_bar_w", app.left_bar_w)
         content_y1 = top_h
         content_y2 = h - bot_h
@@ -200,34 +197,6 @@ class MappingRenderer(MappingFrameListMixin, MappingCenterViewMixin, MappingInsp
         app.gui_buttons.append(("TOGGLE_WORKSPACE_DROPDOWN", (bx, btn_y_top, bx + sc_w, btn_y_bot), "WORKSPACE_DROPDOWN"))
         bx += sc_w + 5
 
-        # 0.5. [绘制XY平面] 透视网格开关与 [Z轴特殊点] 下拉选择 (移植自在线跟踪)
-        xy_on = getattr(app, "show_xy_plane_on", False)
-        xy_lbl = "√ XY平面" if xy_on else "绘制XY平面"
-        xy_accent = (0, 255, 180) if xy_on else None
-        xy_w = 88
-        draw_dashboard_button(canvas, (bx, btn_y_top, bx + xy_w, btn_y_bot), xy_lbl,
-                              mouse_pos=(mx, my), accent=xy_accent)
-        app.gui_buttons.append(("TOGGLE_DRAW_XY_PLANE", (bx, btn_y_top, bx + xy_w, btn_y_bot), "TOGGLE_DRAW_XY_PLANE"))
-        bx += xy_w + 5
-
-        # Z 轴特殊点下拉按钮 (显示当前选定高度或特殊点)
-        z_w = 120
-        cur_z_lbl = app.get_current_plane_z_label() if hasattr(app, "get_current_plane_z_label") else "Z轴特殊点"
-        is_z_open = (app.active_dropdown == "PLANE_Z_DROPDOWN")
-        draw_dropdown_button(canvas, (bx, btn_y_top, bx + z_w, btn_y_bot), cur_z_lbl,
-                             is_open=is_z_open, mouse_pos=(mx, my),
-                             theme_color=(0, 220, 255) if xy_on else (140, 160, 180))
-        plane_opts = [(str(val) if val is not None else "NONE", lbl)
-                      for val, lbl in app.get_plane_z_options()] if hasattr(app, "get_plane_z_options") else []
-        active_z_key = str(app.plane_z) if (xy_on and hasattr(app, "plane_z")) else "NONE"
-        app.dropdown_boxes["PLANE_Z_DROPDOWN"] = {
-            "rect": (bx, btn_y_top, bx + z_w, btn_y_bot),
-            "options": plane_opts,
-            "active_key": active_z_key
-        }
-        app.gui_buttons.append(("TOGGLE_PLANE_Z_DROPDOWN", (bx, btn_y_top, bx + z_w, btn_y_bot), "PLANE_Z_DROPDOWN"))
-        bx += z_w + 5
-
         # 1. 全局全量超精提取 (清空旧角点并从头重提取)
         ext_w = 85
         is_ext = getattr(app, "is_extracting_all", False)
@@ -294,72 +263,6 @@ class MappingRenderer(MappingFrameListMixin, MappingCenterViewMixin, MappingInsp
         draw_dashboard_button(canvas, (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "退出 (Q)",
                               mouse_pos=(mx, my), accent=(70, 60, 210))
         app.gui_buttons.append(("EXIT", (exit_x1, btn_y_top, exit_x1 + exit_w, btn_y_bot), "EXIT"))
-
-    def render_bottom_status_bar(self, app: Any, canvas: np.ndarray, w: int, h: int, bot_h: int):
-        """底栏：全局状态信息条 (放行门限徽章 / 拓扑连通度 / 采图与精度统计)"""
-        y1 = h - bot_h
-        cv2.rectangle(canvas, (0, y1), (w, h), (20, 22, 28), -1)
-        cv2.line(canvas, (0, y1), (w, y1), (60, 65, 78), 1)
-
-        badge_y1, badge_y2 = y1 + 10, h - 10
-        badge_cy = (badge_y1 + badge_y2) // 2
-        curr_x = 16
-
-        # 1. 质量放行门限徽章 (Gate Verdict)
-        gate = getattr(app, "gate_status", "REVIEW")
-        verdict = gate if isinstance(gate, str) else gate.get("gate_verdict", "REVIEW")
-        if verdict == "PASS":
-            v_txt = "放行: PASS"
-            v_bg, v_border, v_fg = (20, 70, 30), (40, 180, 70), (160, 255, 180)
-        elif verdict == "ACCEPTABLE":
-            v_txt = "放行: 可接受"
-            v_bg, v_border, v_fg = (20, 60, 80), (30, 160, 220), (140, 230, 255)
-        else:
-            v_txt = "放行: 建议回审"
-            v_bg, v_border, v_fg = (30, 20, 80), (50, 40, 220), (180, 160, 255)
-
-        vb = get_cached_font(12).getbbox(v_txt)
-        v_box_w = (vb[2] - vb[0]) + 16
-        cv2.rectangle(canvas, (curr_x, badge_y1), (curr_x + v_box_w, badge_y2), v_bg, -1)
-        cv2.rectangle(canvas, (curr_x, badge_y1), (curr_x + v_box_w, badge_y2), v_border, 1)
-        draw_text(canvas, v_txt, (curr_x + 8, badge_cy - (vb[3] - vb[1]) // 2 - vb[1]),
-                  font_size=12, color=v_fg)
-        curr_x += v_box_w + 10
-
-        # 2. 拓扑连通度徽章 (Topology Status)
-        topo = getattr(app, "topology_status", {})
-        unconnected = topo.get("unconnected_tags", [])
-        if unconnected:
-            t_txt = f"拓扑: 孤岛 #{unconnected[0]}"
-            t_bg, t_border, t_fg = (20, 20, 75), (40, 40, 200), (140, 140, 255)
-        elif not topo.get("is_valid", True):
-            t_txt = "拓扑: 弱连通"
-            t_bg, t_border, t_fg = (20, 50, 75), (40, 130, 200), (140, 210, 255)
-        else:
-            t_txt = "拓扑: 全连通"
-            t_bg, t_border, t_fg = (20, 60, 35), (40, 160, 80), (160, 255, 190)
-
-        tb = get_cached_font(12).getbbox(t_txt)
-        t_box_w = (tb[2] - tb[0]) + 16
-        cv2.rectangle(canvas, (curr_x, badge_y1), (curr_x + t_box_w, badge_y2), t_bg, -1)
-        cv2.rectangle(canvas, (curr_x, badge_y1), (curr_x + t_box_w, badge_y2), t_border, 1)
-        draw_text(canvas, t_txt, (curr_x + 8, badge_cy - (tb[3] - tb[1]) // 2 - tb[1]),
-                  font_size=12, color=t_fg)
-        curr_x += t_box_w + 14
-
-        # 3. 统计指标文字 (采图数 | 标靶数 | 全局 RMSE / 空间毫米偏差)
-        tag_num = len(app.tags_map_data.get("tags", {}))
-        med_mm = getattr(app, "global_median_mm", 0.0)
-        stat_txt = f"采图集: {len(app.image_files)} 帧 | 标靶: {tag_num} 个 | 全局 RMSE: {app.global_rmse:.2f}px ({med_mm:.2f}mm)"
-        sb = get_cached_font(12).getbbox(stat_txt)
-        draw_text(canvas, stat_txt, (curr_x, badge_cy - (sb[3] - sb[1]) // 2 - sb[1]),
-                  font_size=12, color=(0, 255, 180))
-
-        # 4. 右侧产品副标题 (muted)
-        sub_txt = "AprilTag 离线标定与空间建图综合工作站"
-        ub = get_cached_font(11).getbbox(sub_txt)
-        draw_text(canvas, sub_txt, (w - 16 - (ub[2] - ub[0]), badge_cy - (ub[3] - ub[1]) // 2 - ub[1]),
-                  font_size=11, color=(115, 130, 145))
 
     def _render_hover_tooltip(self, canvas: np.ndarray, app: Any, mx: int, my: int,
                                cw: int, ch: int):

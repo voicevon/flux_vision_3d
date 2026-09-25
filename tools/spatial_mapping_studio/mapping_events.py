@@ -218,6 +218,8 @@ class MappingEventMixin:
             self.start_auto_prune_ba()
         elif btn_id == "TOGGLE_MATRIX_VIEW":
             self.toggle_matrix_view_mode()
+        elif btn_id == "DRAW_ROI_OBJECT":
+            self.toggle_draw_roi_mode()
         elif btn_id == "ACCEPT_PRUNE":
             self.accept_prune_results()
         elif btn_id == "UNDO_PRUNE":

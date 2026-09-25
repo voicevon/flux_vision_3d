@@ -15,7 +15,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.manifest_repository import ManifestRepository
-from src.utils.config_guard import load_anchor_tags
+from src.calibration.workspace_manager import (
+    load_workspace_anchor_tags,
+    load_workspace_tag_anchors,
+)
 from tools.spatial_mapping_studio.mapping_state import MappingDataManager
 from src.utils.logger import get_logger
 
@@ -72,21 +75,49 @@ class MappingBARunner:
         self._load_alignment_config()
 
     def _load_alignment_config(self):
+        """
+        锚点装载优先级链 (FR-9.6 严禁以打印边长兜底):
+        ① 工位 anchor_tags.yaml (独立世界坐标数据源)
+        ② 工位 tag_whitelist.yaml 的 tag_anchors (用户在白名单页签录入的已知世界坐标)
+        Tag 数据已 100% 下沉至工位沙盒, 全局 config.yaml 不再持有任何 Tag ID/世界坐标.
+        工位两源全空 → BA 后续将抛错终止.
+        """
         try:
             import yaml
-            cfg_path = os.path.join(PROJECT_ROOT, "config.yaml")
+            cfg_path = os.path.join(PROJECT_ROOT, "config", "config.yaml")
+            calib = {}
             if os.path.exists(cfg_path):
                 with open(cfg_path, "r", encoding="utf-8") as f:
-                    c = yaml.safe_load(f) or {}
-                calib = c.get("calibration", {})
+                    cfg = yaml.safe_load(f) or {}
+                calib = cfg.get("calibration", {})
                 self.origin_tag_id = int(calib.get("origin_tag_id", 0))
                 self.x_align_tag_id = int(calib.get("x_axis_tag_id", 28))
-                # FR-9.6 世界系绝对锚定 (config_guard 统一读取: anchor_tags 优先, 旧 world_anchor 自动迁移)
-                self.anchor_tags = load_anchor_tags(cfg_path) or None
-                if self.anchor_tags:
-                    log.info(f"[SPATIAL_MAPPING] 已加载世界锚点表: {sorted(self.anchor_tags.keys())}")
+
+            ws = self.data_mgr.current_workspace if self.data_mgr else None
+            ws_dir = getattr(ws, "workspace_dir", None) if ws else None
+
+            # ① 工位 anchor_tags.yaml
+            if ws_dir:
+                ws_anchors = load_workspace_anchor_tags(ws_dir)
+                if ws_anchors:
+                    self.anchor_tags = ws_anchors
+                    log.info(f"[SPATIAL_MAPPING] 锚点源① 命中 (anchor_tags.yaml): {sorted(self.anchor_tags.keys())}")
+                    return
+
+            # ② 工位 tag_whitelist.yaml 的 tag_anchors
+            if ws_dir:
+                wl_anchors = load_workspace_tag_anchors(ws_dir)
+                if wl_anchors:
+                    self.anchor_tags = wl_anchors
+                    log.info(f"[SPATIAL_MAPPING] 锚点源② 命中 (tag_whitelist.yaml/tag_anchors): {sorted(self.anchor_tags.keys())}")
+                    return
+
+            # 工位两源缺失 — 严格禁止静默 fallback, 后续 BA 求解将抛错
+            self.anchor_tags = None
+            log.warning("[SPATIAL_MAPPING] 锚点全源缺失: BA 平差将拒绝以打印边长兜底 (需在工位 anchor_tags.yaml 或 tag_whitelist.yaml.tag_anchors 录入已知世界坐标)")
         except Exception as e:
-            log.warning(f"[SPATIAL_MAPPING] 读取对齐标靶配置异常，采用默认值 (0, 28): {e}")
+            log.warning(f"[SPATIAL_MAPPING] 读取对齐标靶配置异常: {e}")
+            self.anchor_tags = None
 
     def _notify(self, msg: str):
         if self.on_status_change is not None:

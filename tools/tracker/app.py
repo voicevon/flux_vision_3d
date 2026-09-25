@@ -66,7 +66,7 @@ except ImportError:
 
 log = get_logger(__name__)
 
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
 GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")
 APP_ID = "robot_online_tracker"
 

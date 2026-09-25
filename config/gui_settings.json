@@ -7,7 +7,7 @@
     "scale_pct": 90,
     "canvas_w": 1152,
     "canvas_h": 900,
-    "updated_at": "2026-09-25 09:17:14"
+    "updated_at": "2026-09-25 14:02:35"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
@@ -32,13 +32,13 @@
   },
   "workspace_hub": {
     "scale_pct": 200,
-    "canvas_w": 1920,
-    "canvas_h": 1017,
-    "updated_at": "2026-09-24 20:04:35",
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-25 13:43:23",
     "hub_state": {
       "selected_workspace_id": "20260923_204026_Workspace_5",
       "selected_workspace_name": "Workspace_5",
-      "updated_at": "2026-09-24 18:45:02"
+      "updated_at": "2026-09-25 13:35:38"
     }
   },
   "hardware_config": {
@@ -51,11 +51,11 @@
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-24 15:29:01",
+    "updated_at": "2026-09-25 10:01:10",
     "viewer_state": {
       "camera_type": "realsense",
       "resolution": "1920x1080",
-      "purpose": "production"
+      "purpose": "calibration"
     }
   },
   "asparagus_offline": {
@@ -133,5 +133,14 @@
     "canvas_w": 1920,
     "canvas_h": 1017,
     "updated_at": "2026-09-22 19:46:06"
+  },
+  "tag_manager": {
+    "scale_pct": 100,
+    "canvas_w": 1366,
+    "canvas_h": 705,
+    "updated_at": "2026-09-19 16:33:51",
+    "gen_tag_count": 30,
+    "gen_pixel_size": 800,
+    "active_tab": "generator"
   }
 }

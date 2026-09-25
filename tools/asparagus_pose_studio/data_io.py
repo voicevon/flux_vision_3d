@@ -19,7 +19,7 @@ from src.utils.logger import get_logger
 log = get_logger(__name__)
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
 DEFAULT_DIR = os.path.join(PROJECT_ROOT, "data", "snapshots")
 REPORT_DIR = os.path.join(PROJECT_ROOT, "reports")
 GUI_SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")

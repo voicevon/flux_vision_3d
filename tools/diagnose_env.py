@@ -32,7 +32,7 @@ def main():
     print(f"D435 相机驱动 : {status['realsense'][1]}")
     print(f"离线快照帧数  : {status['snapshot_count']} 帧")
     print(f"标定采图帧数  : {status['calib_image_count']} 帧")
-    print(f"Tag 3D 地图   : {'存在 (config/tags_map.yaml)' if status['has_tag_map'] else '未创建'}")
+    print(f"Tag 3D 地图   : {'存在 (当前工位 tags_map.yaml)' if status['has_tag_map'] else '未创建'}")
     print("-" * 65)
     print("全量自动化测试: python -m unittest discover -s tests -p \"test_*.py\"")
     print("=" * 65)

@@ -310,8 +310,10 @@ class ManifestRepository:
         return frame_detections, valid_frame_names, stats
 
     @staticmethod
-    def save_map(map_data: Dict, output_path: str = "config/tags_map.yaml"):
-        """保存标靶地图至 YAML 文件"""
+    def save_map(map_data: Dict, output_path: str):
+        """保存标靶地图至 YAML 文件. 必须显式传入路径 — 默认值已废弃 (Tag 地图必须写入工位沙盒)"""
+        if not output_path:
+            raise ValueError("save_map: output_path 不能为空 (Tag 地图必须写入工位沙盒, 不再回退全局 config/tags_map.yaml)")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             yaml.dump(map_data, f, allow_unicode=True, sort_keys=False)

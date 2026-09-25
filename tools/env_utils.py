@@ -9,6 +9,7 @@ import os
 import sys
 import glob
 import time
+from typing import List
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
@@ -112,17 +113,16 @@ def check_env_status(force_refresh: bool = False) -> dict:
             log.warning(f"读取标定清单统计排除帧失败: {e}")
     status['manifest_excluded'] = manifest_excluded
 
-    # 标靶 ID 白名单状态
-    cfg_path = os.path.join(PROJECT_ROOT, "config.yaml")
-    valid_tag_ids = []
-    if os.path.exists(cfg_path):
-        try:
-            import yaml
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            valid_tag_ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
-        except Exception as e:
-            log.warning(f"读取 config.yaml 标靶白名单失败: {e}")
+    # 标靶 ID 白名单状态 (已下沉至工位沙盒 tag_whitelist.yaml.allowed_ids, 默认取当前工位)
+    cfg_path = os.path.join(PROJECT_ROOT, "config", "config.yaml")
+    valid_tag_ids: List[int] = []
+    try:
+        from src.calibration.workspace_manager import WorkspaceManager, load_workspace_tag_whitelist
+        ws = WorkspaceManager().get_current_workspace()
+        if ws:
+            valid_tag_ids = load_workspace_tag_whitelist(ws.workspace_dir)
+    except Exception as e:
+        log.warning(f"读取工位标靶白名单失败: {e}")
     status['valid_tag_ids'] = valid_tag_ids
 
     _ENV_STATUS_CACHE = status

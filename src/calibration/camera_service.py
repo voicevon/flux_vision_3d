@@ -29,7 +29,7 @@ except ImportError:
     HAVE_REALSENSE = False
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
 
 try:
     from src.utils.config_guard import resolve_camera_intrinsics

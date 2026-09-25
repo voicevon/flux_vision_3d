@@ -475,19 +475,17 @@ class BundleAdjustmentOptimizer:
             }
             self.marker_size_mm = real_marker_size
 
-        # 7. 坐标系对齐闭环: 优先 FR-9.6 世界系绝对锚定 (约束积累式, 支持全知/部分已知锚点),
-        #    未配置锚点 (或约束不足求解退化) 时退化为相对对齐
-        if anchor_tags:
-            final_tags_map = self.anchor_to_absolute_world(
-                optimized_tags_pose, anchor_tags,
-                origin_tag_id=origin_tag_id, x_align_tag_id=x_align_tag_id
+        # 7. 坐标系对齐闭环: FR-9.6 严格强制世界系绝对锚定 — 严禁以打印边长兜底
+        #    锚点缺失/约束不足时直接抛错, 由上层 GUI 弹 toast 提示, 不再静默走相对对齐
+        if not anchor_tags:
+            raise ValueError(
+                "BA 平差拒绝执行: 未配置任何已知世界坐标锚点 (anchor_tags / tag_anchors)。"
+                "请在工位 anchor_tags.yaml 或 tag_whitelist.yaml.tag_anchors 录入≥2 枚 tag 的 xyz_mm 后重试。"
             )
-        else:
-            final_tags_map = self.align_to_scara_world(
-                optimized_tags_pose,
-                origin_tag_id=origin_tag_id,
-                x_align_tag_id=x_align_tag_id
-            )
+        final_tags_map = self.anchor_to_absolute_world(
+            optimized_tags_pose, anchor_tags,
+            origin_tag_id=origin_tag_id, x_align_tag_id=x_align_tag_id
+        )
 
         final_tags_map["rmse_reprojection_px"] = rmse_px
         final_tags_map["marker_size_mm"] = round(float(self.marker_size_mm), 3)
@@ -803,17 +801,21 @@ class BundleAdjustmentOptimizer:
         """
         anchor_tags = self.normalize_anchor_tags(anchor_input)
         if not anchor_tags:
-            return self._anchor_fallback_relative(tag_poses, origin_tag_id, x_align_tag_id, "anchor_config_invalid")
+            raise ValueError("anchor_to_absolute_world: 锚点配置为空或字段不合法 (FR-9.6 禁止兜底)")
 
         dof = self.evaluate_anchor_dof(anchor_tags)
         if dof["mode"] == "none":
-            return self._anchor_fallback_relative(
-                tag_poses, origin_tag_id, x_align_tag_id,
-                f"锚点约束不足 ({dof['dof_solved']}/5 DoF): {dof['reason']}")
+            raise ValueError(
+                f"锚点 DoF 约束不足 ({dof['dof_solved']}/5): {dof['reason']}"
+                " — 请增配已知世界坐标的 tag 或放宽当前部分已知标记 (FR-9.6 禁止兜底)"
+            )
 
         mode, solve = self.solve_similarity_from_anchors(tag_poses, anchor_tags)
         if mode == "none":
-            return self._anchor_fallback_relative(tag_poses, origin_tag_id, x_align_tag_id, solve["reason"])
+            raise ValueError(
+                f"锚点求解退化: {solve['reason']}"
+                " — 请检查锚点 tag 之间的已知轴距离与 XY 共线方向 (FR-9.6 禁止兜底)"
+            )
 
         scale = solve["scale_factor"]
         R = solve["R"]

@@ -207,31 +207,21 @@ def interactive_workflow(args, builder: TagMapBuilder, image_paths: List[str], b
 
 def main():
     parser = argparse.ArgumentParser(description="AprilTag 16h5 多标靶离线两阶段建图与 BA 平差工具")
-    # 从 config.yaml 动态加载基准标靶 ID
+    # 基准标靶 ID 与地图输出路径已下沉至工位沙盒 (origin_tag_id / x_axis_tag_id / map_path)
     def_origin_id = 0
     def_x_axis_id = 28
-    try:
-        cfg_file = os.path.join(PROJECT_ROOT, "config.yaml")
-        if os.path.exists(cfg_file):
-            with open(cfg_file, "r", encoding="utf-8") as f:
-                cfg_obj = yaml.safe_load(f) or {}
-            c_sec = cfg_obj.get("calibration", {})
-            def_origin_id = int(c_sec.get("origin_tag_id", 0))
-            def_x_axis_id = int(c_sec.get("x_axis_tag_id", 28))
-    except Exception as e:
-        log.warning(f"读取 config.yaml 默认标靶配置失败，使用内置默认值: {e}")
-
     def_image_dir = ""
     def_manifest = ""
-    def_output = "config/tags_map.yaml"
+    def_output = ""
     try:
         from src.calibration.workspace_manager import WorkspaceManager
         current_ws = WorkspaceManager().get_current_workspace()
         def_image_dir = current_ws.calib_raw_images_dir
         def_manifest = current_ws.calib_manifest_path
         def_output = current_ws.map_path
+        # 注: 基准 ID 若工位未配置, 由 BA 求解器自动选择 (该变量仅 CLI 兼容占位)
     except Exception as e:
-        log.warning(f"获取当前工位失败: {e}")
+        log.warning(f"获取当前工位失败 (将以默认值运行): {e}")
 
     parser.add_argument("--image_dir", type=str, default=def_image_dir, help="多视角标定图片目录")
     parser.add_argument("--manifest", type=str, default=def_manifest, help="观测数据审核清单路径")

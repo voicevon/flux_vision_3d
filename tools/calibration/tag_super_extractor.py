@@ -43,9 +43,8 @@ try:
 except Exception:
     DEFAULT_IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "raw_images")
     DEFAULT_MANIFEST_PATH = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "calibration", "tag_observations.yaml")
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")  # 相机内参兜底, 不再持有 Tag 数据
 
-from src.utils.config_guard import load_raw_config
 from src.utils.text_rendering import measure_text, put_text
 from src.utils.logger import get_logger
 
@@ -80,20 +79,16 @@ class TagSuperExtractor:
         self.clahe_16 = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(16, 16))
 
     def _load_valid_tag_ids(self) -> List[int]:
-        # 工位物理白名单 (恒启用): allowed_ids 非空 → 权威覆盖, 名单内容即行为
+        # Tag ID 白名单已 100% 下沉至工位沙盒 (tag_whitelist.yaml.allowed_ids)
         try:
             ws = WorkspaceManager().get_current_workspace()
             wl = load_workspace_tag_whitelist(ws.workspace_dir)
             if wl:
                 log.info(f"[EXTRACTOR] 工位白名单已生效 ({ws.workspace_id}): {wl}")
                 return wl
-        except Exception:
-            pass
-        # 兜底: 全局物理白名单 (空 = 全量放行探索模式)
-        cfg = load_raw_config(CONFIG_PATH)
-        ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
-        if ids:
-            return [int(x) for x in ids]
+            log.info(f"[EXTRACTOR] 工位白名单为空: 全 ID 探索模式 (0~29)")
+        except Exception as e:
+            log.info(f"[EXTRACTOR] 工位上下文不可用 (单测/独立调用), 探索模式: {e}")
         return list(range(30))
 
     def _build_dense_detector(self) -> cv2.aruco.ArucoDetector:

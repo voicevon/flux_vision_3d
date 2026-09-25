@@ -140,7 +140,7 @@ class HubState:
         self.whitelist_edit_ids: set = set()      # 编辑工作集合 (芯片即时反馈源)
 
         # 锚点坐标编辑 (编辑态子模式: 弹窗逐轴输入 xyz, 支持部分已知与清除)
-        self.anchor_config_path: str = "config.yaml"   # 可注入临时路径供测试
+        self.anchor_config_path: str = "config/config.yaml"   # 可注入临时路径供测试 (已废弃: 锚点全走工位沙盒, 仅供老测试兼容)
         self.anchor_mode: bool = False                 # 子模式: 芯片点击改为打开锚点弹窗
         self.anchor_map: dict = {}                     # {tag_id: {"xyz_mm","known"}} 缓存
         self.anchor_modal_open: bool = False
@@ -692,14 +692,10 @@ class HubState:
         self._close_anchor_modal()
 
     def _reload_anchor_map(self):
-        """载入当前工位锚点: 工位自有 anchor_tags.yaml 优先, 缺失回退全局 config.yaml 旧源"""
+        """载入当前工位锚点 (Tag 数据 100% 工位沙盒, 全局 config.yaml 已禁兜底)"""
         from src.calibration.workspace_manager import load_workspace_anchor_tags
-        from src.utils.config_guard import load_anchor_tags
         ws = self.get_selected_workspace()
-        own = load_workspace_anchor_tags(ws.workspace_dir) if ws else None
-        if own is None:
-            own = load_anchor_tags(self.anchor_config_path)
-        self.anchor_map = own
+        self.anchor_map = load_workspace_anchor_tags(ws.workspace_dir) if ws else None
 
     def _persist_anchor_map(self) -> bool:
         """写穿当前工位锚点文件 (首次写穿即建立工位独立锚点, 此后不再回退全局)"""

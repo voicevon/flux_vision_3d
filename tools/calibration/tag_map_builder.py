@@ -50,22 +50,24 @@ class TagMapBuilder:
         """
         self.marker_size_mm = float(marker_size_mm)
         self.dictionary = cv2.aruco.getPredefinedDictionary(tag_family)
-        
-        # 读取 config.yaml 的最小周长门限 (统一走 config_guard) 与全局物理白名单
+
+        # 读取 config.yaml 的最小周长门限 (统一走 config_guard, 仅 tag_detection.min_perimeter_rate 是全局图像处理参数)
         min_perim = 0.006
-        c = load_raw_config("config.yaml") if load_raw_config else {}
-        valid_tag_ids = [int(x) for x in c.get("calibration", {}).get("valid_tag_ids", [])]
+        c = load_raw_config() if load_raw_config else {}
         min_perim = float(c.get("calibration", {}).get("tag_detection", {}).get("min_perimeter_rate", min_perim))
 
-        # 工位物理白名单 (恒启用): allowed_ids 非空 → 权威覆盖全局名单, 名单内容即行为
+        # 工位物理白名单 (恒启用): allowed_ids 非空 → 权威, 名单内容即行为 (Tag ID 已 100% 下沉至工位沙盒)
+        valid_tag_ids: List[int] = []
         try:
             from src.calibration.workspace_manager import WorkspaceManager, load_workspace_tag_whitelist
             wl = load_workspace_tag_whitelist(WorkspaceManager().get_current_workspace().workspace_dir)
             if wl:
                 log.info(f"[BUILDER] 工位白名单已生效: {wl}")
                 valid_tag_ids = wl
+            else:
+                log.info("[BUILDER] 工位白名单为空: 全 ID 自由通行 (由 tag_anchors 显式锚定约束)")
         except Exception:
-            pass  # 工位上下文不可用 (单测/独立调用), 保持全局白名单
+            log.info("[BUILDER] 工位上下文不可用 (单测/独立调用), 不强制白名单")
 
         self.valid_tag_ids = valid_tag_ids
 
@@ -81,7 +83,7 @@ class TagMapBuilder:
         # 相机内参与畸变 (若未指定，优先从 config_guard 加载并自适应)
         if camera_matrix is None:
             if resolve_camera_intrinsics is not None:
-                K, dist, _ = resolve_camera_intrinsics("config.yaml")
+                K, dist, _ = resolve_camera_intrinsics()
                 self.camera_matrix = K
                 self.dist_coeffs = dist
             else:
@@ -478,7 +480,7 @@ class TagMapBuilder:
             if probe_img is not None:
                 if resolve_camera_intrinsics is not None:
                     self.camera_matrix, self.dist_coeffs, _ = resolve_camera_intrinsics(
-                        "config.yaml", actual_image_shape=probe_img.shape[:2]
+                        actual_image_shape=probe_img.shape[:2]
                     )
                 break
 
@@ -540,8 +542,10 @@ class TagMapBuilder:
             x_align_tag_id=x_align_tag_id
         )
 
-    def save_map(self, map_data: Dict, output_path: str = "config/tags_map.yaml"):
-        """保存标靶地图至 YAML 文件（委托专职仓储处理）"""
+    def save_map(self, map_data: Dict, output_path: str):
+        """保存标靶地图至 YAML 文件（委托专职仓储处理, 必须显式传入路径 — 默认值已废弃）"""
+        if not output_path:
+            raise ValueError("save_map: output_path 不能为空 (Tag 地图必须写入工位沙盒, 不再回退全局 config/tags_map.yaml)")
         return self.repository.save_map(map_data=map_data, output_path=output_path)
 
 

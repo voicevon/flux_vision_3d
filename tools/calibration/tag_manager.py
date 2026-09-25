@@ -22,8 +22,14 @@ from src.utils.gui_window_manager import GuiWindowManager
 from src.utils.gui_theme import GuiTheme
 from src.utils.text_rendering import draw_text
 from src.utils.gui_components import draw_app_header
-from src.utils.config_guard import load_raw_config, load_anchor_tags
-from src.calibration.workspace_manager import WorkspaceManager, load_workspace_anchor_tags, save_workspace_anchor_tags
+from src.utils.config_guard import load_raw_config
+from src.calibration.workspace_manager import (
+    WorkspaceManager,
+    load_workspace_anchor_tags,
+    load_workspace_tag_whitelist,
+    save_workspace_anchor_tags,
+    save_workspace_tag_whitelist,
+)
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 
 # 复用旧代码的图纸生成函数 (不修改旧代码)
@@ -63,8 +69,8 @@ class TagManager:
     # Tag 16h5 共 30 个 (ID 0~29)
     TAG_COUNT = 30
     TAG_PRESET_DEFAULT = [0, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
-    CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
-    SETTINGS_FILE = os.path.join(PROJECT_ROOT, "data", "gui_settings.json")
+    CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
+    SETTINGS_FILE = os.path.join(PROJECT_ROOT, "config", "gui_settings.json")  # 合并: tag_manager 段统一存 config/gui_settings.json
     APP_ID = "tag_manager"
 
     def __init__(self):
@@ -145,32 +151,36 @@ class TagManager:
             log.warning(f"保存标靶生成器设置失败: {e}")
 
     def _load_valid_tag_ids(self):
-        cfg = load_raw_config(self.CONFIG_PATH)
-        ids = cfg.get("calibration", {}).get("valid_tag_ids", [])
-        return [int(x) for x in ids] if ids else []
+        """Tag ID 白名单已 100% 下沉至工位 tag_whitelist.yaml (allowed_ids 段)"""
+        try:
+            ws = WorkspaceManager().get_current_workspace()
+            return load_workspace_tag_whitelist(ws.workspace_dir)
+        except Exception as e:
+            log.warning(f"[TagMgr] 加载工位白名单失败: {e}")
+            return []
 
     def _save_valid_tag_ids(self):
-        """写回 config.yaml"""
+        """写穿白名单到当前活动工位的 tag_whitelist.yaml (工位沙盒隔离)"""
         try:
-            with open(self.CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            cfg.setdefault("calibration", {})["valid_tag_ids"] = sorted(self.valid_tag_ids)
-            with open(self.CONFIG_PATH, "w", encoding="utf-8") as f:
-                yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-            self.gen_status = f"✅ 白名单已保存: {sorted(self.valid_tag_ids)}"
+            ws = WorkspaceManager().get_current_workspace()
+            ok = save_workspace_tag_whitelist(ws, sorted(self.valid_tag_ids))
+            if ok:
+                self.gen_status = f"✅ 白名单已保存到工位 {ws.workspace_id}: {sorted(self.valid_tag_ids)}"
+            else:
+                self.gen_status = "❌ 保存失败 (工位白名单写穿异常)"
         except Exception as e:
             self.gen_status = f"❌ 保存失败: {e}"
 
     def _load_anchor_tags_ws(self):
-        """工位沙盒感知加载锚点: 活动工位 anchor_tags.yaml 优先, 缺失回退全局 config.yaml 旧源"""
+        """锚点已 100% 下沉至工位沙盒 (anchor_tags.yaml / tag_whitelist.yaml.tag_anchors); 全局 config.yaml 不再兜底"""
         try:
             ws = WorkspaceManager().get_current_workspace()
             own = load_workspace_anchor_tags(ws.workspace_dir)
             if own is not None:
                 return own
         except Exception as e:
-            log.warning(f"[TagMgr] 工位锚点加载失败, 回退全局 config.yaml: {e}")
-        return load_anchor_tags(self.CONFIG_PATH)
+            log.warning(f"[TagMgr] 加载工位 anchor_tags.yaml 失败: {e}")
+        return None  # 全局兜底已禁用 (FR-9.6 严禁以打印边长兜底)
 
     def _save_anchor_tags(self):
         """写穿世界锚点表到当前活动工位的 anchor_tags.yaml (工位沙盒隔离)"""

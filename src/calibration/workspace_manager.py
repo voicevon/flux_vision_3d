@@ -14,7 +14,7 @@ import shutil
 import time
 import glob
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict, Tuple
 import yaml
 import numpy as np
 
@@ -25,7 +25,7 @@ log = get_logger(__name__)
 # 项目根目录常量
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_WORKSPACES_DIR = os.path.join(PROJECT_ROOT, "data", "workspaces")
-DEFAULT_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+DEFAULT_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
 
 
 @dataclass
@@ -67,7 +67,7 @@ class Workspace:
 
     @property
     def anchor_path(self) -> str:
-        """【工位核心资产】本工位世界坐标锚点文件 (缺失时系统回退全局 config.yaml 旧源)"""
+        """【工位核心资产】本工位世界坐标锚点文件 (Tag 数据 100% 工位沙盒, 全局兜底已禁用)"""
         return os.path.join(self.workspace_dir, "anchor_tags.yaml")
 
     @property
@@ -643,6 +643,38 @@ def load_workspace_tag_whitelist(workspace_dir: str) -> List[int]:
         return []
 
 
+def load_workspace_tag_anchors(workspace_dir: str) -> Optional[Dict[int, Dict]]:
+    """
+    读取工位 tag_whitelist.yaml 的 tag_anchors (用户在白名单页签录入的已知世界坐标):
+    - 文件存在且 tag_anchors 非空 → {int tag_id: {"xyz_mm": [f3], "known": [T,T,T]}}
+      (录入即视为三轴全知, 与 BA 求解器期望的 anchor_tags 格式对齐)
+    - 文件缺失/解析失败/tag_anchors 为空 → 返回 None (调用方应继续尝试其它锚点源)
+    """
+    path = os.path.join(workspace_dir, "tag_whitelist.yaml")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as e:
+        log.warning(f"[WS] 解析工位白名单锚点失败 ({path}): {e}")
+        return None
+    raw = data.get("tag_anchors")
+    if not isinstance(raw, dict) or not raw:
+        return None
+    out: Dict[int, Dict[str, Any]] = {}
+    for tid_key, xyz in raw.items():
+        try:
+            tid_i = int(tid_key)
+            xyz_f = [float(v) for v in xyz]
+        except (TypeError, ValueError):
+            continue
+        if len(xyz_f) != 3:
+            continue
+        out[tid_i] = {"xyz_mm": xyz_f, "known": [True, True, True]}
+    return out or None
+
+
 def load_workspace_anchor_tags(workspace_dir: str) -> Optional[Dict[int, Dict]]:
     """
     读取工位自有世界坐标锚点文件 anchor_tags.yaml (每工位独立世界坐标系数据源):
@@ -678,7 +710,7 @@ def save_workspace_anchor_tags(workspace: Workspace, anchors: Dict[int, Dict]) -
             for tid, e in sorted(anchors.items())
         },
         "notes": ("本工位世界坐标锚点 (Hub 白名单页锚点模式 / Tag 管理器编辑, known 逐轴布尔支持部分已知); "
-                  "文件缺失时系统回退全局 config.yaml calibration.anchor_tags"),
+                  "Tag 数据已 100% 下沉至工位沙盒, 不再回退全局 config.yaml"),
     }
     try:
         with open(workspace.anchor_path, "w", encoding="utf-8") as f:
@@ -687,6 +719,36 @@ def save_workspace_anchor_tags(workspace: Workspace, anchors: Dict[int, Dict]) -
         return True
     except Exception as e:
         log.warning(f"[WS] 写回工位锚点失败 ({workspace.anchor_path}): {e}")
+        return False
+
+
+def save_workspace_tag_whitelist(workspace: Workspace, allowed_ids: List[int]) -> bool:
+    """
+    写穿工位 tag_whitelist.yaml 的 allowed_ids 段 (工位级物理白名单, 恒启用).
+    - 保留 tag_anchors 段 (若有) 不被擦除; 文件不存在则自愈建立规范模板.
+    """
+    path = workspace.whitelist_path
+    doc: Dict[str, Any] = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                doc = yaml.safe_load(f) or {}
+        except Exception as e:
+            log.warning(f"[WS] 读取现有 tag_whitelist.yaml 失败, 将重建: {e}")
+            doc = {}
+    doc["workspace_id"] = workspace.workspace_id
+    doc["workspace_name"] = workspace.name or workspace.workspace_id
+    doc["allowed_ids"] = sorted({int(x) for x in allowed_ids})
+    doc["description"] = doc.get("description") or f"Workspace {workspace.name or workspace.workspace_id} 标靶白名单配置"
+    doc["notes"] = doc.get("notes") or "工位物理白名单恒启用 (名单内容即行为): allowed_ids 非空时仅放行名单内标靶"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.dump(doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        log.info(f"[WS] 工位白名单已写穿 ({len(doc['allowed_ids'])} 枚): {path}")
+        return True
+    except Exception as e:
+        log.warning(f"[WS] 写回工位白名单失败 ({path}): {e}")
         return False
 
 

@@ -58,7 +58,7 @@ class D435Viewer:
 
     TOOLBAR_H = 44  # 工具栏高度
 
-    def __init__(self, config_path: str = "config.yaml", settings_file: str = None):
+    def __init__(self, config_path: str = "config/config.yaml", settings_file: str = None):
         self.config_path = config_path
         self.win_mgr = GuiWindowManager(app_id="d435_viewer", base_w=1024, base_h=640, settings_file=settings_file)
         self.load_config()
@@ -1070,7 +1070,7 @@ class D435Viewer:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RealSense D435 实时深度探针与对齐查看工具")
-    parser.add_argument("--config", type=str, default="config.yaml", help="配置文件路径")
+    parser.add_argument("--config", type=str, default="config/config.yaml", help="配置文件路径")
     args = parser.parse_args()
 
     try:

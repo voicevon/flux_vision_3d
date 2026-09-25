@@ -50,6 +50,10 @@ from src.calibration.offline_engine import OfflineVerificationEngine
 from src.calibration.ba_optimizer import BundleAdjustmentOptimizer
 from src.calibration.verification_reporter import VerificationReporter
 from src.calibration.verification_visualizer import VerificationVisualizer
+from src.calibration.workspace_manager import (
+    load_workspace_coordinate_manager,
+    load_workspace_roi_manager,
+)
 from tools.spatial_mapping_studio.mapping_state import MappingDataManager
 from tools.spatial_mapping_studio.mapping_viewport_interactor import MappingViewportInteractor
 from tools.spatial_mapping_studio.mapping_ba_runner import MappingBARunner
@@ -80,7 +84,7 @@ CALIB_IMAGES_DIR = os.path.join(_ws_fallback, "raw_images")
 DEFAULT_MAP_PATH = os.path.join(PROJECT_ROOT, "data", "workspaces", "default", "tags_map.yaml")
 MANIFEST_PATH = os.path.join(_ws_fallback, "tag_observations.yaml")
 
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
 
 
 class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
@@ -176,6 +180,15 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
         # 4. 文件列表多轮残差演进矩阵视图模式 (Matrix View)
         self.matrix_view_mode: bool = False
 
+        # 4b. ROI 物件绘制模式 (子工具栏切换)
+        self.draw_roi_mode: bool = False
+
+        # 4c. 工位多坐标系树与 ROI 空间物件集合管理器 (供 ROI 绘制场景使用)
+        self.coord_mgr = None
+        self.roi_mgr = None
+        if self.current_workspace:
+            self._load_workspace_geometry()
+
         # 5. 异步 BA 全局平差任务调度器
         self.ba_runner = MappingBARunner(
             data_mgr=self.data_mgr,
@@ -264,8 +277,25 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
         self.ba_runner.map_path = self.map_path
         self.ba_runner.manifest_path = self.manifest_path
 
+        # 5. 重新装载当前工位的多坐标系与 ROI 空间物件管理器
+        self._load_workspace_geometry()
+
         self.set_toast(f"已热重载切换至场景: 【{target_ws.name}】(共 {len(self.data_mgr.image_files)} 帧)")
         log.info(f"[SPATIAL_MAPPING] 成功切换场景至: {target_ws.name} ({target_ws.workspace_id})")
+
+    def _load_workspace_geometry(self):
+        """从当前工位装载坐标系树与 ROI 空间物件集合管理器 (缺失则空)"""
+        if not self.current_workspace:
+            self.coord_mgr = None
+            self.roi_mgr = None
+            return
+        try:
+            self.coord_mgr = load_workspace_coordinate_manager(self.current_workspace)
+            self.roi_mgr = load_workspace_roi_manager(self.current_workspace)
+        except Exception as e:
+            log.warning(f"[SPATIAL_MAPPING] 装载工位 ROI/坐标系失败: {e}")
+            self.coord_mgr = None
+            self.roi_mgr = None
 
     def reset_viewport_zoom(self):
         """重置中间视口缩放与平移状态为适应屏幕 (1.0x)"""
@@ -609,6 +639,14 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
             self.set_toast("已切换为: 逐帧多轮残差演进矩阵大表 (Matrix View)")
         else:
             self.set_toast("已切换为: 紧凑图像帧列表 (Compact View)")
+
+    def toggle_draw_roi_mode(self):
+        """一键切换 ROI 物件绘制模式 (供子工具栏 [绘制ROI物件] 按钮调用)"""
+        self.draw_roi_mode = not self.draw_roi_mode
+        if self.draw_roi_mode:
+            self.set_toast("ROI 物件绘制模式：已开启 (下一步在中央视口框选区域)")
+        else:
+            self.set_toast("ROI 物件绘制模式：已关闭")
 
     def reset_map(self) -> bool:
         """一键复位清空空间立体地图 (自动备份为 tags_map.yaml.bak)"""

@@ -68,6 +68,7 @@ class CaptureWizard(BaseCvApp):
             base_h=720,
             window_name="capture_wizard",
             window_title="图像采集 (工作空间与双用途) | flux_vision_3d",
+            responsive=True,
         )
         self.ws_mgr = WorkspaceManager()
         self.workspaces = self.ws_mgr.list_workspaces()
@@ -258,10 +259,12 @@ class CaptureWizard(BaseCvApp):
 
     def _toggle_camera(self):
         if self.pipeline_running:
+            self.set_toast("正在关闭相机...")
             self._stop_camera()
             self.set_toast("相机已关闭")
             log.info("相机已关闭")
         else:
+            self.set_toast("正在开启相机...")
             self._start_camera()
 
     def _start_camera(self):
@@ -361,8 +364,7 @@ class CaptureWizard(BaseCvApp):
 
     def _handle_action(self, btn_id, payload):
         if btn_id == "TOGGLE_WS_DD":
-            self.refresh_workspace_options()
-            self.active_dropdown = None if self.active_dropdown == "WORKSPACE_DROPDOWN" else "WORKSPACE_DROPDOWN"
+            self.active_dropdown = None if self.active_dropdown == "WS_DROPDOWN" else "WS_DROPDOWN"
         elif btn_id.startswith("DD_WS_"):
             self.active_dropdown = None
             self.switch_workspace(payload)
@@ -454,6 +456,15 @@ class CaptureWizard(BaseCvApp):
                       (cw // 2 - 270, ch // 2 + 50), 16, COLOR_TEXT_SUB)
 
         self.renderer.draw_toolbar(canvas)
+
+        # 底部状态栏: 目录路径与照片计数
+        ch, cw = canvas.shape[:2]
+        bar_y = ch - 28
+        cv2.rectangle(canvas, (0, bar_y), (cw, ch), (16, 18, 22), -1)
+        cv2.line(canvas, (0, bar_y), (cw, bar_y), (48, 56, 70), 1)
+        status = f"目录: {self.output_dir}  |  已采集 {self.image_count} 张"
+        draw_text(canvas, status, (12, bar_y + 6), 12, COLOR_TEXT_SUB)
+
         self.renderer.draw_toast(canvas)
         return canvas
 

@@ -13,9 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from src.utils.text_rendering import measure_text, put_text
+from src.utils.text_rendering import put_text
 from src.utils.gui_theme import GuiTheme
-from src.utils.gui_components import draw_dropdown_button
+from src.utils.gui_components import draw_dropdown_button, draw_dashboard_button
 
 BA_VIEW_OPTIONS = GuiTheme.BA_VIEW_OPTIONS
 OBS_VIEW_OPTIONS = GuiTheme.OBS_VIEW_OPTIONS
@@ -65,48 +65,78 @@ class MappingCenterViewMixin:
         # 视口外边框
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (55, 60, 70), 1)
 
-        # 视口左上角：双独立下拉菜单 (BA 理论值控制 + 单帧实测值控制)
-        ba_x1 = x + 12
-        ba_y1 = y + 10
-        ba_x2 = ba_x1 + 148
-        ba_y2 = ba_y1 + 28
+        # 视口左上角：所有控件单行水平排列 (BA 理论 / 实测识别 / 绘制ROI物件 / 绘制XY平面 / Z轴高度选择)
+        row_y1 = y + 8
+        row_y2 = row_y1 + 22
+        cursor_x = x + 12
+
+        # 1. BA 理论下拉框
+        ba_x1, ba_x2 = cursor_x, cursor_x + 148
         cur_ba_label = dict(BA_VIEW_OPTIONS).get(app.ba_view_mode, "3D 翡翠绿棱柱")
         is_ba_open = (app.active_dropdown == "BA_VIEW_DROPDOWN")
-        draw_dropdown_button(canvas, (ba_x1, ba_y1, ba_x2, ba_y2), cur_ba_label,
+        draw_dropdown_button(canvas, (ba_x1, row_y1, ba_x2, row_y2), cur_ba_label,
                              is_open=is_ba_open, mouse_pos=app.mouse_pos, prefix="BA理论: ")
         app.dropdown_boxes["BA_VIEW_DROPDOWN"] = {
-            "rect": (ba_x1, ba_y1, ba_x2, ba_y2),
+            "rect": (ba_x1, row_y1, ba_x2, row_y2),
             "options": BA_VIEW_OPTIONS,
             "active_key": app.ba_view_mode
         }
-        app.gui_buttons.append(("TOGGLE_BA_VIEW_DROPDOWN", (ba_x1, ba_y1, ba_x2, ba_y2), "BA_VIEW_DROPDOWN"))
+        app.gui_buttons.append(("TOGGLE_BA_VIEW_DROPDOWN", (ba_x1, row_y1, ba_x2, row_y2), "BA_VIEW_DROPDOWN"))
+        cursor_x = ba_x2 + 8
 
-        obs_x1 = ba_x2 + 8
-        obs_y1 = y + 10
-        obs_x2 = obs_x1 + 148
-        obs_y2 = obs_y1 + 28
+        # 2. 实测识别下拉框
+        obs_x1, obs_x2 = cursor_x, cursor_x + 148
         cur_obs_label = dict(OBS_VIEW_OPTIONS).get(app.obs_view_mode, "3D 科技天蓝棱柱")
         is_obs_open = (app.active_dropdown == "OBS_VIEW_DROPDOWN")
-        draw_dropdown_button(canvas, (obs_x1, obs_y1, obs_x2, obs_y2), cur_obs_label,
+        draw_dropdown_button(canvas, (obs_x1, row_y1, obs_x2, row_y2), cur_obs_label,
                              is_open=is_obs_open, mouse_pos=app.mouse_pos, prefix="实测识别: ")
         app.dropdown_boxes["OBS_VIEW_DROPDOWN"] = {
-            "rect": (obs_x1, obs_y1, obs_x2, obs_y2),
+            "rect": (obs_x1, row_y1, obs_x2, row_y2),
             "options": OBS_VIEW_OPTIONS,
             "active_key": app.obs_view_mode
         }
-        app.gui_buttons.append(("TOGGLE_OBS_VIEW_DROPDOWN", (obs_x1, obs_y1, obs_x2, obs_y2), "OBS_VIEW_DROPDOWN"))
+        app.gui_buttons.append(("TOGGLE_OBS_VIEW_DROPDOWN", (obs_x1, row_y1, obs_x2, row_y2), "OBS_VIEW_DROPDOWN"))
+        cursor_x = obs_x2 + 8
 
-        # 视口右上角悬浮提示胶囊
-        zoom_badge = f"缩放: {app.zoom_level:.1f}x | 点击Tag: 剔除/恢复(打叉) | 切换模式: V | 拖拽: 右键/中键 | 双击/Z: 重置"
-        (zw, zh), _ = measure_text(zoom_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
-        bx1 = x + w - zw - 24
-        by1 = y + 10
-        bx2 = bx1 + zw + 14
-        by2 = by1 + zh + 10
-        cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (20, 24, 32), -1)
-        cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (70, 75, 88), 1)
-        put_text(canvas, zoom_badge, (bx1 + 7, by1 + zh + 3),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 210, 230), 1, cv2.LINE_AA)
+        # 3. 绘制 ROI 物件按钮
+        draw_roi_active = getattr(app, "draw_roi_mode", False)
+        draw_roi_txt = "✓ 绘制ROI物件" if draw_roi_active else "绘制ROI物件"
+        draw_roi_accent = (0, 215, 90) if draw_roi_active else None
+        draw_roi_w = 110
+        draw_roi_x1, draw_roi_x2 = cursor_x, cursor_x + draw_roi_w
+        draw_dashboard_button(canvas, (draw_roi_x1, row_y1, draw_roi_x2, row_y2), draw_roi_txt,
+                              mouse_pos=app.mouse_pos, accent=draw_roi_accent)
+        app.gui_buttons.append(("DRAW_ROI_OBJECT", (draw_roi_x1, row_y1, draw_roi_x2, row_y2), "DRAW_ROI_OBJECT"))
+        cursor_x = draw_roi_x2 + 8
+
+        # 4. 绘制 XY 平面按钮
+        xy_on = getattr(app, "show_xy_plane_on", False)
+        xy_lbl = "√ XY平面" if xy_on else "绘制XY平面"
+        xy_accent = (0, 255, 180) if xy_on else None
+        xy_w = 88
+        xy_x1, xy_x2 = cursor_x, cursor_x + xy_w
+        draw_dashboard_button(canvas, (xy_x1, row_y1, xy_x2, row_y2), xy_lbl,
+                              mouse_pos=app.mouse_pos, accent=xy_accent)
+        app.gui_buttons.append(("TOGGLE_DRAW_XY_PLANE", (xy_x1, row_y1, xy_x2, row_y2), "TOGGLE_DRAW_XY_PLANE"))
+        cursor_x = xy_x2 + 8
+
+        # 5. Z 轴特殊点下拉框
+        z_w = 120
+        z_x1, z_x2 = cursor_x, cursor_x + z_w
+        cur_z_lbl = app.get_current_plane_z_label() if hasattr(app, "get_current_plane_z_label") else "Z轴特殊点"
+        is_z_open = (app.active_dropdown == "PLANE_Z_DROPDOWN")
+        draw_dropdown_button(canvas, (z_x1, row_y1, z_x2, row_y2), cur_z_lbl,
+                             is_open=is_z_open, mouse_pos=app.mouse_pos,
+                             theme_color=(0, 220, 255) if xy_on else (140, 160, 180))
+        plane_opts = [(str(val) if val is not None else "NONE", lbl)
+                      for val, lbl in app.get_plane_z_options()] if hasattr(app, "get_plane_z_options") else []
+        active_z_key = str(app.plane_z) if (xy_on and hasattr(app, "plane_z")) else "NONE"
+        app.dropdown_boxes["PLANE_Z_DROPDOWN"] = {
+            "rect": (z_x1, row_y1, z_x2, row_y2),
+            "options": plane_opts,
+            "active_key": active_z_key
+        }
+        app.gui_buttons.append(("TOGGLE_PLANE_Z_DROPDOWN", (z_x1, row_y1, z_x2, row_y2), "PLANE_Z_DROPDOWN"))
 
     def overlay_visual_elements(
         self,
@@ -339,6 +369,105 @@ class MappingCenterViewMixin:
         # 6. 世界 XY 平面透视网格与 Z 轴特殊点辅助线叠加 (移植自在线跟踪)
         if getattr(app, "show_xy_plane_on", False) and success and rvec is not None and tvec is not None:
             self.draw_xy_plane_overlay(app, disp_frame, rvec, tvec)
+
+        # 7. 3D ROI 空间物件投影绘制 (黄色半透明长方体覆盖)
+        if getattr(app, "draw_roi_mode", False) and success and rvec is not None and tvec is not None:
+            self._draw_roi_cuboids_overlay(app, disp_frame, rvec, tvec)
+
+    def _draw_roi_cuboids_overlay(self, app: Any, disp_frame: np.ndarray,
+                                  rvec: np.ndarray, tvec: np.ndarray):
+        """遍历当前工位所有 ROI, 用当前帧 BA 外参投影 8 角点到图像, 绘制黄色半透明长方体。
+        前置条件: app.roi_mgr / app.coord_mgr / app.engine.camera_matrix 已就绪。
+        失败 (无 ROI / 无 BA 位姿 / ROI 未解算) 时静默跳过, 不弹 toast。"""
+        roi_mgr = getattr(app, "roi_mgr", None)
+        coord_mgr = getattr(app, "coord_mgr", None)
+        if roi_mgr is None or coord_mgr is None:
+            return
+        engine = getattr(app, "engine", None)
+        if engine is None or getattr(engine, "camera_matrix", None) is None:
+            return
+
+        K = engine.camera_matrix
+        dist = getattr(engine, "dist_coeffs", None)
+
+        # 由 rvec/tvec 组合出 4x4 T_world_from_cam 的逆, 用于筛选相机背后的角点
+        R_c_w, _ = cv2.Rodrigues(rvec)
+        T_world_from_cam = np.eye(4, dtype=np.float64)
+        T_world_from_cam[:3, :3] = R_c_w
+        T_world_from_cam[:3, 3] = tvec.flatten()
+        T_cam_from_world = np.linalg.inv(T_world_from_cam)
+
+        roi_list = roi_mgr.list_rois()
+        if not roi_list:
+            return
+
+        h, w = disp_frame.shape[:2]
+        # 8 角点 -> 12 条边 (长方体拓扑)
+        _EDGES = [(0, 1), (1, 2), (2, 3), (3, 0),
+                  (4, 5), (5, 6), (6, 7), (7, 4),
+                  (0, 4), (1, 5), (2, 6), (3, 7)]
+
+        for roi in roi_list:
+            if not getattr(roi, "enabled", True):
+                continue
+            obb = roi_mgr.get_roi_world_obb(roi.roi_id, coord_mgr)
+            if obb is None or not obb.get("is_resolved", False):
+                continue
+
+            world_corners = obb["corners_8x3"].astype(np.float64)
+            # 1) 相机后方点过滤: 计算相机系深度, 仅保留 z>0 的角点
+            homo = np.hstack([world_corners, np.ones((8, 1), dtype=np.float64)])
+            cam_pts = (T_cam_from_world @ homo.T).T[:, :3]
+            front_mask = cam_pts[:, 2] > 1e-3
+            if not np.any(front_mask):
+                continue
+
+            # 2) 8 角点统一投影到图像像素坐标
+            proj_pts, _ = cv2.projectPoints(
+                world_corners.reshape(-1, 1, 3), rvec, tvec, K, dist
+            )
+            img_pts = proj_pts.reshape(8, 2)
+            pts_int = np.round(img_pts).astype(np.int32)
+
+            # 3) 仅保留前置角点: 用 front_mask 过滤后的多边形填充 + 可见边描线
+            visible_idx = np.where(front_mask)[0]
+            if len(visible_idx) >= 3:
+                # 用 cv2.convexHull 求可视角点的凸包 (近似可视面)
+                hull_pts = pts_int[visible_idx]
+                try:
+                    hull = cv2.convexHull(hull_pts)
+                    if hull is not None and len(hull) >= 3:
+                        overlay = disp_frame.copy()
+                        cv2.fillPoly(overlay, [hull], color=(0, 220, 255), lineType=cv2.LINE_AA)
+                        cv2.addWeighted(overlay, 0.30, disp_frame, 0.70, 0, disp_frame)
+                except cv2.error:
+                    pass
+
+            # 4) 12 条边全部描线 (含被遮挡的背面边, 便于辨识整体形状)
+            for i, j in _EDGES:
+                pt1 = tuple(int(v) for v in pts_int[i])
+                pt2 = tuple(int(v) for v in pts_int[j])
+                # 裁剪到画面外视为不可见
+                if not (-50 <= pt1[0] <= w + 50 and -50 <= pt1[1] <= h + 50):
+                    if not (-50 <= pt2[0] <= w + 50 and -50 <= pt2[1] <= h + 50):
+                        continue
+                cv2.line(disp_frame, pt1, pt2, color=(0, 220, 255), thickness=2, lineType=cv2.LINE_AA)
+
+            # 5) 中心十字 + 名称 (黄色)
+            center_world = obb["center_world"].astype(np.float64)
+            center_cam = (T_cam_from_world @ np.append(center_world, 1.0))[:3]
+            if center_cam[2] > 1e-3:
+                center_proj, _ = cv2.projectPoints(
+                    center_world.reshape(-1, 1, 3), rvec, tvec, K, dist
+                )
+                cx, cy = center_proj.reshape(2)
+                cx_i, cy_i = int(round(cx)), int(round(cy))
+                if 0 <= cx_i <= w and 0 <= cy_i <= h:
+                    cv2.drawMarker(disp_frame, (cx_i, cy_i), color=(0, 255, 255),
+                                   markerType=cv2.MARKER_CROSS, markerSize=12, thickness=1, line_type=cv2.LINE_AA)
+                    label = f"{roi.name} ({roi.roi_id})"
+                    put_text(disp_frame, label, (cx_i + 8, cy_i - 8),
+                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2, cv2.LINE_AA)
 
     def draw_xy_plane_overlay(self, app: Any, canvas: np.ndarray, rvec: np.ndarray, tvec: np.ndarray):
         """世界 XY 平面透视网格叠加 (移植自在线跟踪):

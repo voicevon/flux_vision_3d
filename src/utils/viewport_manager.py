@@ -90,7 +90,7 @@ class ViewportManager:
     视口变换与布局管理器
     """
 
-    def __init__(self, win_w: int = 1280, win_h: int = 720, top_bar_h: int = 50, bottom_bar_h: int = 56):
+    def __init__(self, win_w: int = 1280, win_h: int = 720, top_bar_h: int = 50, bottom_bar_h: int = 0):
         self.win_w = win_w
         self.win_h = win_h
         self.top_bar_h = top_bar_h
