@@ -21,11 +21,12 @@ log = get_logger(__name__)
 
 
 class TagLocalizer:
-    def __init__(self, 
+    def __init__(self,
                  tags_map_path: str = "config/tags_map.yaml",
                  camera_matrix: Optional[np.ndarray] = None,
                  dist_coeffs: Optional[np.ndarray] = None,
-                 marker_size_mm: float = 50.0):
+                 *,
+                 marker_size_mm: float):
         """
         初始化定位器
         :param tags_map_path: 标靶空间地图配置文件路径
@@ -221,5 +222,5 @@ class TagLocalizer:
 
 
 if __name__ == "__main__":
-    localizer = TagLocalizer()
+    localizer = TagLocalizer(marker_size_mm=50.0)
     log.info("[OK] TagLocalizer 模块语法与加载测试通过！")

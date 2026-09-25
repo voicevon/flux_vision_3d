@@ -37,7 +37,7 @@ class MappingBARunner:
         manifest_repo: ManifestRepository,
         map_path: str,
         manifest_path: str,
-        marker_size_mm: float = 50.0,
+        marker_size_mm: float,
         on_status_change: Optional[Callable[[str], None]] = None
     ):
         self.data_mgr = data_mgr

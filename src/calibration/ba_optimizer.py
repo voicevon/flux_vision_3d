@@ -39,7 +39,7 @@ class BundleAdjustmentOptimizer:
     def __init__(self, 
                  camera_matrix: np.ndarray,
                  dist_coeffs: np.ndarray,
-                 marker_size_mm: float = 50.0,
+                 marker_size_mm: float,
                  obj_points: Optional[np.ndarray] = None,
                  builder: Optional[Any] = None):
         """

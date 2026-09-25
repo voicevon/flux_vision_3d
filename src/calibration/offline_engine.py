@@ -23,7 +23,7 @@ class OfflineVerificationEngine:
         tags_map: Dict[str, Any],
         camera_matrix: np.ndarray,
         dist_coeffs: np.ndarray,
-        marker_size_mm: float = 50.0,
+        marker_size_mm: float,
         valid_tag_ids: Optional[List[int]] = None
     ):
         """

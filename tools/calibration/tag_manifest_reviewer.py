@@ -54,6 +54,7 @@ except ImportError:
 
 from src.utils.text_rendering import measure_text, put_text
 from src.utils.logger import get_logger
+from src.calibration.workspace_manager import load_workspace_marker_size_mm
 
 log = get_logger(__name__)
 
@@ -81,7 +82,7 @@ class TagManifestReviewer:
         if not os.path.exists(self.manifest_path):
             raise FileNotFoundError(f"未找到观测清单文件: {self.manifest_path}，请先执行扫描导出！")
 
-        self.builder = builder if builder is not None else TagMapBuilder(marker_size_mm=50.0)
+        self.builder = builder if builder is not None else TagMapBuilder(marker_size_mm=self._resolve_marker_size_mm())
         self.window_name = "AprilTag Observations Reviewer (GUI Button Toolbar & Interactive Review)"
 
         # 自适应屏幕工作区与分层视口管理器
@@ -172,6 +173,24 @@ class TagManifestReviewer:
 
         # 首次计算拓扑健康度
         self.update_topology()
+
+    def _resolve_marker_size_mm(self) -> float:
+        """标靶物理边长解析 (FR-9.x: 唯一权威来源 = 当前工位 tag_whitelist.yaml.tag_default_size_mm).
+        缺失时抛出明确错误, 不允许任何硬编码兜底.
+        """
+        try:
+            from src.calibration.workspace_manager import WorkspaceManager
+            ws = WorkspaceManager().get_current_workspace()
+            loaded = load_workspace_marker_size_mm(ws.workspace_dir) if ws else None
+        except Exception as e:
+            loaded = None
+            log.warning(f"[REVIEWER] 解析工位标靶边长失败: {e}")
+        if loaded is None:
+            raise ValueError(
+                "未在当前工位 tag_whitelist.yaml.tag_default_size_mm 找到标靶边长, "
+                "TagManifestReviewer 拒绝启动. 请在 tag_whitelist.yaml 录入 tag_default_size_mm 后重试."
+            )
+        return loaded
 
     @property
     def current_image_key(self) -> str:

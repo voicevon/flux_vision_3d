@@ -52,10 +52,11 @@ log = get_logger(__name__)
 
 
 class TagSuperExtractor:
-    def __init__(self, 
+    def __init__(self,
                  image_dir: str = DEFAULT_IMAGE_DIR,
                  manifest_path: str = DEFAULT_MANIFEST_PATH,
-                 marker_size_mm: float = 50.0):
+                 *,
+                 marker_size_mm: float):
         self.image_dir = image_dir
         self.manifest_path = manifest_path
         self.marker_size_mm = marker_size_mm
@@ -487,8 +488,20 @@ def main():
     parser = argparse.ArgumentParser(description="工序 3：离线图像质量诊断调优与超精重提取引擎")
     parser.add_argument("--image_dir", type=str, default=DEFAULT_IMAGE_DIR, help="采图目录路径")
     parser.add_argument("--manifest", type=str, default=DEFAULT_MANIFEST_PATH, help="输出清单路径")
-    parser.add_argument("--marker_size", type=float, default=50.0, help="标靶物理边长 (mm)")
+    parser.add_argument("--marker_size", type=float, default=None, help="标靶物理边长 (mm), 缺省从工位 tag_whitelist.yaml.tag_default_size_mm 读取")
     args = parser.parse_args()
+
+    # 标靶物理边长: 显式传入优先, 否则从当前工位 tag_whitelist.yaml.tag_default_size_mm 读取
+    if args.marker_size is None:
+        try:
+            from src.calibration.workspace_manager import WorkspaceManager, load_workspace_marker_size_mm
+            ws = WorkspaceManager().get_current_workspace()
+            args.marker_size = load_workspace_marker_size_mm(ws.workspace_dir) if ws else None
+        except Exception:
+            args.marker_size = None
+        if args.marker_size is None:
+            log.error("未指定标靶物理边长 (--marker_size) 且当前工位 tag_whitelist.yaml.tag_default_size_mm 缺失或非法.")
+            sys.exit(1)
 
     extractor = TagSuperExtractor(image_dir=args.image_dir, manifest_path=args.manifest, marker_size_mm=args.marker_size)
     extractor.process_all_images(auto_write_manifest=True)

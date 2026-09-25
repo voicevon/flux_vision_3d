@@ -152,7 +152,19 @@ class AsparagusPoseStudioApp(BaseCvApp):
         if tags_path and os.path.exists(tags_path) and os.path.getsize(tags_path) > 50:
             try:
                 from src.vision.tag_localizer import TagLocalizer
-                self.tag_localizer = TagLocalizer(tags_map_path=tags_path)
+                from src.calibration.workspace_manager import load_workspace_marker_size_mm
+                marker_size_mm = load_workspace_marker_size_mm(ws.workspace_dir) if ws else None
+                if marker_size_mm is None:
+                    log.warning(
+                        "工位 %s 的 tag_whitelist.yaml.tag_default_size_mm 缺失或非法, "
+                        "TagLocalizer 暂不可用.", ws.workspace_id if ws else "<none>"
+                    )
+                    self.tag_localizer = None
+                    return
+                self.tag_localizer = TagLocalizer(
+                    tags_map_path=tags_path,
+                    marker_size_mm=marker_size_mm,
+                )
             except Exception as exc:
                 log.warning("AprilTag 定位器加载失败: %s", exc)
                 self.tag_localizer = None

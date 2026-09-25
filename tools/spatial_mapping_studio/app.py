@@ -52,6 +52,7 @@ from src.calibration.verification_reporter import VerificationReporter
 from src.calibration.verification_visualizer import VerificationVisualizer
 from src.calibration.workspace_manager import (
     load_workspace_coordinate_manager,
+    load_workspace_marker_size_mm,
     load_workspace_roi_manager,
 )
 from tools.spatial_mapping_studio.mapping_state import MappingDataManager
@@ -96,13 +97,12 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
         self,
         map_path: str = None,
         image_dir: str = None,
-        marker_size_mm: float = 50.0,
+        marker_size_mm: Optional[float] = None,
         win_w: int = 1920,
         win_h: int = 1080,
         manifest_path: Optional[str] = None,
         workspace_id: Optional[str] = None
     ):
-        self.marker_size_mm = marker_size_mm
         self.win_w = win_w
         self.win_h = win_h
 
@@ -128,6 +128,18 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
             self.workspace_mgr = None
             self.current_workspace = None
             self.current_workspace_id = ""
+
+        # 标靶物理边长解析 (FR-9.x: 硬编码默认值已废除, 唯一权威来源 = 当前工位 tag_whitelist.yaml.tag_default_size_mm)
+        if marker_size_mm is None:
+            ws_dir = self.current_workspace.workspace_dir if self.current_workspace else None
+            loaded = load_workspace_marker_size_mm(ws_dir) if ws_dir else None
+            if loaded is None:
+                raise ValueError(
+                    "未指定标靶物理边长 (marker_size_mm), 且当前工位 tag_whitelist.yaml.tag_default_size_mm 缺失或非法. "
+                    "请在 tag_whitelist.yaml 显式录入 tag_default_size_mm (mm) 后重试, 或显式传入 marker_size_mm 参数."
+                )
+            marker_size_mm = loaded
+        self.marker_size_mm = marker_size_mm
 
         self.map_path = map_path or (self.current_workspace.map_path if self.current_workspace else DEFAULT_MAP_PATH)
         self.image_dir = image_dir or (self.current_workspace.calib_raw_images_dir if self.current_workspace else CALIB_IMAGES_DIR)
@@ -863,7 +875,7 @@ def main():
     parser.add_argument("--workspace", type=str, default=None, help="目标工位 ID")
     parser.add_argument("--map", type=str, default=None, help="标靶空间立体地图路径")
     parser.add_argument("--images", type=str, default=None, help="标定采图目录")
-    parser.add_argument("--marker_size", type=float, default=50.0, help="标靶物理边长 (mm)")
+    parser.add_argument("--marker_size", type=float, default=None, help="标靶物理边长 (mm), 缺省从工位 tag_whitelist.yaml.tag_default_size_mm 读取")
     args = parser.parse_args()
 
     app = SpatialMappingStudioApp(

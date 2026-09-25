@@ -18,20 +18,20 @@ from tools.calibration.tag_map_builder import TagMapBuilder
 
 def test_tag_builder_initialization():
     """测试建图器默认参数与几何角点初始化"""
-    builder = TagMapBuilder(marker_size_mm=50.0)
-    assert builder.marker_size_mm == 50.0
+    builder = TagMapBuilder(marker_size_mm=40.0)
+    assert builder.marker_size_mm == 40.0
     assert builder.obj_points.shape == (4, 3)
-    # 验证 4 个角点边长为 50mm
+    # 验证 4 个角点边长为 40mm
     edge_01 = np.linalg.norm(builder.obj_points[0] - builder.obj_points[1])
     edge_12 = np.linalg.norm(builder.obj_points[1] - builder.obj_points[2])
-    assert abs(edge_01 - 50.0) < 1e-4
-    assert abs(edge_12 - 50.0) < 1e-4
+    assert abs(edge_01 - 40.0) < 1e-4
+    assert abs(edge_12 - 40.0) < 1e-4
     print("[PASS] TagMapBuilder 初始化与角点几何尺寸校验通过")
 
 
 def test_baseline_scaling():
     """测试双标靶大基线物理测距尺度锁定"""
-    builder = TagMapBuilder(marker_size_mm=50.0)
+    builder = TagMapBuilder(marker_size_mm=40.0)
     
     # 假设施加了 1.05 倍的尺度放大 (名义 500mm，实测 525mm)
     tag_poses = {
@@ -45,14 +45,14 @@ def test_baseline_scaling():
     )
     
     assert abs(scale_factor - 1.05) < 1e-4
-    assert abs(real_marker_size - 52.5) < 1e-4
+    assert abs(real_marker_size - 42.0) < 1e-4
     assert abs(scaled_poses[1][0, 3] - 525.0) < 1e-4
     print("[PASS] 双标靶大基线测距尺度锁定算法校验通过")
 
 
 def test_align_to_scara_world():
     """测试 Tag 0 原点与 Tag 1 水平 X 轴刚体对齐闭环"""
-    builder = TagMapBuilder(marker_size_mm=50.0)
+    builder = TagMapBuilder(marker_size_mm=40.0)
 
     # 构造未对齐的任意旋转和平移地图
     # 真实 Tag 0 位于 (100, 200, 50)
@@ -82,7 +82,7 @@ def test_align_to_scara_world():
 
 def test_synthetic_bundle_adjustment():
     """测试多视角合成数据下的 BA 平差收敛性"""
-    builder = TagMapBuilder(marker_size_mm=50.0)
+    builder = TagMapBuilder(marker_size_mm=40.0)
     
     # 设定相机内参
     K = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 240.0], [0.0, 0.0, 1.0]], dtype=np.float64)
@@ -105,7 +105,7 @@ def test_synthetic_bundle_adjustment():
         np.array([250.0, 120.0, -510.0])
     ]
 
-    s = 25.0
+    s = 20.0
     local_corners = np.array([[-s, s, 0], [s, s, 0], [s, -s, 0], [-s, -s, 0]], dtype=np.float64)
 
     frame_detections = []
@@ -141,7 +141,7 @@ def test_synthetic_bundle_adjustment():
 def test_covisibility_guard():
     """测试共视连通性安全守门员 (Co-visibility Guard)"""
     from src.calibration.covisibility_graph import CovisibilityGraphError
-    builder = TagMapBuilder(marker_size_mm=50.0)
+    builder = TagMapBuilder(marker_size_mm=40.0)
 
     # 1. 正常连通图: Frame1 (0, 1), Frame2 (1, 2) -> 0-1-2 完全连通
     c_dummy = np.zeros((4, 2))
@@ -181,7 +181,7 @@ def test_manifest_workflow_and_curation(tmp_path=None):
     temp_dir = tempfile.mkdtemp()
     manifest_path = os.path.join(temp_dir, "test_manifest.yaml")
 
-    builder = TagMapBuilder(marker_size_mm=50.0)
+    builder = TagMapBuilder(marker_size_mm=40.0)
     
     # 构造假数据 (边长 100px)
     dummy_corners = np.array([[100, 100], [200, 100], [200, 200], [100, 200]], dtype=np.float64)
@@ -342,7 +342,7 @@ def test_frame_level_toggle_and_builder_bypass():
     import yaml
     temp_dir = tempfile.mkdtemp()
     manifest_path = os.path.join(temp_dir, "test_bypass_manifest.yaml")
-    builder = TagMapBuilder(marker_size_mm=50.0)
+    builder = TagMapBuilder(marker_size_mm=40.0)
 
     dummy_corners = np.array([[100, 100], [200, 100], [200, 200], [100, 200]], dtype=np.float64).tolist()
     manifest_content = {
@@ -477,7 +477,7 @@ def test_super_extractor_precision_and_state_inheritance():
         yaml.dump(old_manifest, f)
 
     # 启动超精提取器
-    extractor = TagSuperExtractor(image_dir=img_dir, manifest_path=manifest_path)
+    extractor = TagSuperExtractor(image_dir=img_dir, manifest_path=manifest_path, marker_size_mm=40.0)
     assert os.path.exists(manifest_path)
     
     # 模拟提取并合入检测结果

@@ -21,11 +21,11 @@ from src.vision.tag_localizer import TagLocalizer
 
 class TestTagLocalizer(unittest.TestCase):
     def setUp(self):
-        self.localizer = TagLocalizer(tags_map_path="non_existent_map.yaml")
+        self.localizer = TagLocalizer(tags_map_path="non_existent_map.yaml", marker_size_mm=40.0)
         # 注入一个立体的虚拟地图
         # Tag 1: (200, 0, 10), Tag 2: (250, 150, -15), Tag 0: (0, 0, 0)
-        self.localizer.marker_size_mm = 50.0
-        s = 25.0
+        self.localizer.marker_size_mm = 40.0
+        s = 20.0
         self.localizer.local_corners = np.array([
             [-s,  s, 0.0, 1.0],
             [ s,  s, 0.0, 1.0],
@@ -43,7 +43,7 @@ class TestTagLocalizer(unittest.TestCase):
         T_w_t2[:3, 3] = [250.0, 150.0, -15.0]
 
         self.localizer.tags_map = {
-            "marker_size_mm": 50.0,
+            "marker_size_mm": 40.0,
             "tags": {
                 0: {
                     "position_mm": [0.0, 0.0, 0.0],

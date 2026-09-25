@@ -643,6 +643,38 @@ def load_workspace_tag_whitelist(workspace_dir: str) -> List[int]:
         return []
 
 
+def load_workspace_marker_size_mm(workspace_dir: str) -> Optional[float]:
+    """
+    读取工位 tag_whitelist.yaml 的 tag_default_size_mm (标靶物理边长, 唯一权威来源).
+
+    规则 (FR-9.x):
+      - 文件存在且 tag_default_size_mm 为正数 → 返回 float(mm)
+      - 文件缺失 / 字段缺失 / 非正数 / 解析失败 → 返回 None
+        (调用方需主动报错, 禁止默认 50.0 等兜底值)
+    """
+    path = os.path.join(workspace_dir, "tag_whitelist.yaml")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as e:
+        log.warning(f"[WS] 解析工位标靶边长失败 ({path}): {e}")
+        return None
+    v = data.get("tag_default_size_mm")
+    if v is None:
+        return None
+    try:
+        f = float(v)
+        if f <= 0:
+            log.warning(f"[WS] 工位标靶边长非法 (≤0): {path} → {v}")
+            return None
+        return f
+    except (ValueError, TypeError) as e:
+        log.warning(f"[WS] 工位标靶边长字段非数值 ({path}): {v} ({e})")
+        return None
+
+
 def load_workspace_tag_anchors(workspace_dir: str) -> Optional[Dict[int, Dict]]:
     """
     读取工位 tag_whitelist.yaml 的 tag_anchors (用户在白名单页签录入的已知世界坐标):

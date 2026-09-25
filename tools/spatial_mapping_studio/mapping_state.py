@@ -35,7 +35,7 @@ class MappingDataManager(MappingDataActionsMixin):
         image_dir: str,
         manifest_path: str,
         engine: OfflineVerificationEngine,
-        marker_size_mm: float = 50.0
+        marker_size_mm: float,
     ):
         self.map_path = map_path
         self.image_dir = image_dir

@@ -225,7 +225,7 @@ def main():
 
     parser.add_argument("--image_dir", type=str, default=def_image_dir, help="多视角标定图片目录")
     parser.add_argument("--manifest", type=str, default=def_manifest, help="观测数据审核清单路径")
-    parser.add_argument("--marker_size", type=float, default=50.0, help="标靶黑白边框名义边长 (mm)")
+    parser.add_argument("--marker_size", type=float, default=None, help="标靶黑白边框名义边长 (mm), 缺省从工位 tag_whitelist.yaml.tag_default_size_mm 读取")
     parser.add_argument("--origin_id", type=int, default=def_origin_id, help="SCARA 原点锚定标靶 ID")
     parser.add_argument("--x_axis_id", type=int, default=def_x_axis_id, help="世界 X 轴对齐基准标靶 ID (默认与 config.yaml 一致)")
     parser.add_argument("--baseline_pair", nargs=3, type=float, metavar=('TAG_A', 'TAG_B', 'DIST_MM'),
@@ -247,6 +247,18 @@ def main():
         log.warning(f"[!] 目录 '{args.image_dir}' 下未找到任何标定图像，且未找到已有清单 '{args.manifest}'！")
         log.warning(f"[*] 提示：请使用相机采集覆盖多标靶的图像放入该目录后重试。")
         sys.exit(1)
+
+    # 标靶物理边长: 显式传入优先, 否则从当前工位 tag_whitelist.yaml.tag_default_size_mm 读取
+    if args.marker_size is None:
+        try:
+            from src.calibration.workspace_manager import load_workspace_marker_size_mm
+            loaded = load_workspace_marker_size_mm(current_ws.workspace_dir) if current_ws else None
+        except Exception:
+            loaded = None
+        if loaded is None:
+            log.error("未指定标靶物理边长 (--marker_size) 且当前工位 tag_whitelist.yaml.tag_default_size_mm 缺失或非法.")
+            sys.exit(1)
+        args.marker_size = loaded
 
     builder = TagMapBuilder(marker_size_mm=args.marker_size)
 

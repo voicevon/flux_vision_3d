@@ -36,8 +36,8 @@ log = get_logger(__name__)
 
 
 class TagMapBuilder:
-    def __init__(self, 
-                 marker_size_mm: float = 50.0,
+    def __init__(self,
+                 marker_size_mm: float,
                  tag_family: int = cv2.aruco.DICT_APRILTAG_16h5,
                  camera_matrix: Optional[np.ndarray] = None,
                  dist_coeffs: Optional[np.ndarray] = None):
