@@ -132,6 +132,8 @@ class TestBundleAdjustmentOptimizer(unittest.TestCase):
             active_frame_names=["test_f0", "test_f1"],
             origin_tag_id=0,
             x_align_tag_id=1,
+            anchor_tags={0: {"xyz_mm": [0.0, 0.0, 0.0], "known": [True, True, True]},
+                         1: {"xyz_mm": [500.0, 0.0, 0.0], "known": [True, True, True]}},
             callback=test_callback
         )
 
@@ -321,6 +323,148 @@ class TestConstraintAnchor(unittest.TestCase):
             anchors = load_anchor_tags(p_new)
             self.assertEqual(set(anchors.keys()), {0, 5})
             self.assertEqual(anchors[5]["known"], [True, True, False])
+
+    def test_anchor_umeyama_3d_with_roll_pitch(self):
+        """测试 >=3 枚全知锚点时自动触发 Umeyama 3D 最优相似变换，消除标靶自身倾角对世界系的绑架"""
+        # 构造带有 3D 旋转 (包含 roll 和 pitch) 的世界系与 BA 系点云
+        world_pts = {
+            5: [0.0, 0.0, 0.0],
+            6: [348.0, 0.0, 0.0],
+            7: [0.0, 470.0, 0.0],
+            8: [348.0, 470.0, 0.0]
+        }
+        # 绕任意 3D 轴旋转 R_gt
+        rx, ry, rz = np.radians(3.5), np.radians(-2.1), np.radians(25.0)
+        Rx = np.array([[1, 0, 0], [0, np.cos(rx), -np.sin(rx)], [0, np.sin(rx), np.cos(rx)]])
+        Ry = np.array([[np.cos(ry), 0, np.sin(ry)], [0, 1, 0], [-np.sin(ry), 0, np.cos(ry)]])
+        Rz = np.array([[np.cos(rz), -np.sin(rz), 0], [np.sin(rz), np.cos(rz), 0], [0, 0, 1]])
+        R_gt = Rz @ Ry @ Rx
+        scale_gt = 0.885
+        t_gt = np.array([45.0, -30.0, 12.0])
+
+        # 反推 BA 系标靶位置: p_w = s * R @ p_ba + t  =>  p_ba = (1/s) * R^T @ (p_w - t)
+        poses = {}
+        for tid, pw in world_pts.items():
+            p_ba = (1.0 / scale_gt) * (R_gt.T @ (np.array(pw) - t_gt))
+            T = np.eye(4)
+            T[:3, 3] = p_ba
+            poses[tid] = T
+
+        anchor_tags = {tid: {"xyz_mm": list(pw), "known": [True, True, True]} for tid, pw in world_pts.items()}
+        result = self.optimizer.anchor_to_absolute_world(poses, anchor_tags, origin_tag_id=5, x_align_tag_id=6)
+
+        self.assertEqual(result["anchor_mode"], "full")
+        self.assertEqual(result["world_anchor"]["solver_type"], "umeyama_3d")
+        self.assertAlmostEqual(result["world_anchor"]["scale_factor"], scale_gt, places=4)
+
+        # 检查各标靶对齐到世界坐标系后的残差 (应 < 0.01mm)
+        for tid, pw in world_pts.items():
+            pos = result["tags"][tid]["position_mm"]
+            np.testing.assert_allclose(pos, pw, atol=0.05)
+
+        self.assertLess(result["world_anchor"]["anchor_residual_mm"]["max_mm"], 0.05)
+
+    def test_anchor_conflict_detection(self):
+        """测试锚点世界坐标输入冲突检测: 几何形变过大时应记录 conflict_pairs 警示"""
+        poses = {
+            5: np.eye(4),
+            6: np.eye(4),
+            7: np.eye(4)
+        }
+        poses[5][:3, 3] = [0.0, 0.0, 0.0]
+        poses[6][:3, 3] = [350.0, 0.0, 0.0]
+        poses[7][:3, 3] = [0.0, 500.0, 0.0]
+
+        # 故意给 Tag 7 录入冲突的世界坐标 (误录在 X 轴上)
+        anchor_tags = {
+            5: {"xyz_mm": [0.0, 0.0, 0.0], "known": [True, True, True]},
+            6: {"xyz_mm": [350.0, 0.0, 0.0], "known": [True, True, True]},
+            7: {"xyz_mm": [450.0, 0.0, 0.0], "known": [True, True, True]}
+        }
+        mode, info = self.optimizer.solve_similarity_from_anchors(poses, anchor_tags)
+        self.assertTrue(len(info["conflict_pairs"]) > 0)
+        # 应检测出 (6, 7) 之间的几何距离冲突
+        conflicted_tags = [c["pair"] for c in info["conflict_pairs"]]
+        self.assertIn((6, 7), conflicted_tags)
+
+    def test_free_ba_without_anchors(self):
+        """阶段一验证: 无任何锚点配置时，自由平差依然 100% 收敛且输出相对底图"""
+        T_w_t0 = np.eye(4)
+        T_w_t1 = np.eye(4)
+        T_w_t1[0, 3] = 300.0  # Tag 1 在 X=300mm 处
+
+        rvec_c1 = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+        tvec_c1 = np.array([0.0, 0.0, 1000.0], dtype=np.float64)
+        rvec_c2 = np.array([0.0, 0.1, 0.0], dtype=np.float64)
+        tvec_c2 = np.array([50.0, 0.0, 980.0], dtype=np.float64)
+
+        def project(T_w_t, rv, tv):
+            R_c, _ = cv2.Rodrigues(rv)
+            T_c_w = np.eye(4)
+            T_c_w[:3, :3] = R_c
+            T_c_w[:3, 3] = tv
+            T_c_t = T_c_w @ T_w_t
+            r_t, _ = cv2.Rodrigues(T_c_t[:3, :3])
+            t_t = T_c_t[:3, 3]
+            pts2d, _ = cv2.projectPoints(self.optimizer.obj_points, r_t, t_t, self.optimizer.camera_matrix, self.optimizer.dist_coeffs)
+            return pts2d.reshape(4, 2)
+
+        detections = [
+            {0: project(T_w_t0, rvec_c1, tvec_c1), 1: project(T_w_t1, rvec_c1, tvec_c1)},
+            {0: project(T_w_t0, rvec_c2, tvec_c2), 1: project(T_w_t1, rvec_c2, tvec_c2)}
+        ]
+
+        # 阶段一: 完全不传 anchor_tags
+        rel_map = self.optimizer.optimize(
+            detections,
+            active_frame_names=["f0", "f1"],
+            origin_tag_id=0,
+            x_align_tag_id=1,
+            anchor_tags=None
+        )
+
+        self.assertIsNotNone(rel_map)
+        self.assertEqual(rel_map["anchor_mode"], "unaligned")
+        self.assertIn("raw_relative_poses", rel_map)
+        self.assertLess(rel_map["final_rmse"], 0.2)
+        # 标靶 0 作为相对原点
+        np.testing.assert_allclose(rel_map["tags"][0]["position_mm"], [0.0, 0.0, 0.0], atol=0.01)
+
+    def test_independent_world_alignment(self):
+        """阶段二验证: 基于阶段一相对底图，独立调用 align_relative_map_to_world 完成世界坐标系校准"""
+        # 模拟阶段一的相对底图
+        raw_map = {
+            "origin_tag_id": 5,
+            "x_axis_align_tag_id": 6,
+            "anchor_mode": "unaligned",
+            "marker_size_mm": 50.0,
+            "final_rmse": 0.15,
+            "raw_relative_poses": {
+                5: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+                6: [[1, 0, 0, 200], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+                7: [[1, 0, 0, 0], [0, 1, 0, 300], [0, 0, 1, 0], [0, 0, 0, 1]]
+            }
+        }
+        # 用户在白名单配置的已知世界坐标
+        anchor_tags = {
+            5: {"xyz_mm": [100.0, 100.0, 0.0], "known": [True, True, True]},
+            6: {"xyz_mm": [300.0, 100.0, 0.0], "known": [True, True, True]},
+            7: {"xyz_mm": [100.0, 400.0, 0.0], "known": [True, True, True]}
+        }
+
+        world_map = self.optimizer.align_relative_map_to_world(
+            relative_map=raw_map,
+            anchor_tags=anchor_tags,
+            origin_tag_id=5,
+            x_align_tag_id=6,
+            strict=True
+        )
+
+        self.assertEqual(world_map["anchor_mode"], "full")
+        self.assertEqual(world_map["world_anchor"]["solver_type"], "umeyama_3d")
+        np.testing.assert_allclose(world_map["tags"][5]["position_mm"], [100.0, 100.0, 0.0], atol=0.01)
+        np.testing.assert_allclose(world_map["tags"][6]["position_mm"], [300.0, 100.0, 0.0], atol=0.01)
+        np.testing.assert_allclose(world_map["tags"][7]["position_mm"], [100.0, 400.0, 0.0], atol=0.01)
 
 
 if __name__ == "__main__":

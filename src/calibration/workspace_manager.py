@@ -380,12 +380,24 @@ class WorkspaceManager:
         path = self.get_tag_whitelist_path(workspace_id)
         if not os.path.exists(path):
             ws = self.get_workspace_by_id(workspace_id)
+            map_path = os.path.join(self.workspaces_dir, workspace_id, "tags_map.yaml")
+            default_marker_size = None
+            if os.path.isfile(map_path):
+                try:
+                    with open(map_path, "r", encoding="utf-8") as mf:
+                        mdata = yaml.safe_load(mf) or {}
+                    if mdata.get("marker_size_mm"):
+                        default_marker_size = float(mdata["marker_size_mm"])
+                except Exception:
+                    pass
+
             default_config = {
                 "workspace_id": workspace_id,
                 "workspace_name": ws.name if ws else workspace_id,
+                "tag_default_size_mm": default_marker_size,
                 "allowed_ids": ws.valid_tag_ids if (ws and ws.valid_tag_ids) else [],
                 "description": f"Workspace {ws.name if ws else workspace_id} 标靶白名单配置",
-                "notes": "工位物理白名单恒启用 (名单内容即行为): allowed_ids 非空时仅放行名单内标靶 (权威约束)；留空 = 探索模式放行所有检测标靶",
+                "notes": "工位物理白名单恒启用 (名单内容即行为): tag_default_size_mm 标靶物理边长为几何反投影唯一物理尺度基准；allowed_ids 非空时仅放行名单内标靶",
             }
             try:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -395,11 +407,31 @@ class WorkspaceManager:
                 log.warning(f"创建默认 tag_whitelist.yaml 失败: {e}")
         return path
 
+    def update_workspace_marker_size(self, workspace_id: str, marker_size_mm: float) -> Tuple[bool, str]:
+        """显式更新当前工位的标靶物理边长 tag_default_size_mm (写穿 tag_whitelist.yaml)"""
+        if marker_size_mm <= 0:
+            return False, "标靶边长必须大于 0 mm"
+        path = self.ensure_tag_whitelist(workspace_id)
+        doc = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    doc = yaml.safe_load(f) or {}
+            except Exception as e:
+                return False, f"读取白名单失败: {e}"
+        doc["tag_default_size_mm"] = float(round(marker_size_mm, 3))
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                yaml.dump(doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return True, f"标靶物理边长已显式更新为 {marker_size_mm:.3f} mm"
+        except Exception as e:
+            return False, f"写回标靶边长失败: {e}"
+
     def update_tag_anchor(self, workspace_id: str, tag_id: int, xyz: Optional[List[float]]) -> Tuple[bool, str]:
         """
-        更新或清除 tag_whitelist.yaml 中的 tag_anchors 物理坐标标注
-        - xyz is None: 清除该 tag 的坐标标注
-        - xyz 为 [x, y, z]: 更新坐标标注，并自动将 tag_id 加入 allowed_ids
+        更新或清除 tag_whitelist.yaml 中的 tag_anchors 物理坐标标注 (统一标准结构)
+        - entry is None: 清除该 tag 的坐标标注
+        - entry: 字典 {"xyz_mm": [x, y, z], "known": [bool, bool, bool]} 或坐标列表 [x, y, z]
         """
         path = self.ensure_tag_whitelist(workspace_id)
         curr_cfg = {}
@@ -418,12 +450,23 @@ class WorkspaceManager:
             curr_cfg["tag_anchors"].pop(str(tag_id), None)
             msg = f"已清除 Tag #{tag_id:02d} 的物理坐标标注。"
         else:
-            curr_cfg["tag_anchors"][tag_id] = [float(v) for v in xyz]
+            if isinstance(xyz, dict) and "xyz_mm" in xyz:
+                xyz_f = [float(v) for v in xyz["xyz_mm"]]
+                known_b = [bool(v) for v in xyz.get("known", [True, True, True])]
+            else:
+                xyz_f = [float(v) for v in xyz]
+                known_b = [True, True, True]
+
+            curr_cfg["tag_anchors"][tag_id] = {
+                "xyz_mm": xyz_f,
+                "known": known_b
+            }
             # 自动并入放行集合
             allowed_set = set(curr_cfg.get("allowed_ids", []))
             allowed_set.add(tag_id)
             curr_cfg["allowed_ids"] = sorted(list(allowed_set))
-            msg = f"已成功标注 Tag #{tag_id:02d} 坐标: ({xyz[0]:.1f}, {xyz[1]:.1f}, {xyz[2]:.1f}) mm 并自动放行"
+            n_k = sum(1 for b in known_b if b)
+            msg = f"已成功标注 Tag #{tag_id:02d} 坐标: ({xyz_f[0]:.1f}, {xyz_f[1]:.1f}, {xyz_f[2]:.1f}) mm ({n_k}/3 轴已知) 并自动放行"
 
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -663,6 +706,25 @@ def load_workspace_marker_size_mm(workspace_dir: str) -> Optional[float]:
         return None
     v = data.get("tag_default_size_mm")
     if v is None:
+        # 自愈机制: 尝试从当前工位 tags_map.yaml 继承已标定的 marker_size_mm
+        map_path = os.path.join(workspace_dir, "tags_map.yaml")
+        if os.path.isfile(map_path):
+            try:
+                with open(map_path, "r", encoding="utf-8") as mf:
+                    mdata = yaml.safe_load(mf) or {}
+                mv = mdata.get("marker_size_mm")
+                if mv is not None and float(mv) > 0:
+                    f_val = float(mv)
+                    data["tag_default_size_mm"] = f_val
+                    try:
+                        with open(path, "w", encoding="utf-8") as wf:
+                            yaml.dump(data, wf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+                        log.info(f"[WS] 从 tags_map.yaml 自愈回填 tag_default_size_mm={f_val} mm 至 {path}")
+                    except Exception as we:
+                        log.warning(f"[WS] 自愈写回 tag_whitelist.yaml 失败: {we}")
+                    return f_val
+            except Exception as me:
+                log.warning(f"[WS] 读取 tags_map.yaml 自愈标靶边长异常: {me}")
         return None
     try:
         f = float(v)
@@ -677,9 +739,8 @@ def load_workspace_marker_size_mm(workspace_dir: str) -> Optional[float]:
 
 def load_workspace_tag_anchors(workspace_dir: str) -> Optional[Dict[int, Dict]]:
     """
-    读取工位 tag_whitelist.yaml 的 tag_anchors (用户在白名单页签录入的已知世界坐标):
-    - 文件存在且 tag_anchors 非空 → {int tag_id: {"xyz_mm": [f3], "known": [T,T,T]}}
-      (录入即视为三轴全知, 与 BA 求解器期望的 anchor_tags 格式对齐)
+    读取工位 tag_whitelist.yaml 的 tag_anchors (统一标准结构):
+    - 文件存在且 tag_anchors 非空 → {int tag_id: {"xyz_mm": [f3], "known": [b3]}}
     - 文件缺失/解析失败/tag_anchors 为空 → 返回 None (调用方应继续尝试其它锚点源)
     """
     path = os.path.join(workspace_dir, "tag_whitelist.yaml")
@@ -694,17 +755,8 @@ def load_workspace_tag_anchors(workspace_dir: str) -> Optional[Dict[int, Dict]]:
     raw = data.get("tag_anchors")
     if not isinstance(raw, dict) or not raw:
         return None
-    out: Dict[int, Dict[str, Any]] = {}
-    for tid_key, xyz in raw.items():
-        try:
-            tid_i = int(tid_key)
-            xyz_f = [float(v) for v in xyz]
-        except (TypeError, ValueError):
-            continue
-        if len(xyz_f) != 3:
-            continue
-        out[tid_i] = {"xyz_mm": xyz_f, "known": [True, True, True]}
-    return out or None
+    from src.utils.config_guard import parse_anchor_mapping
+    return parse_anchor_mapping(raw) or None
 
 
 def load_workspace_anchor_tags(workspace_dir: str) -> Optional[Dict[int, Dict]]:
@@ -771,6 +823,18 @@ def save_workspace_tag_whitelist(workspace: Workspace, allowed_ids: List[int]) -
     doc["workspace_id"] = workspace.workspace_id
     doc["workspace_name"] = workspace.name or workspace.workspace_id
     doc["allowed_ids"] = sorted({int(x) for x in allowed_ids})
+    if "tag_default_size_mm" not in doc:
+        map_p = workspace.map_path
+        size_val = 35.5
+        if os.path.isfile(map_p):
+            try:
+                with open(map_p, "r", encoding="utf-8") as mf:
+                    mdata = yaml.safe_load(mf) or {}
+                if mdata.get("marker_size_mm"):
+                    size_val = float(mdata["marker_size_mm"])
+            except Exception:
+                pass
+        doc["tag_default_size_mm"] = size_val
     doc["description"] = doc.get("description") or f"Workspace {workspace.name or workspace.workspace_id} 标靶白名单配置"
     doc["notes"] = doc.get("notes") or "工位物理白名单恒启用 (名单内容即行为): allowed_ids 非空时仅放行名单内标靶"
     try:

@@ -319,3 +319,12 @@ class ManifestRepository:
             yaml.dump(map_data, f, allow_unicode=True, sort_keys=False)
         log.info(f"[OK] 标靶空间立体地图已成功保存至: {output_path}")
 
+    @staticmethod
+    def load_map(map_path: str) -> Optional[Dict[str, Any]]:
+        """从 YAML 文件加载标靶空间地图"""
+        if not map_path or not os.path.exists(map_path):
+            return None
+        with open(map_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+
+

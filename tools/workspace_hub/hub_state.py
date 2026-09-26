@@ -75,6 +75,9 @@ class HubState:
     GRID_ROWS = 3
     GRID_PAGE = 9
 
+    # 3D ROI 空间物件列表单屏可见行数 (高 552px / 80px = 6.9 -> 7行完整铺满)
+    ROI_VISIBLE_COUNT = 7
+
     def __init__(self, workspace_mgr: WorkspaceManager = None, force_mock: bool = False):
         self.workspace_mgr = workspace_mgr or WorkspaceManager()
 
@@ -89,6 +92,7 @@ class HubState:
         self.current_images: list[str] = []
         self.selected_image_idx = 0
         self.image_grid_offset = 0   # 卡片网格当前页起始索引 (按整行对齐)
+        self.roi_scroll_offset = 0   # 3D ROI 物件列表滚动起始行偏移
 
         # 生产相册相关状态 (生产运行基准工位相册)
         self.prod_images: list[str] = []
@@ -149,6 +153,10 @@ class HubState:
         self.anchor_modal_known: list = [False, False, False]
         self.anchor_axis_sel: int = -1                 # 当前输入轴 0/1/2 (X/Y/Z)
         self.anchor_axis_buf: str = ""                 # 输入缓冲
+
+        # 标靶物理边长 (Tag 公共属性) 专属编辑模态窗
+        self.marker_size_modal_open: bool = False
+        self.marker_size_buf: str = ""
 
         # 兼容性属性 (右键菜单已全量移除，此标记恒为 False)
         self.context_menu_open = False
@@ -344,6 +352,7 @@ class HubState:
             return
         self.select_workspace_at_index(ws_idx)
         self.selected_tree_item = ("workspace", ws_idx, None)
+        self.roi_scroll_offset = 0
         ws = self.get_selected_workspace()
         if ws:
             self.expanded_workspaces.add(ws.workspace_id)
@@ -362,6 +371,7 @@ class HubState:
             return
         self.select_workspace_at_index(ws_idx)
         self.selected_tree_item = ("frame", ws_idx, frame_id)
+        self.roi_scroll_offset = 0
         ws = self.get_selected_workspace()
         if ws:
             self.expanded_workspaces.add(ws.workspace_id)
@@ -447,6 +457,29 @@ class HubState:
     def get_frame_rois(self, frame_id: str):
         """获取专属归属于当前坐标系的 3D ROI 空间物件"""
         return [r for r in self.get_roi_spaces() if r.frame_id == frame_id]
+
+    def scroll_roi_list(self, delta_items: int):
+        """3D ROI 物件列表滚动 (滚轮/翻页按钮驱动)"""
+        cur_frame = self.get_selected_frame()
+        if not cur_frame:
+            self.roi_scroll_offset = 0
+            return
+        rois = self.get_frame_rois(cur_frame.frame_id)
+        max_offset = max(0, len(rois) - self.ROI_VISIBLE_COUNT)
+        self.roi_scroll_offset = max(0, min(self.roi_scroll_offset + delta_items, max_offset))
+
+    def jump_roi_scroll_by_y(self, click_y: int, track_y: int = 100, track_h: int = 552):
+        """点击滚动条轨道快速跳转 ROI 视口"""
+        cur_frame = self.get_selected_frame()
+        if not cur_frame:
+            return
+        rois = self.get_frame_rois(cur_frame.frame_id)
+        max_offset = max(0, len(rois) - self.ROI_VISIBLE_COUNT)
+        if max_offset <= 0:
+            self.roi_scroll_offset = 0
+            return
+        ratio = max(0.0, min(1.0, (click_y - track_y) / float(track_h)))
+        self.roi_scroll_offset = int(round(ratio * max_offset))
 
     def load_current_workspace_images(self):
         """载入当前选中工位的照片列表"""
@@ -602,13 +635,14 @@ class HubState:
             return ""
         return self.workspace_mgr.ensure_tag_whitelist(ws.workspace_id)
 
-    def update_tag_anchor(self, tag_id: int, xyz: Optional[list[float]]) -> tuple[bool, str]:
-        """更新或清除当前工位 tag_whitelist 中的 tag_anchors 标注，并刷新缓存"""
+    def update_tag_anchor(self, tag_id: int, anchor_data: Any) -> tuple[bool, str]:
+        """更新或清除当前工位中的 tag_anchors 物理坐标标注 (统一标准结构)"""
         ws = self.get_selected_workspace()
         if not ws:
             return False, "未选择工位"
-        ok, msg = self.workspace_mgr.update_tag_anchor(ws.workspace_id, tag_id, xyz)
+        ok, msg = self.workspace_mgr.update_tag_anchor(ws.workspace_id, tag_id, anchor_data)
         if ok:
+            self._reload_anchor_map()
             self.refresh_whitelist_cache()
         return ok, msg
 
@@ -651,6 +685,17 @@ class HubState:
         doc["workspace_id"] = ws.workspace_id
         doc["workspace_name"] = ws.name
         doc["allowed_ids"] = sorted(self.whitelist_edit_ids)
+        if "tag_default_size_mm" not in doc:
+            size_val = 35.5
+            if os.path.isfile(ws.map_path):
+                try:
+                    with open(ws.map_path, "r", encoding="utf-8") as mf:
+                        mdata = yaml.safe_load(mf) or {}
+                    if mdata.get("marker_size_mm"):
+                        size_val = float(mdata["marker_size_mm"])
+                except Exception:
+                    pass
+            doc["tag_default_size_mm"] = size_val
         doc.setdefault("description", f"Workspace {ws.name} 标靶白名单配置")
         doc.setdefault("notes", "工位物理白名单恒启用 (名单内容即行为): allowed_ids 非空时仅放行名单内标靶 (权威约束)；留空 = 探索模式放行所有检测标靶")
         try:
@@ -692,18 +737,61 @@ class HubState:
         self._close_anchor_modal()
 
     def _reload_anchor_map(self):
-        """载入当前工位锚点 (Tag 数据 100% 工位沙盒, 全局 config.yaml 已禁兜底)"""
-        from src.calibration.workspace_manager import load_workspace_anchor_tags
+        """载入当前工位锚点 (Tag 锚点统一为工位独立数据, 未写穿前以当前标定为基础)"""
+        from src.calibration.workspace_manager import load_workspace_anchor_tags, load_workspace_tag_anchors
+        from src.utils.config_guard import load_anchor_tags
         ws = self.get_selected_workspace()
-        self.anchor_map = load_workspace_anchor_tags(ws.workspace_dir) if ws else None
+        if not ws:
+            self.anchor_map = {}
+            return
+        m = load_workspace_anchor_tags(ws.workspace_dir)
+        if m is None:
+            m = load_workspace_tag_anchors(ws.workspace_dir)
+        if m is None and getattr(self, "anchor_config_path", None) and os.path.isfile(self.anchor_config_path):
+            m = load_anchor_tags(self.anchor_config_path)
+        self.anchor_map = m or {}
 
     def _persist_anchor_map(self) -> bool:
-        """写穿当前工位锚点文件 (首次写穿即建立工位独立锚点, 此后不再回退全局)"""
+        """写穿当前工位锚点文件并同步写穿 tag_whitelist.yaml (统一采用标准结构)"""
         from src.calibration.workspace_manager import save_workspace_anchor_tags
         ws = self.get_selected_workspace()
         if ws is None:
             return False
-        return save_workspace_anchor_tags(ws, self.anchor_map)
+        ok = save_workspace_anchor_tags(ws, self.anchor_map)
+        path = self.workspace_mgr.get_tag_whitelist_path(ws.workspace_id)
+        if os.path.isfile(path):
+            try:
+                import yaml
+                with open(path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+                cfg["tag_anchors"] = {
+                    tid: {"xyz_mm": [float(v) for v in a["xyz_mm"]], "known": [bool(b) for b in a.get("known", [True, True, True])]}
+                    for tid, a in sorted(self.anchor_map.items())
+                }
+                # 自动将具有已知轴约束的 tag 加入 allowed_ids
+                allowed_set = set(cfg.get("allowed_ids", []))
+                for tid, a in self.anchor_map.items():
+                    if any(a.get("known", [])):
+                        allowed_set.add(tid)
+                cfg["allowed_ids"] = sorted(list(allowed_set))
+                if "tag_default_size_mm" not in cfg:
+                    size_val = 35.5
+                    if os.path.isfile(ws.map_path):
+                        try:
+                            with open(ws.map_path, "r", encoding="utf-8") as mf:
+                                mdata = yaml.safe_load(mf) or {}
+                            if mdata.get("marker_size_mm"):
+                                size_val = float(mdata["marker_size_mm"])
+                        except Exception:
+                            pass
+                    cfg["tag_default_size_mm"] = size_val
+                with open(path, "w", encoding="utf-8") as f:
+                    yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+                self.refresh_whitelist_cache()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"同步 tag_whitelist.yaml tag_anchors 异常: {e}")
+        return ok
 
     def _close_anchor_modal(self):
         self.anchor_modal_open = False
@@ -712,18 +800,24 @@ class HubState:
         self.anchor_axis_buf = ""
 
     def open_anchor_editor(self, tag_id: int):
-        """打开 Tag 锚点弹窗: 以工位锚点当前值 (或全局兜底值, 或空锚) 为草稿"""
+        """打开 Tag 专属坐标编辑弹窗: 以工位统一锚点结构为草稿"""
         self._reload_anchor_map()
-        entry = self.anchor_map.get(tag_id)
+        entry = self.anchor_map.get(tag_id) if self.anchor_map else None
+        if not entry:
+            wl = self.get_tag_whitelist()
+            anchors = wl.get("tag_anchors", {}) if isinstance(wl, dict) else {}
+            cand = anchors.get(tag_id) or anchors.get(str(tag_id))
+            if isinstance(cand, dict) and "xyz_mm" in cand:
+                entry = cand
         if entry:
             self.anchor_modal_xyz = [float(v) for v in entry["xyz_mm"]]
-            self.anchor_modal_known = [bool(b) for b in entry["known"]]
+            self.anchor_modal_known = [bool(b) for b in entry.get("known", [True, True, True])]
         else:
             self.anchor_modal_xyz = [0.0, 0.0, 0.0]
             self.anchor_modal_known = [False, False, False]
         self.anchor_modal_tag = tag_id
         self.anchor_modal_open = True
-        self.anchor_axis_sel = -1
+        self.anchor_axis_sel = 0   # 默认聚焦 X 轴，方便快速录入
         self.anchor_axis_buf = ""
 
     def anchor_axis_select(self, axis: int):
@@ -802,6 +896,65 @@ class HubState:
 
     def cancel_anchor_modal(self):
         self._close_anchor_modal()
+
+    # ==================== Tag 公共属性: 标靶物理边长 (marker_size_mm) ====================
+
+    def get_workspace_marker_size(self) -> Optional[float]:
+        """获取当前工位显式配置的标靶物理边长 (mm)"""
+        ws = self.get_selected_workspace()
+        if not ws:
+            return None
+        from src.calibration.workspace_manager import load_workspace_marker_size_mm
+        return load_workspace_marker_size_mm(ws.workspace_dir)
+
+    def open_marker_size_editor(self):
+        """打开标靶物理边长专属编辑模态窗"""
+        cur_sz = self.get_workspace_marker_size()
+        self.marker_size_buf = f"{cur_sz:.3f}" if cur_sz and cur_sz > 0 else ""
+        self.marker_size_modal_open = True
+
+    def save_marker_size_modal(self) -> tuple[bool, str]:
+        """提交保存标靶物理边长 (写穿工位 tag_whitelist.yaml)"""
+        buf = self.marker_size_buf.strip()
+        if not buf:
+            return False, "标靶边长不能为空"
+        try:
+            val = float(buf)
+        except ValueError:
+            return False, f"非法数值: {buf}"
+        if val <= 0:
+            return False, "标靶边长必须大于 0 mm"
+        ws = self.get_selected_workspace()
+        if not ws:
+            return False, "未选择工位"
+        ok, msg = self.workspace_mgr.update_workspace_marker_size(ws.workspace_id, val)
+        if ok:
+            self.refresh_whitelist_cache()
+            self.marker_size_modal_open = False
+            self.marker_size_buf = ""
+        return ok, msg
+
+    def cancel_marker_size_modal(self):
+        """取消标靶物理边长编辑"""
+        self.marker_size_modal_open = False
+        self.marker_size_buf = ""
+
+    def marker_size_pad_key(self, label: str):
+        """标靶边长键盘输入分发"""
+        if label == "退格":
+            self.marker_size_buf = self.marker_size_buf[:-1]
+            return
+        if label == "清空":
+            self.marker_size_buf = ""
+            return
+        if label == "确认":
+            ok, msg = self.save_marker_size_modal()
+            self.set_toast(msg)
+            return
+        if label == "." and "." in self.marker_size_buf:
+            return
+        if label in "0123456789.":
+            self.marker_size_buf = (self.marker_size_buf + label)[-8:]
 
     def delete_selected_image(self) -> bool:
         """删除当前选中的照片帧（物理安全移除、清理缓存，并自适应指向相邻帧）"""
@@ -1232,6 +1385,7 @@ class HubState:
         ok = self.roi_mgr.remove_roi(roi_id)
         if ok:
             self.roi_mgr.save()
+            self.scroll_roi_list(0)
             self.set_toast(f"已成功删除 ROI 物件: {roi_id}")
             return True, "删除成功"
         return False, "删除失败"

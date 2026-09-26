@@ -31,7 +31,9 @@ from tools.workspace_hub.hub_renderer import (
     BTN_EXIT_X0, BTN_EXIT_Y0, BTN_EXIT_W, BTN_EXIT_H,
     WL_BTN_ALL, WL_BTN_CLEAR, WL_BTN_ANCHOR,
     WL_ANCHOR_SAVE, WL_ANCHOR_CANCEL, WL_ANCHOR_DELETE,
-    whitelist_cell_rect, anchor_row_rect, anchor_clear_rect, anchor_padkey_rect, point_in_rect
+    whitelist_cell_rect, anchor_row_rect, anchor_clear_rect, anchor_padkey_rect, point_in_rect,
+    MS_MODAL_X, MS_MODAL_Y, MS_MODAL_W, MS_MODAL_H,
+    MS_BTN_SAVE, MS_BTN_CANCEL, MS_PAD_LABELS, ms_padkey_rect
 )
 from src.utils.logger import get_logger
 
@@ -99,6 +101,16 @@ class WorkspaceHubApp(BaseCvApp):
 
     def on_click(self, x: int, y: int):
         """处理鼠标左键单击与双击交互"""
+        # =================== 1.9 标靶物理边长模态窗优先交互 ===================
+        if self.state.marker_size_modal_open:
+            self._handle_marker_size_modal_click(x, y)
+            return
+
+        # =================== 2.0 专用坐标编辑模态窗优先交互 (无 Windows 输入框) ===================
+        if self.state.anchor_modal_open:
+            self._handle_anchor_modal_click(x, y)
+            return
+
         # =================== 2.5 坐标系与 3D ROI 结构化弹窗交互 ===================
         if self.state.frame_modal_open:
             self._handle_frame_modal_click(x, y)
@@ -164,6 +176,9 @@ class WorkspaceHubApp(BaseCvApp):
             if cur_frame:
                 self.state.open_frame_modal(cur_frame.frame_id)
             return
+        if hit == "btn_edit_marker_size":
+            self.state.open_marker_size_editor()
+            return
         if isinstance(hit, tuple) and hit[0] == "frame_tag_toggle":
             tag_id = hit[1]
             cur_frame = self.state.get_selected_frame()
@@ -181,6 +196,15 @@ class WorkspaceHubApp(BaseCvApp):
             self.state.open_roi_modal()
             if cur_frame:
                 self.state.roi_modal_data["frame_id"] = cur_frame.frame_id
+            return
+        if hit == "btn_roi_prev":
+            self.state.scroll_roi_list(-1)
+            return
+        if hit == "btn_roi_next":
+            self.state.scroll_roi_list(1)
+            return
+        if isinstance(hit, tuple) and hit[0] == "roi_scrollbar_click":
+            self.state.jump_roi_scroll_by_y(hit[1])
             return
         if isinstance(hit, tuple) and hit[0] == "frame_roi_edit":
             roi_id = hit[1]
@@ -286,8 +310,10 @@ class WorkspaceHubApp(BaseCvApp):
             self.state.select_prod_image_by_offset(delta)
 
     def _scroll_grid_for_active_tab(self, delta_rows: int):
-        """按当前激活页签滚动卡片网格 (滚轮驱动)"""
-        if self.state.active_tab == HubState.TAB_PROD_IMAGES:
+        """按当前激活页签滚动卡片网格 / ROI 列表 (滚轮驱动)"""
+        if self.state.active_tab == HubState.TAB_FRAME_ROIS:
+            self.state.scroll_roi_list(delta_rows)
+        elif self.state.active_tab == HubState.TAB_PROD_IMAGES:
             self.state.scroll_prod_grid(delta_rows)
         else:
             self.state.scroll_image_grid(delta_rows)
@@ -443,6 +469,35 @@ class WorkspaceHubApp(BaseCvApp):
             state.set_toast(msg)
             return
 
+    def _handle_marker_size_modal_click(self, x: int, y: int):
+        """标靶物理边长专属模态弹窗点击处理"""
+        state = self.state
+
+        # 1. 16 键数字与快捷尺寸小键盘
+        for idx, lbl in enumerate(MS_PAD_LABELS):
+            if point_in_rect(x, y, ms_padkey_rect(idx)):
+                if lbl in ("35.5", "50.0", "40.0"):
+                    state.marker_size_buf = lbl
+                else:
+                    state.marker_size_pad_key(lbl)
+                return
+
+        # 2. 底部操作按钮
+        if point_in_rect(x, y, MS_BTN_SAVE):
+            ok, msg = state.save_marker_size_modal()
+            state.set_toast(msg)
+            return
+        if point_in_rect(x, y, MS_BTN_CANCEL):
+            state.cancel_marker_size_modal()
+            state.set_toast("已取消标靶边长编辑。")
+            return
+
+        # 3. 点击外部半透明遮罩关闭
+        if not (MS_MODAL_X <= x <= MS_MODAL_X + MS_MODAL_W and MS_MODAL_Y <= y <= MS_MODAL_Y + MS_MODAL_H):
+            state.cancel_marker_size_modal()
+            state.set_toast("已取消标靶边长编辑。")
+            return
+
     def _handle_rename_workspace(self):
         """修改 Workspace 显示名称 (支持中文)"""
         ws = self.state.get_selected_workspace()
@@ -579,37 +634,11 @@ class WorkspaceHubApp(BaseCvApp):
             self.state.set_toast(f"已同步数据一致性: 标定 {old_calib}→{ws.image_count} 帧, 生产 {old_prod}→{ws.prod_image_count} 帧")
 
     def _handle_frame_tag_edit_xyz(self, tag_id: int):
-        """编辑某个 Tag 在当前坐标系下的已知物理局部真值坐标 [x, y, z]"""
+        """打开专用局部坐标编辑模态窗 (完全替代 Windows 文本输入框)"""
         cur_frame = self.state.get_selected_frame()
         if not cur_frame:
             return
-        wl_data = self.state.get_whitelist_data()
-        anchors = wl_data.get("tag_anchors", {}) if isinstance(wl_data, dict) else {}
-        curr_pos = anchors.get(tag_id) or anchors.get(str(tag_id))
-        init_str = f"{curr_pos[0]:.1f}, {curr_pos[1]:.1f}, {curr_pos[2]:.1f}" if curr_pos else "0.0, 0.0, 0.0"
-
-        val_str = prompt_input_text(
-            f"标注 Tag #{tag_id:02d} 局部坐标",
-            f"请输入 Tag #{tag_id:02d} 在坐标系 [{cur_frame.frame_id}] 下的已知物理坐标 (x, y, z，单位 mm，以逗号分隔，留空或输入 clear 清除):",
-            initial=init_str
-        )
-        if val_str is not None:
-            clean_str = val_str.strip()
-            if not clean_str or clean_str.lower() == "clear":
-                ok, msg = self.state.update_tag_anchor(tag_id, None)
-                self.state.set_toast(msg)
-                return
-
-            parts = [p.strip() for p in clean_str.replace("，", ",").split(",")]
-            if len(parts) == 3:
-                try:
-                    xyz = [float(parts[0]), float(parts[1]), float(parts[2])]
-                    ok, msg = self.state.update_tag_anchor(tag_id, xyz)
-                    self.state.set_toast(msg)
-                except ValueError:
-                    self.state.set_toast("坐标格式无效，请输入 3 个以逗号分隔的浮点数！")
-            else:
-                self.state.set_toast("坐标格式无效，需包含 x, y, z 三轴坐标！")
+        self.state.open_anchor_editor(tag_id)
 
     def _handle_frames_rois_click(self, x: int, y: int):
         """处理【坐标系&ROI】列表页签的按钮交互"""
@@ -841,17 +870,81 @@ class WorkspaceHubApp(BaseCvApp):
     def on_key(self, key: int) -> bool:
         """
         键盘快捷键分发:
+        - 专用坐标编辑弹窗优先消费所有键盘输入 (Tab 换轴, 数字/. 退格, ? 设未知, Enter 保存, ESC 取消)
         - ESC (27): 逐层退出当前展开视图或模态弹窗 (大图 -> 弹窗 -> 编辑态 -> 应用)
         - Enter (13, 10): 模态表单快捷保存
         """
         state = self.state
+
+        # 0.0 标靶物理边长专属模态窗 (marker_size_modal) 独占键盘输入
+        if state.marker_size_modal_open:
+            if key == 27:  # ESC 取消
+                state.cancel_marker_size_modal()
+                state.set_toast("已取消标靶边长编辑。")
+                return True
+            if key in (13, 10):  # Enter 保存
+                ok, msg = state.save_marker_size_modal()
+                state.set_toast(msg)
+                return True
+            if key in (8, 127):  # Backspace 退格
+                state.marker_size_pad_key("退格")
+                return True
+            if key in (ord('c'), ord('C')):  # 清空
+                state.marker_size_pad_key("清空")
+                return True
+            if key == ord('.'):  # 小数点
+                state.marker_size_pad_key(".")
+                return True
+            if ord('0') <= key <= ord('9'):  # 数字 0~9
+                state.marker_size_pad_key(chr(key))
+                return True
+            return True
+
+        # 0.1 专用坐标编辑弹窗 (anchor_modal) 独占键盘输入 (无 Windows 输入框)
+        if state.anchor_modal_open:
+            if key == 27:  # ESC 取消
+                state.cancel_anchor_modal()
+                state.set_toast("已取消坐标编辑 (未保存)。")
+                return True
+            if key in (13, 10):  # Enter 保存
+                ok, msg = state.save_anchor_modal()
+                state.set_toast(msg)
+                return True
+            if key == 9:  # Tab: 切换到下一个输入轴 (X -> Y -> Z -> X)
+                cur_axis = state.anchor_axis_sel
+                next_axis = 0 if cur_axis < 0 else (cur_axis + 1) % 3
+                state.anchor_axis_select(next_axis)
+                return True
+            if key in (8, 127):  # Backspace 退格
+                state.anchor_pad_key("退格")
+                return True
+            if key in (ord('c'), ord('C')):  # 清空当前轴缓冲
+                state.anchor_pad_key("清空")
+                return True
+            if key in (ord('?'), ord('x'), ord('X')):  # 设为未知
+                cur_axis = state.anchor_axis_sel
+                if cur_axis >= 0:
+                    state.anchor_axis_clear(cur_axis)
+                    state.set_toast(f"{'XYZ'[cur_axis]} 轴已标记为未知。")
+                return True
+            if key == ord('-'):  # 切换正负号
+                state.anchor_pad_key("-/+")
+                return True
+            if key == ord('.'):  # 小数点
+                state.anchor_pad_key(".")
+                return True
+            if ord('0') <= key <= ord('9'):  # 数字 0~9
+                state.anchor_pad_key(chr(key))
+                return True
+            return True  # 弹窗打开时拦截其余所有按键
+
         # 1. ESC 键层次化退出拦截
         if key == 27:
             if state.active_dropdown:
                 state.active_dropdown = None
                 return True
-            if state.expanded_image_idx >= 0:
-                state.expanded_image_idx = -1
+            if state.view_mode == HubState.VIEW_EXPANDED:
+                state.set_view_mode(HubState.VIEW_STANDARD)
                 state.set_toast("已退出全宽看图")
                 return True
             if state.frame_modal_open:

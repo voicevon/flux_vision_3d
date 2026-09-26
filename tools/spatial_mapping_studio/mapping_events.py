@@ -116,6 +116,8 @@ class MappingEventMixin:
             self.is_running = False
         elif btn_id == "RUN_BA":
             self.start_async_bundle_adjustment()
+        elif btn_id == "ALIGN_WORLD_DATUM":
+            self.align_current_workspace_world_datum()
         elif btn_id == "RECOMPUTE_METRICS":
             self.refresh_all_frame_metrics()
             self.set_toast("已全量重算并刷新所有帧残差指标")

@@ -117,6 +117,29 @@ def roi_row_del_rect(idx: int) -> tuple[int, int, int, int]:
 # ==================== 坐标系专属视图几何常量 ====================
 FRAME_EDIT_POSE_BTN = (866, 58, 74, 30)
 FRAME_ADD_ROI_BTN = (780, 58, 160, 30)
+FRAME_TAG_EDIT_SIZE_BTN = (796, 234, 144, 32)
+
+# ==================== 标靶物理边长专属模态弹窗几何 ====================
+MS_MODAL_W = 460
+MS_MODAL_H = 350
+MS_MODAL_X = 250
+MS_MODAL_Y = 185
+
+MS_BTN_SAVE = (MS_MODAL_X + 224, MS_MODAL_Y + MS_MODAL_H - 46, 210, 36)
+MS_BTN_CANCEL = (MS_MODAL_X + 24, MS_MODAL_Y + MS_MODAL_H - 46, 110, 36)
+
+MS_PAD_LABELS = [
+    "1", "2", "3", "退格",
+    "4", "5", "6", "清空",
+    "7", "8", "9", "0",
+    ".", "35.5", "50.0", "40.0"
+]
+
+def ms_padkey_rect(idx: int) -> tuple[int, int, int, int]:
+    r, c = divmod(idx, 4)
+    kx = MS_MODAL_X + 24 + c * 105
+    ky = MS_MODAL_Y + 136 + r * 40
+    return (kx, ky, 96, 34)
 
 FT_GRID_X0 = 356
 FT_GRID_Y0 = 366
@@ -133,13 +156,17 @@ def frame_tag_chip_rect(idx: int) -> tuple[int, int, int, int]:
             FT_CHIP_W, FT_CHIP_H)
 
 def frame_roi_row_rect(idx: int) -> tuple[int, int, int, int]:
-    return (356, 100 + idx * 80, 588, 72)
+    return (356, 100 + idx * 80, 574, 72)
 
 def frame_roi_edit_btn(idx: int) -> tuple[int, int, int, int]:
-    return (818, 100 + idx * 80 + 22, 54, 26)
+    return (804, 100 + idx * 80 + 22, 54, 26)
 
 def frame_roi_del_btn(idx: int) -> tuple[int, int, int, int]:
-    return (878, 100 + idx * 80 + 22, 54, 26)
+    return (864, 100 + idx * 80 + 22, 54, 26)
+
+FRAME_ROI_PREV_BTN = (660, 58, 54, 28)
+FRAME_ROI_NEXT_BTN = (718, 58, 54, 28)
+FRAME_ROI_SCROLL_TRACK = (942, 100, 8, 552)
 
 
 def whitelist_cell_rect(t_id: int) -> tuple[int, int, int, int]:
@@ -312,7 +339,9 @@ class HubRenderer:
         self._render_footer(canvas, state)
 
         # 6. 如果打开了结构化弹窗，最高优先级置顶展示
-        if state.frame_modal_open:
+        if state.marker_size_modal_open:
+            self.modals.render_marker_size_modal(canvas, state)
+        elif state.frame_modal_open:
             self.modals.render_frame_modal(canvas, state)
         elif state.roi_modal_open:
             self.modals.render_roi_modal(canvas, state)
@@ -322,7 +351,7 @@ class HubRenderer:
             self.modals.render_help_modal(canvas, state)
 
         # 7. 悬浮 Tooltip 气泡提示 (置于最顶层，无遮挡呈现)
-        if not (state.frame_modal_open or state.roi_modal_open or state.anchor_modal_open or state.is_help_modal_open):
+        if not (state.marker_size_modal_open or state.frame_modal_open or state.roi_modal_open or state.anchor_modal_open or state.is_help_modal_open):
             if state.active_tab == HubState.TAB_FRAME_POSE_TAGS and state.view_mode == HubState.VIEW_STANDARD:
                 mpos = (state.mouse_x, state.mouse_y)
                 if self._should_show_tag_bound_tooltip(state, mpos):
@@ -378,13 +407,19 @@ class HubRenderer:
 
     def _draw_button(self, canvas: np.ndarray, rect: tuple[int, int, int, int], text: str,
                      mouse_pos: tuple[int, int], is_active: bool = False,
-                     theme_color: tuple[int, int, int] = (0, 200, 140)) -> bool:
+                     theme_color: tuple[int, int, int] = (0, 200, 140),
+                     enabled: bool = True) -> bool:
         """统一绘制现代科技风交互按钮，带精准 Hover 高亮检测，返回是否处于 hover 状态"""
         bx, by, bw, bh = rect
         mx, my = mouse_pos
-        is_hover = (bx <= mx <= bx + bw and by <= my <= by + bh)
+        is_hover = enabled and (bx <= mx <= bx + bw and by <= my <= by + bh)
 
-        if is_hover:
+        if not enabled:
+            bg_col = (18, 22, 28)
+            border_col = (34, 42, 52)
+            text_col = (85, 98, 115)
+            thickness = 1
+        elif is_hover:
             bg_col = (34, 46, 56)
             border_col = (0, 255, 180)  # 荧光亮绿高亮
             text_col = (0, 255, 200)
@@ -403,8 +438,10 @@ class HubRenderer:
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), bg_col, -1)
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border_col, thickness)
 
-        # 文字垂直居中
-        draw_text(canvas, text, (bx + 14, by + (bh - 18) // 2), font_size=14,
+        # 文字自适应居中
+        approx_w = sum(14 if ord(c) > 127 else 8 for c in text)
+        tx = bx + max(4, (bw - approx_w) // 2)
+        draw_text(canvas, text, (tx, by + (bh - 18) // 2), font_size=13,
                   color=text_col, bold=is_hover)
         return is_hover
 
@@ -542,9 +579,9 @@ class HubRenderer:
         card_x = box_x + 16
         card_w = box_w - 32
 
-        # 2. 上部卡片: 机构位姿与空间拓扑
-        c1_y = box_y + 42
-        c1_h = 196
+        # 2. 上部卡片: 机构位姿与空间拓扑 (紧凑精致)
+        c1_y = box_y + 40
+        c1_h = 134
         cv2.rectangle(canvas, (card_x, c1_y), (card_x + card_w, c1_y + c1_h), (24, 28, 38), -1)
         cv2.rectangle(canvas, (card_x, c1_y), (card_x + card_w, c1_y + c1_h), (42, 52, 70), 1)
 
@@ -555,12 +592,12 @@ class HubRenderer:
         else:
             type_desc = "AprilTag 动标绑定 (tag_bound)"
 
-        draw_text(canvas, f"坐标系标识: {cur_frame.frame_id}", (card_x + 16, c1_y + 14), font_size=13, color=(210, 225, 240))
-        draw_text(canvas, f"父坐标系: {cur_frame.parent_frame_id}", (card_x + 220, c1_y + 14), font_size=13, color=(210, 225, 240))
-        draw_text(canvas, f"类型: {type_desc}", (card_x + 16, c1_y + 40), font_size=13, color=(0, 220, 200))
+        draw_text(canvas, f"坐标系标识: {cur_frame.frame_id}", (card_x + 16, c1_y + 12), font_size=13, color=(210, 225, 240))
+        draw_text(canvas, f"父坐标系: {cur_frame.parent_frame_id}", (card_x + 220, c1_y + 12), font_size=13, color=(210, 225, 240))
+        draw_text(canvas, f"类型: {type_desc}", (card_x + 16, c1_y + 36), font_size=12, color=(0, 220, 200))
 
         # 动标定义与说明悬停帮助徽章
-        help_btn_x, help_btn_y, help_btn_w, help_btn_h = card_x + 310, c1_y + 37, 126, 22
+        help_btn_x, help_btn_y, help_btn_w, help_btn_h = card_x + 310, c1_y + 33, 126, 22
         is_hover_help = (help_btn_x <= mpos[0] <= help_btn_x + help_btn_w and help_btn_y <= mpos[1] <= help_btn_y + help_btn_h)
         help_bg = (30, 48, 48) if is_hover_help else (20, 28, 36)
         help_border = (0, 255, 200) if is_hover_help else (40, 75, 75)
@@ -570,44 +607,60 @@ class HubRenderer:
                   color=(0, 255, 220) if is_hover_help else (140, 185, 195), bold=is_hover_help)
 
         if cur_frame.type == "world":
-            w_box_y = c1_y + 70
-            cv2.rectangle(canvas, (card_x + 16, w_box_y), (card_x + card_w - 16, w_box_y + 84), (18, 22, 32), -1)
-            cv2.rectangle(canvas, (card_x + 16, w_box_y), (card_x + card_w - 16, w_box_y + 84), (38, 48, 65), 1)
-            draw_text(canvas, "● 工位全局绝对空间基准 (World Datum / Origin)", (card_x + 24, w_box_y + 11), font_size=13, color=(0, 255, 200), bold=True)
-            draw_text(canvas, "位姿特性: 恒为齐次单位阵 Identity 4x4 (空间测量全局绝对基准原点，无需外参)", (card_x + 24, w_box_y + 35), font_size=12, color=(160, 180, 200))
-            draw_text(canvas, "空间标靶: 由下方专属放行矩阵中的静态标靶阵列 (ID: 00~09) 建立全局基准网格", (card_x + 24, w_box_y + 58), font_size=12, color=(120, 140, 160))
+            w_box_y = c1_y + 60
+            cv2.rectangle(canvas, (card_x + 16, w_box_y), (card_x + card_w - 16, w_box_y + 62), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, w_box_y), (card_x + card_w - 16, w_box_y + 62), (38, 48, 65), 1)
+            draw_text(canvas, "● 工位全局绝对空间基准 (World Datum / Origin)", (card_x + 24, w_box_y + 9), font_size=12, color=(0, 255, 200), bold=True)
+            draw_text(canvas, "位姿特性: 恒为单位阵 Identity 4x4 (空间测量全局绝对基准原点，无需外参)", (card_x + 24, w_box_y + 33), font_size=12, color=(160, 180, 200))
 
         elif cur_frame.type == "fixed_transform":
             tx, ty, tz = cur_frame.translation_xyz_mm
             rx, ry, rz = getattr(cur_frame, "rotation_rpy_deg", [0.0, 0.0, 0.0])
 
-            t_box_y = c1_y + 70
-            cv2.rectangle(canvas, (card_x + 16, t_box_y), (card_x + card_w - 16, t_box_y + 38), (18, 22, 32), -1)
-            cv2.rectangle(canvas, (card_x + 16, t_box_y), (card_x + card_w - 16, t_box_y + 38), (38, 48, 65), 1)
-            draw_text(canvas, "平移向量 T [mm]:", (card_x + 24, t_box_y + 11), font_size=12, color=(160, 180, 200))
-            draw_text(canvas, f"X: {tx:+.1f}", (card_x + 160, t_box_y + 11), font_size=13, color=(0, 255, 220), bold=True)
-            draw_text(canvas, f"Y: {ty:+.1f}", (card_x + 290, t_box_y + 11), font_size=13, color=(0, 255, 220), bold=True)
-            draw_text(canvas, f"Z: {tz:+.1f}", (card_x + 420, t_box_y + 11), font_size=13, color=(0, 255, 220), bold=True)
+            t_box_y = c1_y + 60
+            cv2.rectangle(canvas, (card_x + 16, t_box_y), (card_x + card_w - 16, t_box_y + 30), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, t_box_y), (card_x + card_w - 16, t_box_y + 30), (38, 48, 65), 1)
+            draw_text(canvas, "平移 T [mm]:", (card_x + 24, t_box_y + 7), font_size=11, color=(160, 180, 200))
+            draw_text(canvas, f"X:{tx:+.1f}  Y:{ty:+.1f}  Z:{tz:+.1f}", (card_x + 120, t_box_y + 7), font_size=12, color=(0, 255, 220), bold=True)
 
-            r_box_y = c1_y + 116
-            cv2.rectangle(canvas, (card_x + 16, r_box_y), (card_x + card_w - 16, r_box_y + 38), (18, 22, 32), -1)
-            cv2.rectangle(canvas, (card_x + 16, r_box_y), (card_x + card_w - 16, r_box_y + 38), (38, 48, 65), 1)
-            draw_text(canvas, "欧拉旋转 R [deg]:", (card_x + 24, r_box_y + 11), font_size=12, color=(160, 180, 200))
-            draw_text(canvas, f"Rx: {rx:+.1f}°", (card_x + 160, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
-            draw_text(canvas, f"Ry: {ry:+.1f}°", (card_x + 290, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
-            draw_text(canvas, f"Rz: {rz:+.1f}°", (card_x + 420, r_box_y + 11), font_size=13, color=(255, 200, 60), bold=True)
+            r_box_y = c1_y + 94
+            cv2.rectangle(canvas, (card_x + 16, r_box_y), (card_x + card_w - 16, r_box_y + 30), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (card_x + 16, r_box_y), (card_x + card_w - 16, r_box_y + 30), (38, 48, 65), 1)
+            draw_text(canvas, "旋转 R [deg]:", (card_x + 24, r_box_y + 7), font_size=11, color=(160, 180, 200))
+            draw_text(canvas, f"Rx:{rx:+.1f}°  Ry:{ry:+.1f}°  Rz:{rz:+.1f}°", (card_x + 120, r_box_y + 7), font_size=12, color=(255, 200, 60), bold=True)
 
         else:
-            tag_box_y = c1_y + 70
+            tag_box_y = c1_y + 60
             cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 44), (18, 22, 32), -1)
             cv2.rectangle(canvas, (card_x + 16, tag_box_y), (card_x + card_w - 16, tag_box_y + 44), (38, 48, 65), 1)
-
             off = getattr(cur_frame, "offset_xyz_mm", [0.0, 0.0, 0.0])
             draw_text(canvas, f"标称安装偏移 offset: [{off[0]:.1f}, {off[1]:.1f}, {off[2]:.1f}] mm", (card_x + 24, tag_box_y + 14), font_size=12, color=(200, 215, 230))
 
-        # 3. 下部卡片: 10-Slot Tag 专属分配矩阵
-        c2_y = box_y + 248
-        c2_h = 360
+        # 3. 中间卡片: Tag 工位公共物理属性 (空间绝对尺度基准) [新增]
+        c_mid_y = c1_y + c1_h + 8
+        c_mid_h = 58
+        cv2.rectangle(canvas, (card_x, c_mid_y), (card_x + card_w, c_mid_y + c_mid_h), (24, 28, 38), -1)
+        cv2.rectangle(canvas, (card_x, c_mid_y), (card_x + card_w, c_mid_y + c_mid_h), (48, 60, 80), 1)
+
+        cv2.circle(canvas, (card_x + 18, c_mid_y + 17), 4, (0, 240, 220), -1)
+        draw_text(canvas, "Tag 工位公共物理属性 (三维空间绝对尺度基准 Scale Datum)",
+                  (card_x + 28, c_mid_y + 9), font_size=12, color=(0, 240, 220), bold=True)
+
+        ms_val = state.get_workspace_marker_size()
+        if ms_val is not None and ms_val > 0:
+            ms_str = f"标靶名义边长: {ms_val:.3f} mm  (已显式核准 √)"
+            ms_col = (0, 255, 180)
+        else:
+            ms_str = "标靶名义边长: 未录入 ⚠️ (建图/跟踪拒绝运行，请点击核准)"
+            ms_col = (0, 160, 255)
+        draw_text(canvas, ms_str, (card_x + 28, c_mid_y + 32), font_size=13, color=ms_col, bold=True)
+
+        # 边长编辑/核准按钮
+        self._draw_button(canvas, FRAME_TAG_EDIT_SIZE_BTN, "核准 / 编辑边长", mpos, theme_color=(0, 220, 160))
+
+        # 4. 下部卡片: 10-Slot Tag 专属分配矩阵与局部真值
+        c2_y = c_mid_y + c_mid_h + 8
+        c2_h = box_h - (c2_y - box_y) - 6
         cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (24, 28, 38), -1)
         cv2.rectangle(canvas, (card_x, c2_y), (card_x + card_w, c2_y + c2_h), (42, 52, 70), 1)
 
@@ -615,7 +668,7 @@ class HubRenderer:
         start_id, end_id = tag_range[0], tag_range[-1]
         draw_text(canvas, f"Tag 专属分段放行矩阵 [分配区间 ID: {start_id:02d} ~ {end_id:02d}]",
                   (card_x + 14, c2_y + 10), font_size=14, color=(0, 240, 220), bold=True)
-        cv2.line(canvas, (card_x + 10, c2_y + 50), (card_x + card_w - 10, c2_y + 50), (36, 45, 60), 1)
+        cv2.line(canvas, (card_x + 10, c2_y + 44), (card_x + card_w - 10, c2_y + 44), (36, 45, 60), 1)
 
         allowed_set = set(state.get_frame_tags_status(cur_frame.frame_id))
         wl_data = state.get_whitelist_data()
@@ -647,10 +700,19 @@ class HubRenderer:
 
             cv2.line(canvas, (cx + 6, cy + 30), (cx + cw - 6, cy + 30), (35, 45, 58), 1)
 
-            anchor_pos = anchors.get(tag_id) or anchors.get(str(tag_id))
-            if anchor_pos and len(anchor_pos) == 3:
-                pos_str = f"P:({anchor_pos[0]:.0f},{anchor_pos[1]:.0f},{anchor_pos[2]:.0f})"
-                pos_col = (255, 210, 80)
+            anchor_entry = anchors.get(tag_id) or anchors.get(str(tag_id))
+            if isinstance(anchor_entry, dict) and "xyz_mm" in anchor_entry:
+                xyz = anchor_entry.get("xyz_mm", [0.0, 0.0, 0.0])
+                known = anchor_entry.get("known", [True, True, True])
+                sx = f"{xyz[0]:.0f}" if (len(known) > 0 and known[0]) else "?"
+                sy = f"{xyz[1]:.0f}" if (len(known) > 1 and known[1]) else "?"
+                sz = f"{xyz[2]:.0f}" if (len(known) > 2 and known[2]) else "?"
+                if any(known):
+                    pos_str = f"P:({sx},{sy},{sz})"
+                    pos_col = (255, 210, 80) if all(known) else (0, 220, 255)
+                else:
+                    pos_str = "P: 未标注"
+                    pos_col = (110, 125, 140)
             else:
                 pos_str = "P: 未标注"
                 pos_col = (110, 125, 140)
@@ -672,10 +734,23 @@ class HubRenderer:
             return
 
         rois = state.get_frame_rois(cur_frame.frame_id)
+        total_rois = len(rois)
+        max_vis = HubState.ROI_VISIBLE_COUNT
+        max_offset = max(0, total_rois - max_vis)
+        offset = max(0, min(getattr(state, "roi_scroll_offset", 0), max_offset))
+        state.roi_scroll_offset = offset
 
-        # 1. 顶部标题栏与新建 ROI 按钮
-        header_text = f"3D ROI 空间物件 (坐标系: {cur_frame.frame_id} · 共 {len(rois)} 个)"
-        draw_text(canvas, header_text, (box_x + 16, box_y + 14), font_size=15, color=self.COLOR_WHITE, bold=True)
+        # 1. 顶部标题栏、翻页控制与新建 ROI 按钮
+        if total_rois > max_vis:
+            disp_end = min(offset + max_vis, total_rois)
+            header_text = f"3D ROI 空间物件 ({cur_frame.frame_id} · 显示 {offset + 1}~{disp_end} / 共 {total_rois} 个)"
+            draw_text(canvas, header_text, (box_x + 16, box_y + 14), font_size=14, color=self.COLOR_WHITE, bold=True)
+            self._draw_button(canvas, FRAME_ROI_PREV_BTN, "▲ 上翻", mpos, enabled=(offset > 0))
+            self._draw_button(canvas, FRAME_ROI_NEXT_BTN, "▼ 下翻", mpos, enabled=(offset < max_offset))
+        else:
+            header_text = f"3D ROI 空间物件 (坐标系: {cur_frame.frame_id} · 共 {total_rois} 个)"
+            draw_text(canvas, header_text, (box_x + 16, box_y + 14), font_size=15, color=self.COLOR_WHITE, bold=True)
+
         self._draw_button(canvas, FRAME_ADD_ROI_BTN, "+ 新建本坐标系 ROI", mpos)
 
         # 2. ROI 列表卡片
@@ -689,7 +764,8 @@ class HubRenderer:
                       (box_x + 85, empty_y + 70), font_size=13, color=(140, 160, 180))
             return
 
-        for i, r in enumerate(rois[:6]):
+        visible_rois = rois[offset : offset + max_vis]
+        for i, r in enumerate(visible_rois):
             rx, ry, rw, rh = frame_roi_row_rect(i)
             is_hover = (rx <= mpos[0] <= rx + rw and ry <= mpos[1] <= ry + rh)
             card_bg = (26, 32, 44) if is_hover else (22, 26, 36)
@@ -715,6 +791,21 @@ class HubRenderer:
 
             self._draw_button(canvas, frame_roi_edit_btn(i), "编辑", mpos)
             self._draw_button(canvas, frame_roi_del_btn(i), "删除", mpos, theme_color=(180, 60, 60))
+
+        # 3. 极简现代扁平滚动条 (当物件超过单屏容量时自动呈现)
+        if total_rois > max_vis:
+            tx, ty, tw, th = FRAME_ROI_SCROLL_TRACK
+            is_hover_track = (tx - 4 <= mpos[0] <= tx + tw + 4 and ty <= mpos[1] <= ty + th)
+            cv2.rectangle(canvas, (tx, ty), (tx + tw, ty + th), (22, 26, 34), -1)
+            cv2.rectangle(canvas, (tx, ty), (tx + tw, ty + th), (36, 44, 56), 1)
+
+            thumb_h = max(32, int(th * (float(max_vis) / float(total_rois))))
+            thumb_travel = th - thumb_h
+            thumb_y = ty + int(thumb_travel * (float(offset) / float(max_offset))) if max_offset > 0 else ty
+            is_hover_thumb = (tx - 4 <= mpos[0] <= tx + tw + 4 and thumb_y <= mpos[1] <= thumb_y + thumb_h)
+
+            thumb_color = (0, 240, 220) if is_hover_thumb else ((0, 190, 210) if is_hover_track else (65, 80, 100))
+            cv2.rectangle(canvas, (tx + 1, thumb_y), (tx + tw - 1, thumb_y + thumb_h), thumb_color, -1)
 
     def _render_gallery_page(self, canvas: np.ndarray, state: HubState, title: str,
                              images: list[str], sel_idx: int, grid_offset: int,

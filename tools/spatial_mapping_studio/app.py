@@ -860,8 +860,10 @@ class SpatialMappingStudioApp(MappingEventMixin, MappingWorkflowMixin):
                     self.reset_viewport_zoom()
                 elif key in (ord('t'), ord('T'), 32):  # T 键或空格键 -> 翻转状态
                     self.toggle_current_frame_exclusion()
-                elif key in (ord('b'), ord('B')):      # B 键 -> 一键 BA
+                elif key in (ord('b'), ord('B')):      # B 键 -> 阶段一: 自由平差
                     self.start_async_bundle_adjustment()
+                elif key in (ord('c'), ord('C')):      # C 键 -> 阶段二: 独立校准世界系
+                    self.align_current_workspace_world_datum()
                 elif key in (ord('p'), ord('P')):      # P 键 -> 重算体检
                     self.refresh_all_frame_metrics()
                     self.set_toast("已全量重算体检指标")

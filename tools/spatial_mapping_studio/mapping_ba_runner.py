@@ -121,6 +121,8 @@ class MappingBARunner:
             log.warning(f"[SPATIAL_MAPPING] 读取对齐标靶配置异常: {e}")
             self.anchor_tags = None
 
+        self.raw_map_path = os.path.join(os.path.dirname(self.map_path), "tags_map_raw.yaml")
+
     def _notify(self, msg: str):
         if self.on_status_change is not None:
             try:
@@ -129,21 +131,24 @@ class MappingBARunner:
                 pass  # 状态回调失败不应中断 BA 主流程
 
     def _execute_ba_solve(self, callback: Optional[Any] = None) -> Tuple[bool, Optional[Dict[str, Any]], str]:
-        """执行单次核心两阶段 BA 平差求解计算并保存完整地图 Schema"""
+        """
+        【阶段一核心】执行纯视觉自由平差求解 (Free BA):
+        仅基于相机重投影误差优化，100% 独立，不依赖任何世界锚点真值，输出相对底图并持久化。
+        """
         frame_detections, valid_frame_names, _ = self.manifest_repo.load_manifest(self.manifest_path)
         if len(frame_detections) < 2:
             return False, None, "有效图像帧不足 2 帧，无法执行 BA 平差"
 
+        # 阶段一: anchor_tags=None 纯自由平差
         opt_res = self.optimizer.optimize(
             frame_detections=frame_detections,
             active_frame_names=valid_frame_names,
             origin_tag_id=self.origin_tag_id,
             x_align_tag_id=self.x_align_tag_id,
-            anchor_tags=self.anchor_tags,
+            anchor_tags=None,
             callback=callback
         )
         if opt_res and "tags" in opt_res:
-            # 完整继承优化器产出的全量标准 schema (保留 is_dynamic_yaw, is_origin, rpy_deg 等)
             raw_tags = opt_res.get("tags", {})
             tags_dict = {}
             for tid, t_info in raw_tags.items():
@@ -154,32 +159,83 @@ class MappingBARunner:
                     "is_origin": bool(t_info.get("is_origin", False)),
                     "is_dynamic_yaw": bool(t_info.get("is_dynamic_yaw", False))
                 }
-            new_map = {
+            raw_map = {
                 "origin_tag_id": opt_res.get("origin_tag_id", self.origin_tag_id),
                 "x_axis_align_tag_id": opt_res.get("x_axis_align_tag_id", self.x_align_tag_id),
                 "marker_size_mm": opt_res.get("marker_size_mm", self.marker_size_mm),
                 "rmse_px": opt_res.get("final_rmse", 0.0),
                 "rmse_reprojection_px": opt_res.get("rmse_reprojection_px", opt_res.get("final_rmse", 0.0)),
+                "final_rmse": opt_res.get("final_rmse", 0.0),
                 "calibrated_images_count": opt_res.get("calibrated_images_count", len(valid_frame_names)),
-                "tags": tags_dict
+                "anchor_mode": "unaligned",
+                "tags": tags_dict,
+                "raw_relative_poses": opt_res.get("raw_relative_poses", {})
             }
-            if opt_res.get("world_anchor"):
-                new_map["world_anchor"] = opt_res["world_anchor"]
-            # 锚定模式三级降级标记 (full/partial/none), 供下游 tag_localizer 守门
-            if opt_res.get("anchor_mode"):
-                new_map["anchor_mode"] = opt_res["anchor_mode"]
-            if opt_res.get("anchor_skip_reason"):
-                new_map["anchor_skip_reason"] = opt_res["anchor_skip_reason"]
-            ManifestRepository.save_map(new_map, self.map_path)
-            self.data_mgr.tags_map_data = new_map
+            # 1. 固化持久化相对底图 tags_map_raw.yaml
+            ManifestRepository.save_map(raw_map, self.raw_map_path)
+            log.info(f"[SPATIAL_MAPPING] 相对底图已持久化至: {self.raw_map_path}")
+
+            # 2. 同步更新视口预览地图 (若尚未做世界对齐, 视口可查看相对三维构型)
+            ManifestRepository.save_map(raw_map, self.map_path)
+            self.data_mgr.tags_map_data = raw_map
             if self.data_mgr.engine:
-                self.data_mgr.engine.tags_map = new_map
-            # 同步 BA 反算的真实边长到引擎模型, 保证理论/实测棱柱比例与空间偏差解算一致
-            if new_map.get("marker_size_mm"):
-                self.data_mgr.set_marker_size_mm(new_map["marker_size_mm"])
+                self.data_mgr.engine.tags_map = raw_map
+            if raw_map.get("marker_size_mm"):
+                self.data_mgr.set_marker_size_mm(raw_map["marker_size_mm"])
             self.data_mgr.refresh_all_frame_metrics()
-            return True, opt_res, f"平差收敛成功，全局 RMSE: {opt_res.get('final_rmse', 0.0):.3f} px"
+            return True, opt_res, f"自由平差完成！像面 RMSE: {opt_res.get('final_rmse', 0.0):.3f} px (相对底图已就绪，请点击【校准世界系】)"
         return False, None, "BA 优化未能收敛，请检查有效观测标靶数"
+
+    def execute_world_alignment(self) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """
+        【阶段二核心】独立世界坐标系校准 (World Datum Calibration):
+        基于阶段一已有的 tags_map_raw.yaml，读取最新工位世界锚点，执行 Umeyama 3D 相似变换。
+        毫秒级完成，完全不触碰阶段一的图像平差，并具备几何冲突拦截！
+        """
+        # 1. 加载相对底图
+        rel_map = None
+        if os.path.exists(self.raw_map_path):
+            rel_map = ManifestRepository.load_map(self.raw_map_path)
+        elif self.data_mgr.tags_map_data and "tags" in self.data_mgr.tags_map_data:
+            rel_map = self.data_mgr.tags_map_data
+
+        if not rel_map or not rel_map.get("tags"):
+            return False, "当前工位尚未生成相对几何地图，请先点击【全局平差】！", None
+
+        # 2. 重新加载工位最新世界锚点配置
+        self._load_alignment_config()
+        if not self.anchor_tags:
+            return False, "工位未配置已知世界锚点！请在白名单或 anchor_tags.yaml 录入>=3 枚标靶物理坐标。", None
+
+        try:
+            # 3. 独立求解世界系刚体变换
+            world_map = self.optimizer.align_relative_map_to_world(
+                relative_map=rel_map,
+                anchor_tags=self.anchor_tags,
+                origin_tag_id=self.origin_tag_id,
+                x_align_tag_id=self.x_align_tag_id,
+                strict=True
+            )
+        except Exception as e:
+            return False, f"世界坐标系校准拦截: {e}", None
+
+        # 4. 持久化生产世界地图 tags_map.yaml 并更新运行时引擎
+        ManifestRepository.save_map(world_map, self.map_path)
+        self.data_mgr.tags_map_data = world_map
+        if self.data_mgr.engine:
+            self.data_mgr.engine.tags_map = world_map
+        if world_map.get("marker_size_mm"):
+            self.data_mgr.set_marker_size_mm(world_map["marker_size_mm"])
+        self.data_mgr.refresh_all_frame_metrics()
+
+        w_info = world_map.get("world_anchor", {})
+        res = w_info.get("anchor_residual_mm", {})
+        mean_res = res.get("mean_mm", 0.0)
+        solver = w_info.get("solver_type", "3D")
+        msg = f"世界坐标系校准成功！[{solver}] 锚点残差均值: {mean_res:.2f} mm，生产地图已更新。"
+        self._notify(msg)
+        log.info(f"[SPATIAL_MAPPING] {msg}")
+        return True, msg, world_map
 
     def start(self) -> bool:
         """

@@ -215,12 +215,15 @@ def test_hub_frames_rois_end_to_end():
         wl_path = ws_mgr.ensure_tag_whitelist(ws.workspace_id)
         assert os.path.exists(wl_path)
 
-        # 标注 Tag #05 局部坐标并自动放行
-        ok_tag, msg_tag = app.state.update_tag_anchor(5, [12.5, -45.0, 100.0])
+        # 标注 Tag #05 局部坐标并自动放行 (统一标准结构)
+        ok_tag, msg_tag = app.state.update_tag_anchor(5, {"xyz_mm": [12.5, -45.0, 100.0], "known": [True, True, True]})
         assert ok_tag is True
         wl_data = app.state.get_whitelist_data()
         assert 5 in wl_data.get("allowed_ids", [])
-        assert wl_data.get("tag_anchors", {}).get(5) == [12.5, -45.0, 100.0]
+        assert wl_data.get("tag_anchors", {}).get(5) == {
+            "xyz_mm": [12.5, -45.0, 100.0],
+            "known": [True, True, True]
+        }
 
         # 清除 Tag #05 坐标标注
         ok_clr, _ = app.state.update_tag_anchor(5, None)
@@ -228,12 +231,26 @@ def test_hub_frames_rois_end_to_end():
         wl_data_clr = app.state.get_whitelist_data()
         assert 5 not in wl_data_clr.get("tag_anchors", {})
 
-        # 9.2 快捷键 on_key 层次化退出测试
+        # 9.2 专用坐标编辑弹窗 (无 Windows 输入框) 与 on_key 测试
+        app.state.open_anchor_editor(5)
+        assert app.state.anchor_modal_open is True
+        # 按 Tab 切换轴
+        assert app.state.anchor_axis_sel == 0
+        app.on_key(9)
+        assert app.state.anchor_axis_sel == 1
+        # 输入 '?' 设为未知
+        app.on_key(ord('?'))
+        assert app.state.anchor_modal_known[1] is False
+        # 按 ESC 取消弹窗
+        app.on_key(27)
+        assert app.state.anchor_modal_open is False
+
+        # 9.3 快捷键 on_key 层次化退出测试
         # (1) 大图展开模式下按 ESC
-        app.state.expanded_image_idx = 0
+        app.state.set_view_mode(HubState.VIEW_EXPANDED)
         handled_esc = app.on_key(27)
         assert handled_esc is True
-        assert app.state.expanded_image_idx == -1
+        assert app.state.view_mode == HubState.VIEW_STANDARD
 
         # (2) 坐标系弹窗下按 ESC
         app.state.open_frame_modal()
@@ -256,6 +273,25 @@ def test_hub_frames_rois_end_to_end():
         assert app.state.whitelist_edit_mode is True
         handled_esc = app.on_key(27)
         assert handled_esc is True
+        assert app.state.whitelist_edit_mode is False
+
+        # 9.4 标靶物理边长 (Tag 公共物理属性) 中间卡片与专属弹窗测试
+        app.state.set_tab(HubState.TAB_FRAME_POSE_TAGS)
+        hit_sz_btn = app.renderer.hit_test(810, 248, app.state)
+        assert hit_sz_btn == "btn_edit_marker_size"
+
+        app.state.open_marker_size_editor()
+        assert app.state.marker_size_modal_open is True
+        # 清空并键盘键入 42.125
+        app.on_key(ord('c'))
+        for ch in "42.125":
+            app.on_key(ord(ch))
+        assert app.state.marker_size_buf == "42.125"
+        # Enter 提交保存
+        handled_enter = app.on_key(13)
+        assert handled_enter is True
+        assert app.state.marker_size_modal_open is False
+        assert app.state.get_workspace_marker_size() == 42.125
         assert app.state.whitelist_edit_mode is False
 
         # (5) 无任何弹窗激活时按 ESC 返回 False

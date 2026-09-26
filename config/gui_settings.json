@@ -4,16 +4,16 @@
   "canvas_h": 1000,
   "updated_at": "2026-09-18 07:25:11",
   "gui_launcher": {
-    "scale_pct": 90,
-    "canvas_w": 1152,
-    "canvas_h": 900,
-    "updated_at": "2026-09-25 15:13:17"
+    "scale_pct": 100,
+    "canvas_w": 1280,
+    "canvas_h": 1000,
+    "updated_at": "2026-09-26 21:17:33"
   },
   "robot_online_tracker": {
     "scale_pct": 100,
     "canvas_w": 1920,
     "canvas_h": 1017,
-    "updated_at": "2026-09-20 06:47:41",
+    "updated_at": "2026-09-25 17:53:22",
     "viewer_state": {
       "workspace_id": "20260916_145246_Home_real",
       "camera_type": "realsense",
@@ -31,14 +31,14 @@
     "updated_at": "2026-09-19 07:33:36"
   },
   "workspace_hub": {
-    "scale_pct": 200,
-    "canvas_w": 1366,
-    "canvas_h": 705,
-    "updated_at": "2026-09-25 13:43:23",
+    "scale_pct": 140,
+    "canvas_w": 1344,
+    "canvas_h": 1007,
+    "updated_at": "2026-09-26 20:49:14",
     "hub_state": {
       "selected_workspace_id": "20260923_204026_Workspace_5",
       "selected_workspace_name": "Workspace_5",
-      "updated_at": "2026-09-25 13:35:38"
+      "updated_at": "2026-09-26 21:15:43"
     }
   },
   "hardware_config": {

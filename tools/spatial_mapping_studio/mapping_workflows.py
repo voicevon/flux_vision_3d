@@ -192,3 +192,8 @@ class MappingWorkflowMixin:
         except Exception as e:
             self.set_toast(f"导出质检报告失败: {e}")
             log.warning(f"导出质检报告异常: {e}")
+
+    def align_current_workspace_world_datum(self):
+        """【阶段二交互入口】独立执行世界坐标系校准，毫秒级生效"""
+        succ, msg, _ = self.ba_runner.execute_world_alignment()
+        self.set_toast(msg)

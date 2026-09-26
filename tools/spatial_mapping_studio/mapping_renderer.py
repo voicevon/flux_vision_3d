@@ -48,6 +48,25 @@ from tools.spatial_mapping_studio.mapping_inspector import MappingInspectorMixin
 # Hover Tooltip 定义 (按钮 id -> 帮助文字)
 # ============================================================
 HOVER_TOOLTIPS: Dict[str, List[str]] = {
+    "RUN_BA": [
+        "【阶段一：纯视觉自由平差 (B)】",
+        "",
+        "纯基于像面重投影残差优化相对刚体几何构型：",
+        "  • 100% 独立，不依赖任何世界锚点真值",
+        "  • 自动消除镜头畸变与粗差，解算各 Tag 相对间距",
+        "  • 产出并固化相对底图 tags_map_raw.yaml",
+        "快捷键: [B]",
+    ],
+    "ALIGN_WORLD_DATUM": [
+        "【阶段二：校准世界坐标系 (C)】",
+        "",
+        "将阶段一已有的相对底图校准对齐至机械臂/现场世界系：",
+        "  • 读取白名单/anchor_tags 中的已知世界坐标",
+        "  • 运行 3D 刚体形变校验，防止录入错误污染全图",
+        "  • 采用 Umeyama 3D 最优相似变换，毫秒级生效",
+        "  • 修改锚点后随时单独点击，无需重跑平差！",
+        "快捷键: [C]",
+    ],
     "SAVE_MAP": [
         "【保存地图】",
         "",
@@ -222,6 +241,13 @@ class MappingRenderer(MappingFrameListMixin, MappingCenterViewMixin, MappingInsp
                               mouse_pos=(mx, my), is_running=is_prune)
         app.gui_buttons.append(("RUN_AUTO_PRUNE_BA", (bx, btn_y_top, bx + prune_w, btn_y_bot), "RUN_AUTO_PRUNE_BA"))
         bx += prune_w + 5
+
+        # 3b. [C] 阶段二: 校准世界系 (独立解耦, 毫秒级)
+        align_w = 98
+        draw_dashboard_button(canvas, (bx, btn_y_top, bx + align_w, btn_y_bot), "校准世界系",
+                              mouse_pos=(mx, my), accent=(210, 110, 255))
+        app.gui_buttons.append(("ALIGN_WORLD_DATUM", (bx, btn_y_top, bx + align_w, btn_y_bot), "ALIGN_WORLD_DATUM"))
+        bx += align_w + 5
 
         # 4. [M] 保存工位地图
         s_w = 86

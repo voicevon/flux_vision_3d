@@ -375,19 +375,19 @@ class HubModalsRenderer:
 
         # 标题栏
         tag_id = state.anchor_modal_tag
-        draw_text(canvas, f"Tag #{tag_id:02d} 世界坐标物理锚点", (MX + 18, MY + 12),
+        draw_text(canvas, f"Tag #{tag_id:02d} 物理锚点坐标 (支持部分已知)", (MX + 18, MY + 12),
                   font_size=15, color=GuiTheme.WHITE, bold=True)
         n_known = sum(1 for b in state.anchor_modal_known if b)
         if n_known == 3:
-            status_desc, status_col = "完整锚点 (5 DoF 解算)", (0, 230, 150)
+            status_desc, status_col = "完整锚点 (三轴已知)", (0, 230, 150)
         elif n_known >= 1:
-            status_desc, status_col = "部分锚点 (约束积累)", (0, 200, 230)
+            status_desc, status_col = "部分已知 (BA 自动平差求解未知轴)", (0, 220, 255)
         else:
-            status_desc, status_col = "未记录 (保存 = 清除该锚点)", (150, 160, 175)
+            status_desc, status_col = "全未知 (保存即清除此锚点)", (150, 160, 175)
         draw_text(canvas, f"已知 {n_known}/3 轴: {status_desc}", (MX + 18, MY + 34),
                   font_size=12, color=status_col)
 
-        # 三轴行: 轴名 + 值 + 已知/未记录 + [清除]
+        # 三轴行: 轴名 + 值 + 已知/待BA求解 + [设为未知]
         for axis in range(3):
             rx, ry, rw, rh = anchor_row_rect(axis)
             hovered = point_in_rect(mpos[0], mpos[1], (rx, ry, rw, rh))
@@ -404,17 +404,17 @@ class HubModalsRenderer:
             elif is_known:
                 val_text, val_col = f"{state.anchor_modal_xyz[axis]:.1f}", GuiTheme.WHITE
             else:
-                val_text, val_col = "---", (120, 130, 145)
+                val_text, val_col = "? (未知)", (0, 220, 255)
             draw_text(canvas, val_text, (rx + 42, ry + 8), font_size=15, color=val_col, bold=True)
-            know_text = "已知" if is_known else "未记录"
+            know_text = "已知" if is_known else "待BA求解"
             draw_text(canvas, know_text, (rx + 180, ry + 10), font_size=12,
-                      color=(0, 220, 140) if is_known else (110, 120, 135))
-            # 行内 [清除] 按钮
+                      color=(0, 220, 140) if is_known else (0, 200, 230))
+            # 行内 [设为未知] 按钮
             cx, cy, cw, ch = anchor_clear_rect(axis)
             chov = point_in_rect(mpos[0], mpos[1], (cx, cy, cw, ch))
             cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), (70, 46, 36) if chov else (58, 38, 30), -1)
             cv2.rectangle(canvas, (cx, cy), (cx + cw, cy + ch), (150, 90, 60), 1)
-            draw_text(canvas, "清除", (cx + 17, cy + 7), font_size=12, color=(230, 170, 140))
+            draw_text(canvas, "设为未知", (cx + 8, cy + 7), font_size=11, color=(240, 180, 150))
 
         # 15 键键盘: 1~9 / . / 0 / -+/ 清空 / 退格 / 确认
         key_labels = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "-/+", "清空", "退格", "确认"]
@@ -507,3 +507,76 @@ class HubModalsRenderer:
         footer_y = my + modal_h - 36
         draw_text(canvas, "快捷提示: 鼠标点击右上角 [X]、点击遮罩或直接按键盘 [ESC / H] 即可秒级关闭！",
                   (mx + 32, footer_y), font_size=13, color=self.r.COLOR_GRAY)
+
+    # ==================== 标靶物理边长专属模态弹窗 ====================
+
+    def render_marker_size_modal(self, canvas: np.ndarray, state: HubState):
+        """绘制标靶物理边长专属核准与编辑模态弹窗"""
+        from tools.workspace_hub.hub_renderer import (
+            MS_MODAL_X, MS_MODAL_Y, MS_MODAL_W, MS_MODAL_H,
+            MS_BTN_SAVE, MS_BTN_CANCEL, MS_PAD_LABELS, ms_padkey_rect
+        )
+
+        mx, my, mw, mh = MS_MODAL_X, MS_MODAL_Y, MS_MODAL_W, MS_MODAL_H
+        mpos = (state.mouse_x, state.mouse_y)
+
+        # 1. 半透明黑色遮罩
+        mask = canvas.copy()
+        cv2.rectangle(mask, (0, 0), (self.r.canvas_w, self.r.canvas_h), (0, 0, 0), -1)
+        cv2.addWeighted(mask, 0.72, canvas, 0.28, 0, canvas)
+
+        # 2. 弹窗底板与双层边框
+        cv2.rectangle(canvas, (mx, my), (mx + mw, my + mh), (20, 24, 32), -1)
+        cv2.rectangle(canvas, (mx, my), (mx + mw, my + mh), (0, 220, 160), 2)
+        cv2.rectangle(canvas, (mx + 3, my + 3), (mx + mw - 3, my + mh - 3), (40, 52, 70), 1)
+
+        # 3. 标题栏
+        cv2.rectangle(canvas, (mx, my), (mx + mw, my + 44), (16, 20, 28), -1)
+        cv2.line(canvas, (mx, my + 44), (mx + mw, my + 44), self.r.COLOR_BORDER, 1)
+        cv2.circle(canvas, (mx + 20, my + 22), 5, self.r.COLOR_GOLD, -1)
+        draw_text(canvas, "★ 核准 / 设置标靶物理边长 (Tag Marker Size)", (mx + 34, my + 13),
+                  font_size=15, color=GuiTheme.WHITE, bold=True)
+
+        # 4. 尺度基准严谨性说明
+        intro_txt = "标靶物理边长是空间反投影尺度的唯一基准 (Scale Datum)，请输入真实名义边长 (mm)："
+        draw_text(canvas, intro_txt, (mx + 24, my + 54), font_size=11, color=(160, 180, 200))
+
+        # 5. 数值输入框 (大字体呈现 + 闪烁光标)
+        bx, by, bw, bh = mx + 24, my + 76, mw - 48, 44
+        cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (12, 16, 22), -1)
+        cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (0, 240, 220), 2)
+
+        buf_str = state.marker_size_buf or ""
+        disp_txt = f"{buf_str}_ mm" if buf_str else "请输入边长 (如 35.5) mm"
+        val_col = (0, 255, 220) if buf_str else (100, 115, 130)
+        draw_text(canvas, disp_txt, (bx + 14, by + 11), font_size=18, color=val_col, bold=True)
+
+        # 6. 16 键数字与快捷尺寸软键盘
+        for idx, lbl in enumerate(MS_PAD_LABELS):
+            kx, ky, kw, kh = ms_padkey_rect(idx)
+            is_hov = (kx <= mpos[0] <= kx + kw and ky <= mpos[1] <= ky + kh)
+
+            # 预设尺寸按键使用特殊底色高亮
+            if lbl in ("35.5", "50.0", "40.0"):
+                key_bg = (32, 48, 42) if is_hov else (22, 34, 30)
+                key_border = (0, 255, 180) if is_hov else (0, 180, 130)
+                key_text_col = (0, 255, 200)
+            elif lbl in ("退格", "清空"):
+                key_bg = (40, 32, 32) if is_hov else (28, 22, 24)
+                key_border = (255, 100, 100) if is_hov else (120, 50, 50)
+                key_text_col = (255, 160, 160)
+            else:
+                key_bg = (30, 36, 48) if is_hov else (22, 26, 34)
+                key_border = (0, 200, 240) if is_hov else (45, 55, 70)
+                key_text_col = GuiTheme.WHITE
+
+            cv2.rectangle(canvas, (kx, ky), (kx + kw, ky + kh), key_bg, -1)
+            cv2.rectangle(canvas, (kx, ky), (kx + kw, ky + kh), key_border, 1)
+
+            btn_label = f"[{lbl}]" if lbl in ("35.5", "50.0", "40.0") else lbl
+            tx = kx + max(6, (kw - len(btn_label) * 9) // 2)
+            draw_text(canvas, btn_label, (tx, ky + 9), font_size=13, color=key_text_col, bold=is_hov)
+
+        # 7. 底部操作栏: [取消 (ESC)] 与 [保存并核准 (Enter)]
+        self.r._draw_button(canvas, MS_BTN_CANCEL, "取消 (ESC)", mpos)
+        self.r._draw_button(canvas, MS_BTN_SAVE, "保存并核准边长 (Enter)", mpos, theme_color=(0, 220, 160))

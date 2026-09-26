@@ -125,7 +125,12 @@ class BundleAdjustmentOptimizer:
             log.info(f"[NOTE] 提示：发现 {len(report['critical_bridges'])} 对标靶仅由单张图共视支撑 (关键桥梁): {report['critical_bridges']}")
 
         # 2. 生成高质量初值 (多标靶联合超定 PnP 初值传递，杜绝单链累积误差与翻转)
-        base_static_id = x_align_tag_id if x_align_tag_id in all_detected_tags else min(all_detected_tags)
+        if origin_tag_id in all_detected_tags:
+            base_static_id = origin_tag_id
+        elif x_align_tag_id in all_detected_tags:
+            base_static_id = x_align_tag_id
+        else:
+            base_static_id = min(all_detected_tags)
         tag_poses_init = {base_static_id: np.eye(4, dtype=np.float64)}
         camera_poses_init = {}  # {frame_idx: T_w_cam}
 
@@ -475,17 +480,41 @@ class BundleAdjustmentOptimizer:
             }
             self.marker_size_mm = real_marker_size
 
-        # 7. 坐标系对齐闭环: FR-9.6 严格强制世界系绝对锚定 — 严禁以打印边长兜底
-        #    锚点缺失/约束不足时直接抛错, 由上层 GUI 弹 toast 提示, 不再静默走相对对齐
-        if not anchor_tags:
-            raise ValueError(
-                "BA 平差拒绝执行: 未配置任何已知世界坐标锚点 (anchor_tags / tag_anchors)。"
-                "请在工位 anchor_tags.yaml 或 tag_whitelist.yaml.tag_anchors 录入≥2 枚 tag 的 xyz_mm 后重试。"
+        # 7. 坐标系解耦逻辑:
+        #    - 若未指定 anchor_tags: 纯自由平差 (阶段一), 输出纯视觉相对几何地图 (以 base_static_id 为相对原点)
+        #    - 若指定了 anchor_tags: 世界绝对锚定 (阶段二), 求解 3D 相似变换变换至世界系
+        if anchor_tags:
+            final_tags_map = self.anchor_to_absolute_world(
+                optimized_tags_pose, anchor_tags,
+                origin_tag_id=origin_tag_id, x_align_tag_id=x_align_tag_id,
+                strict=True
             )
-        final_tags_map = self.anchor_to_absolute_world(
-            optimized_tags_pose, anchor_tags,
-            origin_tag_id=origin_tag_id, x_align_tag_id=x_align_tag_id
-        )
+        else:
+            # 阶段一: 纯自由平差相对地图
+            tags_dict = {}
+            for tid, T in optimized_tags_pose.items():
+                pos = T[:3, 3]
+                roll, pitch, yaw = self._rotation_to_rpy_deg(T[:3, :3])
+                tags_dict[tid] = {
+                    "position_mm": [round(float(v), 2) for v in pos],
+                    "rpy_deg": [round(float(math.degrees(v)), 2) for v in [roll, pitch, yaw]],
+                    "transform_matrix": [[round(float(val), 5) for val in row] for row in T],
+                    "is_origin": bool(tid == base_static_id),
+                    "is_dynamic_yaw": bool(tid == base_static_id)
+                }
+            final_tags_map = {
+                "origin_tag_id": base_static_id,
+                "x_axis_align_tag_id": x_align_tag_id,
+                "anchor_mode": "unaligned",
+                "tags": tags_dict
+            }
+            log.info(f"[+] [FREE_BA] 阶段一纯视觉自由平差完成: 基准标靶 Tag #{base_static_id}, 相对构型已固化 (尚未校准世界系)")
+
+        # 始终保存一份未经世界变换的纯相对矩阵 (供后续随时独立做世界系校准)
+        final_tags_map["raw_relative_poses"] = {
+            int(tid): [[round(float(val), 5) for val in row] for row in T]
+            for tid, T in optimized_tags_pose.items()
+        }
 
         final_tags_map["rmse_reprojection_px"] = rmse_px
         final_tags_map["marker_size_mm"] = round(float(self.marker_size_mm), 3)
@@ -692,15 +721,48 @@ class BundleAdjustmentOptimizer:
                 "t_axes": [has_x, has_y, has_z], "reason": reason}
 
     @staticmethod
+    def _umeyama_alignment(src_pts: np.ndarray, dst_pts: np.ndarray) -> Tuple[float, np.ndarray, np.ndarray]:
+        """
+        Umeyama 算法求解最小二乘 3D 相似变换: dst = s * (src @ R.T) + t
+        :param src_pts: Nx3 (BA 坐标点云)
+        :param dst_pts: Nx3 (世界目标坐标真值)
+        :return: (s, R, t) 其中 R in SO(3), det(R) = +1
+        """
+        n, m = src_pts.shape
+        mu_src = np.mean(src_pts, axis=0)
+        mu_dst = np.mean(dst_pts, axis=0)
+
+        src_centered = src_pts - mu_src
+        dst_centered = dst_pts - mu_dst
+
+        var_src = np.mean(np.sum(src_centered ** 2, axis=1))
+        if var_src < 1e-9:
+            return 1.0, np.eye(3), mu_dst - mu_src
+
+        H = (dst_centered.T @ src_centered) / n
+        U, D, Vt = np.linalg.svd(H)
+        S = np.eye(m)
+        if np.linalg.det(U) * np.linalg.det(Vt) < 0:
+            S[m - 1, m - 1] = -1
+
+        R = U @ S @ Vt
+        s = float((1.0 / var_src) * np.trace(np.diag(D) @ S))
+        t = mu_dst - s * (R @ mu_src)
+        return s, R, t
+
+    @staticmethod
     def solve_similarity_from_anchors(tag_poses: Dict[int, np.ndarray],
                                       anchor_tags: Dict[int, Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
         """
-        分阶段闭式求解 BA 系 -> 世界系相似变换 (p_w = s·Rz(yaw)·p_ba + t):
-        ① 尺度: 全部锚点对"共同已知轴"距离比的中位数 (抗离群; 无任何可用对 → none, 不允许打印边长兜底)
-        ② 偏航: 共同已知 XY 锚点对连线方向的圆周均值 (向量合成)
-        ③ t_x/t_y/t_z: 各轴已知锚点的平移残差均值 (缺失轴为 None)
-        ④ 残差: 各锚点已知轴变换后偏差 (锚定质量指标)
-        :return: (mode, info); mode ∈ full|partial|none, none 时 info["reason"] 说明退化原因
+        自适应求解 BA 系 -> 世界系相似变换 (世界坐标系优先):
+        - 优先分支 (Umeyama 3D): 当存在 >=3 枚三轴全知且非共线锚点时, 采用闭式解析 Umeyama 算法
+          求解全局最优 3D 刚体旋转 R in SO(3) 与尺度/平移, 彻底解除世界系法向对单个基准 Tag
+          自身平贴倾角的绑架, 使得世界坐标系严格以用户标定的 3D 地面真值为绝对基准!
+        - 降级分支 (Planar 2D + Z平移): 当仅有 2 枚锚点或仅已知部分轴时, 以共同轴测距求解尺度,
+          以共同 XY 方向求解偏航角 yaw 并独立平移各轴.
+        - 锚点一致性守门: 对所有锚点对的世界几何距离与相机重构距离进行相对形变校验, 发现严重录入
+          冲突时记录警告, 杜绝错误几何污染全图.
+        :return: (mode, info); mode in full|partial|none
         """
         usable = {tid: a for tid, a in anchor_tags.items() if tid in tag_poses}
         missing = sorted(tid for tid in anchor_tags if tid not in tag_poses)
@@ -710,11 +772,10 @@ class BundleAdjustmentOptimizer:
             return "none", {"reason": "配置的世界锚点标靶均未参与本次平差解算"}
 
         p_ba = {tid: tag_poses[tid][:3, 3].astype(np.float64) for tid in usable}
-
-        # ①② 收集锚点对约束: 共同已知轴距离比 (尺度) 与共同 XY 连线方向 (偏航)
-        scale_obs: List[float] = []
-        yaw_obs: List[float] = []
         tids = sorted(usable.keys())
+
+        # ① 收集全部可用锚点对在共同已知轴下的距离比 (尺度观测)
+        scale_obs: List[Tuple[int, int, float, float, float]] = []
         for i in range(len(tids)):
             for j in range(i + 1, len(tids)):
                 ia, ib = tids[i], tids[j]
@@ -726,33 +787,86 @@ class BundleAdjustmentOptimizer:
                 d_b = math.sqrt(sum((p_ba[ia][k] - p_ba[ib][k]) ** 2 for k in common))
                 if d_w < 1e-6 or d_b < 1e-6:
                     continue  # 世界系或 BA 系在共同已知轴上重合, 该对无尺度信息
-                scale_obs.append(d_w / d_b)
-                if all(a["known"][k] and b["known"][k] for k in (0, 1)):
-                    wdx, wdy = a["xyz_mm"][0] - b["xyz_mm"][0], a["xyz_mm"][1] - b["xyz_mm"][1]
-                    bdx, bdy = p_ba[ia][0] - p_ba[ib][0], p_ba[ia][1] - p_ba[ib][1]
-                    if math.hypot(wdx, wdy) >= 1e-6 and math.hypot(bdx, bdy) >= 1e-6:
-                        yaw_obs.append(math.atan2(wdy, wdx) - math.atan2(bdy, bdx))
+                scale_obs.append((ia, ib, d_w / d_b, d_w, d_b))
 
         if not scale_obs:
             return "none", {"reason": "无任何锚点对存在共同已知轴 (或全部重合), 尺度不可解 — 不允许以打印边长兜底"}
-        if not yaw_obs:
-            return "none", {"reason": "无任何共同已知 XY 的锚点对, 偏航不可解"}
 
-        scale = float(np.median(scale_obs))
-        yaw = math.atan2(sum(math.sin(v) for v in yaw_obs), sum(math.cos(v) for v in yaw_obs))
-        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
-        R = np.array([[cos_y, -sin_y, 0.0], [sin_y, cos_y, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+        ratios = [r[2] for r in scale_obs]
+        scale_median = float(np.median(ratios))
 
-        # ③ 平移: 逐轴对已知锚点残差取均值 (缺失轴为 None)
-        t_axes: List[Optional[float]] = []
-        for axis in range(3):
-            vals = [a["xyz_mm"][axis] - scale * float((R @ p_ba[tid])[axis])
-                    for tid, a in usable.items() if a["known"][axis]]
-            t_axes.append(float(np.mean(vals)) if vals else None)
-        if t_axes[0] is None or t_axes[1] is None:
-            return "none", {"reason": "X/Y 平移约束不足 (需至少一枚已知 X 与一枚已知 Y 的锚点)"}
-        t = np.array([v if v is not None else 0.0 for v in t_axes], dtype=np.float64)
-        mode = "full" if t_axes[2] is not None else "partial"
+        # 锚点几何形变与录入冲突校验
+        conflict_pairs = []
+        for ia, ib, ratio, d_w, d_b in scale_obs:
+            expected_dw = scale_median * d_b
+            abs_diff = abs(d_w - expected_dw)
+            rel_diff = abs_diff / max(1e-3, expected_dw)
+            if abs_diff > 15.0 and rel_diff > 0.15:
+                conflict_pairs.append({
+                    "pair": (ia, ib),
+                    "world_dist_mm": round(d_w, 2),
+                    "measured_dist_mm": round(expected_dw, 2),
+                    "diff_mm": round(abs_diff, 2),
+                    "rel_error": round(rel_diff, 3)
+                })
+                log.warning(
+                    f"[ANCHOR CONFLICT] 锚点几何严重冲突! Tag #{ia} 与 Tag #{ib} 间输入的世界距离为 {d_w:.1f} mm, "
+                    f"但相机视觉重构等效距离约为 {expected_dw:.1f} mm (偏差 {abs_diff:.1f} mm, 相对误差 {rel_diff*100:.1f}%)! "
+                    f"请务必核对工位锚点/白名单中这两个标靶的已知世界坐标输入!"
+                )
+
+        # ② 检查是否有 >=3 枚三轴全知锚点且在 3D 空间有效非共线 -> 优先使用 Umeyama 3D 相似变换
+        full_3d_tids = [tid for tid in tids if all(usable[tid]["known"])]
+        use_umeyama = False
+        if len(full_3d_tids) >= 3:
+            src_test = np.array([p_ba[tid] for tid in full_3d_tids])
+            src_c = src_test - np.mean(src_test, axis=0)
+            _, sv_src, _ = np.linalg.svd(src_c)
+            # 有效空间秩 >= 2 (非单一退化直线)
+            if len(sv_src) >= 2 and sv_src[1] > 1e-2:
+                use_umeyama = True
+
+        if use_umeyama:
+            src = np.array([p_ba[tid] for tid in full_3d_tids])
+            dst = np.array([usable[tid]["xyz_mm"] for tid in full_3d_tids])
+            scale, R, t = BundleAdjustmentOptimizer._umeyama_alignment(src, dst)
+            mode = "full"
+            yaw = math.atan2(R[1, 0], R[0, 0])
+            yaw_pairs_count = len(full_3d_tids) * (len(full_3d_tids) - 1) // 2
+            solver_type = "umeyama_3d"
+        else:
+            # 降级分支: 2D 偏航 + 独立 Z 平移 (兼容双锚点及部分已知轴模式)
+            yaw_obs: List[float] = []
+            for i in range(len(tids)):
+                for j in range(i + 1, len(tids)):
+                    ia, ib = tids[i], tids[j]
+                    a, b = usable[ia], usable[ib]
+                    if all(a["known"][k] and b["known"][k] for k in (0, 1)):
+                        wdx, wdy = a["xyz_mm"][0] - b["xyz_mm"][0], a["xyz_mm"][1] - b["xyz_mm"][1]
+                        bdx, bdy = p_ba[ia][0] - p_ba[ib][0], p_ba[ia][1] - p_ba[ib][1]
+                        if math.hypot(wdx, wdy) >= 1e-6 and math.hypot(bdx, bdy) >= 1e-6:
+                            yaw_obs.append(math.atan2(wdy, wdx) - math.atan2(bdy, bdx))
+
+            if not yaw_obs:
+                return "none", {"reason": "无任何共同已知 XY 的锚点对, 偏航不可解"}
+
+            scale = scale_median
+            yaw = math.atan2(sum(math.sin(v) for v in yaw_obs), sum(math.cos(v) for v in yaw_obs))
+            cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+            R = np.array([[cos_y, -sin_y, 0.0], [sin_y, cos_y, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+
+            # ③ 平移: 逐轴对已知锚点残差取均值 (缺失轴为 None)
+            t_axes: List[Optional[float]] = []
+            for axis in range(3):
+                vals = [a["xyz_mm"][axis] - scale * float((R @ p_ba[tid])[axis])
+                        for tid, a in usable.items() if a["known"][axis]]
+                t_axes.append(float(np.mean(vals)) if vals else None)
+            if t_axes[0] is None or t_axes[1] is None:
+                return "none", {"reason": "X/Y 平移约束不足 (需至少一枚已知 X 与一枚已知 Y 的锚点)"}
+            t = np.array([v if v is not None else 0.0 for v in t_axes], dtype=np.float64)
+            mode = "full" if t_axes[2] is not None else "partial"
+            yaw_pairs_count = len(yaw_obs)
+            solver_type = "planar_2d"
 
         # ④ 残差: 各锚点已知轴的变换后偏差 (锚定质量指标)
         per_tag: Dict[str, List[float]] = {}
@@ -768,9 +882,13 @@ class BundleAdjustmentOptimizer:
             "max_mm": round(float(np.max(np.abs(all_res))), 3) if all_res else 0.0,
             "per_tag": per_tag
         }
-        info = {"scale_factor": scale, "yaw_rad": yaw, "R": R, "t": t,
-                "scale_pair_count": len(scale_obs), "yaw_pair_count": len(yaw_obs),
-                "residuals": residuals}
+        info = {
+            "scale_factor": scale, "yaw_rad": yaw, "R": R, "t": t,
+            "scale_pair_count": len(scale_obs), "yaw_pair_count": yaw_pairs_count,
+            "residuals": residuals,
+            "solver_type": solver_type,
+            "conflict_pairs": conflict_pairs
+        }
         return mode, info
 
     def _anchor_fallback_relative(self,
@@ -789,33 +907,41 @@ class BundleAdjustmentOptimizer:
                                  tag_poses: Dict[int, np.ndarray],
                                  anchor_input: Any,
                                  origin_tag_id: int = 0,
-                                 x_align_tag_id: int = 1) -> Dict[str, Any]:
+                                 x_align_tag_id: int = 1,
+                                 strict: bool = False) -> Dict[str, Any]:
         """
         FR-9.6 世界坐标系绝对锚定 (约束积累式):
         支持任意数量全知/部分已知锚点 (逐轴 known 标记), 重力先验 (BA 系 Z 轴指向天) 固定 roll/pitch,
         分阶段闭式求解相似变换 (尺度 s + 偏航 yaw + 平移 t) 将整张 BA 平差地图变换到机械臂世界坐标系:
         - full:    5/5 DoF 全部解算, 绝对世界系地图
         - partial: 仅 XY 链可解 (t_z 悬空), XY 绝对锚定 + Z 保持 BA 尺度相对坐标, 下游须按 anchor_mode 守门
-        - none:    约束不足或退化, 退化为 align_to_scara_world 相对对齐 (anchor_skip_reason 记录原因)
+        - none:    约束不足或退化, strict=True 抛错终止, strict=False 退化为 align_to_scara_world 相对对齐
         :param anchor_input: 新格式 {tid: {"xyz_mm","known"}} 或旧双锚点格式 (自动归一化)
+        :param strict: 是否严格模式 (平差主干默认 True, 禁止任何静默兜底)
         """
         anchor_tags = self.normalize_anchor_tags(anchor_input)
         if not anchor_tags:
-            raise ValueError("anchor_to_absolute_world: 锚点配置为空或字段不合法 (FR-9.6 禁止兜底)")
+            if strict:
+                raise ValueError("anchor_to_absolute_world: 锚点配置为空或字段不合法 (FR-9.6 禁止兜底)")
+            return self._anchor_fallback_relative(tag_poses, origin_tag_id, x_align_tag_id, "锚点配置为空或字段不合法")
 
         dof = self.evaluate_anchor_dof(anchor_tags)
         if dof["mode"] == "none":
-            raise ValueError(
-                f"锚点 DoF 约束不足 ({dof['dof_solved']}/5): {dof['reason']}"
-                " — 请增配已知世界坐标的 tag 或放宽当前部分已知标记 (FR-9.6 禁止兜底)"
-            )
+            if strict:
+                raise ValueError(
+                    f"锚点 DoF 约束不足 ({dof['dof_solved']}/5): {dof['reason']}"
+                    " — 请增配已知世界坐标的 tag 或放宽当前部分已知标记 (FR-9.6 禁止兜底)"
+                )
+            return self._anchor_fallback_relative(tag_poses, origin_tag_id, x_align_tag_id, dof["reason"])
 
         mode, solve = self.solve_similarity_from_anchors(tag_poses, anchor_tags)
         if mode == "none":
-            raise ValueError(
-                f"锚点求解退化: {solve['reason']}"
-                " — 请检查锚点 tag 之间的已知轴距离与 XY 共线方向 (FR-9.6 禁止兜底)"
-            )
+            if strict:
+                raise ValueError(
+                    f"锚点求解退化: {solve['reason']}"
+                    " — 请检查锚点 tag 之间的已知轴距离与 XY 共线方向 (FR-9.6 禁止兜底)"
+                )
+            return self._anchor_fallback_relative(tag_poses, origin_tag_id, x_align_tag_id, solve["reason"])
 
         scale = solve["scale_factor"]
         R = solve["R"]
@@ -827,12 +953,15 @@ class BundleAdjustmentOptimizer:
         self.marker_size_mm = self.marker_size_mm * scale
 
         res = solve["residuals"]
+        solver_type = solve.get("solver_type", "planar_2d")
+        conflict_pairs = solve.get("conflict_pairs", [])
         aligned_map = {
             "origin_tag_id": origin_tag_id,
             "x_axis_align_tag_id": x_align_tag_id,
             "anchor_mode": mode,
             "world_anchor": {
                 "anchor_mode": mode,
+                "solver_type": solver_type,
                 "scale_factor": round(float(scale), 6),
                 "yaw_deg": round(float(math.degrees(solve["yaw_rad"])), 3),
                 "t_xyz_mm": [round(float(v), 3) for v in t_vec],
@@ -842,14 +971,17 @@ class BundleAdjustmentOptimizer:
                 "anchor_tags": {str(tid): {"xyz_mm": [round(float(v), 3) for v in a["xyz_mm"]],
                                            "known": [bool(v) for v in a["known"]]}
                                 for tid, a in sorted(anchor_tags.items())},
+                "conflict_pairs": conflict_pairs,
                 "real_marker_size_mm": round(float(self.marker_size_mm), 3)
             },
             "tags": {}
         }
-        log.info(f"[+] [ANCHOR] FR-9.6 世界系锚定完成 (mode={mode}): "
+        log.info(f"[+] [ANCHOR] FR-9.6 世界系锚定完成 (mode={mode}, solver={solver_type}): "
               f"尺度因子: {scale:.6f} ({solve['scale_pair_count']} 对), 偏航: {math.degrees(solve['yaw_rad']):.2f}°, "
               f"锚点残差 mean/max: {res['mean_mm']:.2f}/{res['max_mm']:.2f} mm, "
               f"反算真实边长: {self.marker_size_mm:.2f} mm")
+        if conflict_pairs:
+            log.warning(f"[ANCHOR] ⚠️ 注意：检测到 {len(conflict_pairs)} 组锚点输入存在严重几何形变冲突，可能影响世界对齐精度！请检查锚点录入。")
         if mode == "partial":
             log.warning("[ANCHOR] partial 模式: XY 已绝对锚定, Z 轴保持 BA 尺度相对坐标 (t_z 悬空) — 下游须按 anchor_mode 守门！")
 
@@ -867,6 +999,58 @@ class BundleAdjustmentOptimizer:
             }
 
         return aligned_map
+
+    def align_relative_map_to_world(self,
+                                    relative_map: Dict[str, Any],
+                                    anchor_tags: Dict[int, Dict[str, Any]],
+                                    origin_tag_id: int = 0,
+                                    x_align_tag_id: int = 1,
+                                    strict: bool = True) -> Dict[str, Any]:
+        """
+        【阶段二独立解算核心】将自由平差产出的相对几何底图对齐到世界坐标系
+        :param relative_map: 阶段一产出的相对底图 (包含 raw_relative_poses 或 tags 的位姿矩阵)
+        :param anchor_tags: 用户录入的世界锚点真值表
+        :param origin_tag_id: 原点标靶 ID
+        :param x_align_tag_id: X 轴对齐标靶 ID
+        :param strict: 是否严格模式 (发现冲突或锚点不足时抛错，否则降级)
+        :return: 具有绝对世界坐标的完整 tags_map 生产字典
+        """
+        # 提取标靶 4x4 位姿矩阵 (优先使用 raw_relative_poses)
+        tag_poses: Dict[int, np.ndarray] = {}
+        if "raw_relative_poses" in relative_map:
+            for tid, mat in relative_map["raw_relative_poses"].items():
+                tag_poses[int(tid)] = np.array(mat, dtype=np.float64)
+        elif "tags" in relative_map:
+            for tid, t_info in relative_map["tags"].items():
+                if "transform_matrix" in t_info:
+                    tag_poses[int(tid)] = np.array(t_info["transform_matrix"], dtype=np.float64)
+
+        if not tag_poses:
+            raise ValueError("align_relative_map_to_world: 相对底图中未找到任何有效的标靶位姿矩阵")
+
+        # 同步名义边长
+        if "marker_size_mm" in relative_map:
+            self.marker_size_mm = float(relative_map["marker_size_mm"])
+
+        aligned = self.anchor_to_absolute_world(
+            tag_poses, anchor_tags,
+            origin_tag_id=origin_tag_id,
+            x_align_tag_id=x_align_tag_id,
+            strict=strict
+        )
+
+        # 完整继承阶段一的所有平差质检与元数据属性
+        result_map = dict(relative_map)
+        result_map["tags"] = aligned["tags"]
+        result_map["world_anchor"] = aligned.get("world_anchor", {})
+        result_map["anchor_mode"] = aligned.get("anchor_mode", "full")
+        result_map["marker_size_mm"] = round(float(self.marker_size_mm), 3)
+        if "raw_relative_poses" not in result_map:
+            result_map["raw_relative_poses"] = {
+                int(tid): [[round(float(val), 5) for val in row] for row in T]
+                for tid, T in tag_poses.items()
+            }
+        return result_map
 
     def align_to_scara_world(self,
                              tag_poses: Dict[int, np.ndarray], 
